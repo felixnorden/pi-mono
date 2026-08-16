@@ -7,9 +7,29 @@
   "type": "module",
   "module": "index.ts",
   "devDependencies": {
-    "@types/bun": "latest",
-    "oxfmt": "^0.63.0",
-    "oxlint": "^1.78.0",
-    "typescript": "^7.0.2"
+    "@types/bun": "catalog:tooling",
+    "oxfmt": "catalog:tooling",
+    "oxlint": "catalog:tooling",
+    "typescript": "catalog:tooling"
+  },
+  "catalogs": {
+    "effect": {
+      "@effect/platform-node": "4.0.0-rc.108",
+      "@effect/tsgo": "0.36.4",
+      "@effect/vitest": "4.0.0-rc.108",
+      "effect": "4.0.0-rc.108"
+    },
+    "pi": {
+      "@earendil-works/pi-coding-agent": "^0.84.2",
+      "@earendil-works/pi-tui": "^0.84.2"
+    },
+    "tooling": {
+      "@types/bun": "latest",
+      "oxfmt": "^0.63.0",
+      "oxlint": "1.77.0",
+      "oxlint-tsgolint": "7.0.2001",
+      "typescript": "7.0.2",
+      "vitest": "^4.1.10"
+    }
   }
 }
