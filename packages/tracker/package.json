@@ -1,0 +1,38 @@
+{
+  "name": "@ftr/pi-tracker",
+  "private": true,
+  "description": "Session-persistent todolist extension for Pi",
+  "type": "module",
+  "module": "index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "prepare": "effect-tsgo patch --typescript --oxlint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-tui": "^0.84.1",
+    "@effect/platform-node": "^4.0.0-rc.108",
+    "effect": "^4.0.0-rc.108"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.36.4",
+    "@effect/vitest": "^4.0.0-rc.108",
+    "@types/bun": "latest",
+    "oxlint": "1.77.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "typescript": "7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}
