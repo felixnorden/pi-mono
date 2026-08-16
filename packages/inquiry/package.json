@@ -1,0 +1,60 @@
+{
+  "name": "@ftrdotdev/pi-inquiry",
+  "version": "0.1.0",
+  "description": "Interactive questions for the pi coding agent: a single `question` tool renders option lists, tabbed forms, and free-text answers",
+  "keywords": [
+    "effect",
+    "interactive",
+    "pi",
+    "pi-coding-agent",
+    "pi-package",
+    "question",
+    "tui"
+  ],
+  "homepage": "https://github.com/felixnorden/pi-inquiry#readme",
+  "bugs": {
+    "url": "https://github.com/felixnorden/pi-inquiry/issues"
+  },
+  "license": "MIT",
+  "author": "Felix Nordén <felixnorden@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felixnorden/pi-inquiry.git"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt -c oxfmt.config.ts",
+    "prepare": "effect-tsgo patch --typescript --oxlint"
+  },
+  "dependencies": {
+    "effect": "^4.0.0-rc.108"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.36.4",
+    "@effect/vitest": "^4.0.0-rc.108",
+    "@types/bun": "latest",
+    "oxfmt": "^0.63.0",
+    "oxlint": "1.77.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "typescript": "7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-tui": "^0.84.1"
+  },
+  "pi": {
+    "extensions": [
+      "./src/tool/question.ts"
+    ]
+  }
+}
