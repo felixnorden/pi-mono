@@ -28,12 +28,12 @@
   ],
   "type": "module",
   "scripts": {
+    "prepare": "effect-tsgo patch --typescript --oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
-    "fmt": "oxfmt -c oxfmt.config.ts",
-    "prepare": "effect-tsgo patch --typescript --oxlint"
+    "fmt": "oxfmt -c oxfmt.config.ts"
   },
   "dependencies": {
     "effect": "^4.0.0-rc.108"
