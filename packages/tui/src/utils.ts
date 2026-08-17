@@ -73,6 +73,15 @@ export function fmtTokens(n: number): string {
 }
 
 /**
+ * Cost display: the ascii cost glyph already is a `$`, so the currency
+ * sign is appended only when the glyph does not carry it (nerd glyphs).
+ */
+export function formatCost(glyph: string, value: number, digits = 3): string {
+  const currency = glyph.includes("$") ? "" : "$";
+  return `${glyph} ${currency}${value.toFixed(digits)}`;
+}
+
+/**
  * Human duration formatting from milliseconds: `42s`, `5m 12s`, `2h 3m 4s`.
  * Negative inputs clamp to zero.
  */

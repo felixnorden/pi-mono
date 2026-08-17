@@ -84,7 +84,13 @@ const getModelMeta = () => ({
 // One user message and two assistant messages with fixed usage values; the
 // list (and therefore the module usage-cache key) never changes.
 const ENTRIES = [
-  { type: "message", id: "u1", parentId: null, timestamp: "t0", message: { role: "user", content: "hi" } },
+  {
+    type: "message",
+    id: "u1",
+    parentId: null,
+    timestamp: "t0",
+    message: { role: "user", content: "hi" },
+  },
   {
     type: "message",
     id: "a1",
@@ -93,7 +99,14 @@ const ENTRIES = [
     message: {
       role: "assistant",
       content: [],
-      usage: { input: 1200, output: 400, cacheRead: 800, cacheWrite: 100, totalTokens: 2500, cost: { input: 0.02, output: 0.01, cacheRead: 0.01, cacheWrite: 0.002, total: 0.042 } },
+      usage: {
+        input: 1200,
+        output: 400,
+        cacheRead: 800,
+        cacheWrite: 100,
+        totalTokens: 2500,
+        cost: { input: 0.02, output: 0.01, cacheRead: 0.01, cacheWrite: 0.002, total: 0.042 },
+      },
       timestamp: 1_700_000_001_000,
     },
   },
@@ -105,7 +118,14 @@ const ENTRIES = [
     message: {
       role: "assistant",
       content: [],
-      usage: { input: 1200, output: 400, cacheRead: 800, cacheWrite: 100, totalTokens: 2500, cost: { input: 0.02, output: 0.01, cacheRead: 0.01, cacheWrite: 0.002, total: 0.042 } },
+      usage: {
+        input: 1200,
+        output: 400,
+        cacheRead: 800,
+        cacheWrite: 100,
+        totalTokens: 2500,
+        cost: { input: 0.02, output: 0.01, cacheRead: 0.01, cacheWrite: 0.002, total: 0.042 },
+      },
       timestamp: 1_700_000_002_000,
     },
   },
@@ -157,18 +177,46 @@ const runMount = (): { component: { render(width: number): string[] } } => {
 
 const footerData = () => ({
   getGitBranch: () => null,
-  getExtensionStatuses: () => new Map([["lint", "running"], ["build", "2 errors"]]),
+  getExtensionStatuses: () =>
+    new Map([
+      ["lint", "running"],
+      ["build", "2 errors"],
+    ]),
   getAvailableProviderCount: () => 0,
   onBranchChange: () => () => {},
 });
 
 const FOOTER_EXPECTED: Record<string, string[]> = {
-  30: ["% [####----] 50.0% \u00b7 100k/200k", "\u2191 2.4k | \u2193 800 | c 38.1% | \u001b[0m...\u001b[0m", "& 2 errors | running"],
-  40: ["* \u001b[0m...\u001b[0m % [######------] 50.0% \u00b7 100k/200k", "M\u001b[0m...\u001b[0m \u2191 2.4k | \u2193 800 | c 38.1% | $ $0.084", "& 2 errors | running"],
-  60: ["* feature/refactor [!3\u001b[0m...\u001b[0m % [######------] 50.0% \u00b7 100k/200k", "M \u00b7 Anthropic \u00b7 claud\u001b[0m...\u001b[0m \u2191 2.4k | \u2193 800 | c 38.1% | $ $0.084", "& 2 errors | running"],
-  80: ["@ /\u001b[0m...\u001b[0m * feature/refactor [!3 A2 ?1 S1 ^v2/1] % [######------] 50.0% \u00b7 100k/200k", "M \u00b7 Anthropic \u00b7 claude-sonnet-4-0 \u00b7 ~ medium \u2191 2.4k | \u2193 800 | c 38.1% | $ $0.084", "& 2 errors | running"],
-  100: ["@ /workspace/pi-mono * feature/refactor [!3 A2 ?1 S1 ^v2/1]       % [######------] 50.0% \u00b7 100k/200k", "M \u00b7 Anthropic \u00b7 claude-sonnet-4-0 \u00b7 ~ medium                     \u2191 2.4k | \u2193 800 | c 38.1% | $ $0.084", "& 2 errors | running"],
-  120: ["@ /workspace/pi-mono * feature/refactor [!3 A2 ?1 S1 ^v2/1]                           % [######------] 50.0% \u00b7 100k/200k", "M \u00b7 Anthropic \u00b7 claude-sonnet-4-0 \u00b7 ~ medium                                         \u2191 2.4k | \u2193 800 | c 38.1% | $ $0.084", "& 2 errors | running"],
+  30: [
+    "% [####----] 50.0% \u00b7 100k/200k",
+    "\u2191 2.4k | \u2193 800 | c 38.1% | \u001b[0m...\u001b[0m",
+    "& 2 errors | running",
+  ],
+  40: [
+    "* \u001b[0m...\u001b[0m % [######------] 50.0% \u00b7 100k/200k",
+    "M \u001b[0m...\u001b[0m \u2191 2.4k | \u2193 800 | c 38.1% | $ 0.084",
+    "& 2 errors | running",
+  ],
+  60: [
+    "* feature/refactor [!3\u001b[0m...\u001b[0m % [######------] 50.0% \u00b7 100k/200k",
+    "M \u00b7 Anthropic \u00b7 claude\u001b[0m...\u001b[0m \u2191 2.4k | \u2193 800 | c 38.1% | $ 0.084",
+    "& 2 errors | running",
+  ],
+  80: [
+    "@ /\u001b[0m...\u001b[0m * feature/refactor [!3 A2 ?1 S1 ^v2/1] % [######------] 50.0% \u00b7 100k/200k",
+    "M \u00b7 Anthropic \u00b7 claude-sonnet-4-0 \u00b7 ~ medium  \u2191 2.4k | \u2193 800 | c 38.1% | $ 0.084",
+    "& 2 errors | running",
+  ],
+  100: [
+    "@ /workspace/pi-mono * feature/refactor [!3 A2 ?1 S1 ^v2/1]       % [######------] 50.0% \u00b7 100k/200k",
+    "M \u00b7 Anthropic \u00b7 claude-sonnet-4-0 \u00b7 ~ medium                      \u2191 2.4k | \u2193 800 | c 38.1% | $ 0.084",
+    "& 2 errors | running",
+  ],
+  120: [
+    "@ /workspace/pi-mono * feature/refactor [!3 A2 ?1 S1 ^v2/1]                           % [######------] 50.0% \u00b7 100k/200k",
+    "M \u00b7 Anthropic \u00b7 claude-sonnet-4-0 \u00b7 ~ medium                                          \u2191 2.4k | \u2193 800 | c 38.1% | $ 0.084",
+    "& 2 errors | running",
+  ],
 };
 
 it("the footer renders identical lines across repeated runs under the deterministic fixture", () => {

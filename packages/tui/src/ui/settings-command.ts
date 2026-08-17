@@ -272,9 +272,7 @@ export const makeSettingsUi = (
   const moveSelection = (offset: number): void => {
     const items = buildItems(tab, currentConfig);
     if (items.length === 0) return;
-    const currentIndex = items.findIndex(
-      (item) => item.id === selectList.getSelectedItem()?.value,
-    );
+    const currentIndex = items.findIndex((item) => item.id === selectList.getSelectedItem()?.value);
     const nextIndex = (currentIndex + offset + items.length) % items.length;
     selectList.setSelectedIndex(nextIndex);
     const item = items[nextIndex];

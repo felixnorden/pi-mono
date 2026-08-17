@@ -75,9 +75,13 @@ export const makeBorderedBox = (
 
     const top = bg(composeBorderLine(frame, "top", paint));
     const bottom = bg(composeBorderLine(frame, "bottom", paint));
-    const bodyLines = body.render(frame.contentWidth).map((line) =>
-      bg(`${paint(frame.railLeft)}${pad}${padRight(line, frame.contentWidth)}${pad}${paint(frame.railRight)}`),
-    );
+    const bodyLines = body
+      .render(frame.contentWidth)
+      .map((line) =>
+        bg(
+          `${paint(frame.railLeft)}${pad}${padRight(line, frame.contentWidth)}${pad}${paint(frame.railRight)}`,
+        ),
+      );
     return [top, ...bodyLines, bottom];
   };
 

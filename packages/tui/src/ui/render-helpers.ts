@@ -15,6 +15,7 @@ import type { RuntimeInfo } from "../runtime.ts";
 import {
   cacheHitColor,
   fmtTokens,
+  formatCost,
   formatDuration,
   padRight,
   sanitizeStatus,
@@ -244,7 +245,7 @@ export function renderStatsBlock(
     }
   }
   if (segments.cost) {
-    stats.push(theme.fg("warning", `${glyphs.cost} $${totals.cost.toFixed(3)}`));
+    stats.push(theme.fg("warning", formatCost(glyphs.cost, totals.cost)));
   }
 
   return stats.join(` ${theme.fg("dim", "|")} `);

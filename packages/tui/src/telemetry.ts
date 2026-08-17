@@ -11,7 +11,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { IconMode, TelemetryConfig } from "./config.ts";
 import { resolveGlyphs } from "./icons.ts";
-import { fmtTokens, formatDuration } from "./utils.ts";
+import { fmtTokens, formatCost, formatDuration } from "./utils.ts";
 
 const STALL_THRESHOLD_MS = 1000;
 
@@ -295,7 +295,7 @@ export function formatTurnTelemetry(
     );
   }
   if (config.cost && telemetry.rateUsdPerMTokens !== null) {
-    parts.push(theme.fg("warning", `${glyphs.cost} $${telemetry.rateUsdPerMTokens.toFixed(2)}/M`));
+    parts.push(theme.fg("warning", formatCost(glyphs.cost, telemetry.rateUsdPerMTokens, 2) + "/M"));
   }
   return parts.join(` ${theme.fg("dim", "|")} `);
 }
