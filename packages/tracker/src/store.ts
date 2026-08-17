@@ -38,7 +38,9 @@ const listNotFoundMessage = (s: TrackerState, listId: number): string => {
  * colon so list names may contain colons; the index must be a positive
  * integer. Returns null for anything that is not a well-formed id.
  */
-const parseItemId = (itemId: string): { readonly listName: string; readonly index: number } | null => {
+const parseItemId = (
+  itemId: string,
+): { readonly listName: string; readonly index: number } | null => {
   const colon = itemId.lastIndexOf(":");
   if (colon <= 0 || colon === itemId.length - 1) return null;
   const indexText = itemId.slice(colon + 1);
@@ -51,7 +53,12 @@ type ResolvedItem =
   | { readonly kind: "malformed" }
   | { readonly kind: "noList"; readonly listName: string }
   | { readonly kind: "noItem"; readonly list: TodoList }
-  | { readonly kind: "ok"; readonly list: TodoList; readonly item: TodoItem; readonly index: number };
+  | {
+      readonly kind: "ok";
+      readonly list: TodoList;
+      readonly item: TodoItem;
+      readonly index: number;
+    };
 
 /** Resolve `listName:index` against the current state (index is 1-based). */
 const resolveItem = (s: TrackerState, itemId: string): ResolvedItem => {
@@ -72,7 +79,9 @@ const resolveItem = (s: TrackerState, itemId: string): ResolvedItem => {
 const resolveItemOrError = (
   s: TrackerState,
   itemId: string,
-): { readonly ok: true; readonly list: TodoList; readonly item: TodoItem; readonly index: number } | { readonly ok: false; readonly error: TrackerError } => {
+):
+  | { readonly ok: true; readonly list: TodoList; readonly item: TodoItem; readonly index: number }
+  | { readonly ok: false; readonly error: TrackerError } => {
   const resolved = resolveItem(s, itemId);
   switch (resolved.kind) {
     case "malformed":
@@ -99,7 +108,9 @@ const resolveItemOrError = (
       };
     }
     case "noItem": {
-      const available = resolved.list.items.map((_, i) => `${resolved.list.name}:${i + 1}`).join(", ");
+      const available = resolved.list.items
+        .map((_, i) => `${resolved.list.name}:${i + 1}`)
+        .join(", ");
       return {
         ok: false,
         error: new TrackerError({
@@ -347,10 +358,7 @@ export class TrackerStore extends Context.Service<
                 ? new TodoList({ id: l.id, name: l.name, items: [...l.items, ...items] })
                 : l,
             );
-            return [
-              Result.succeed(items),
-              new TrackerState({ ...s, lists }),
-            ];
+            return [Result.succeed(items), new TrackerState({ ...s, lists })];
           },
         );
       });
@@ -416,7 +424,11 @@ export class TrackerStore extends Context.Service<
         return yield* mutate(
           (s): readonly [Result.Result<TodoItem[], TrackerError>, TrackerState] => {
             // Every target item must exist; the batch fails atomically otherwise.
-            const resolved: Array<{ readonly index: number; readonly list: TodoList; readonly item: TodoItem }> = [];
+            const resolved: Array<{
+              readonly index: number;
+              readonly list: TodoList;
+              readonly item: TodoItem;
+            }> = [];
             for (const patch of patches) {
               const r = resolveItemOrError(s, patch.itemId);
               if (!r.ok) {
@@ -454,7 +466,9 @@ export class TrackerStore extends Context.Service<
             });
             return [
               // Results in patch order so the caller can map them 1:1.
-              Result.succeed(resolved.map((r) => lists.find((l) => l.id === r.list.id)!.items[r.index - 1]!)),
+              Result.succeed(
+                resolved.map((r) => lists.find((l) => l.id === r.list.id)!.items[r.index - 1]!),
+              ),
               new TrackerState({ ...s, lists }),
             ];
           },

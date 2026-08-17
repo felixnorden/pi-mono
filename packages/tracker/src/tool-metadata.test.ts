@@ -27,7 +27,10 @@ describe("tracker tool parameter schema", () => {
       { action: "update_item", item_id: "Work:2" },
       {
         action: "update_item",
-        items: [{ item_id: "Work:1", done: true }, { item_id: "Work:2", text: "New text" }],
+        items: [
+          { item_id: "Work:1", done: true },
+          { item_id: "Work:2", text: "New text" },
+        ],
       },
       { action: "remove_item", item_id: "Work:2" },
     ];
@@ -42,20 +45,35 @@ describe("tracker tool parameter schema", () => {
   });
 
   it("rejects wrong parameter types", () => {
-    expect(Value.Check(TrackerToolParams, { action: "add_item", list_id: "one", text: "x" })).toBe(false);
+    expect(Value.Check(TrackerToolParams, { action: "add_item", list_id: "one", text: "x" })).toBe(
+      false,
+    );
     expect(Value.Check(TrackerToolParams, { action: "create_list", name: 42 })).toBe(false);
     expect(Value.Check(TrackerToolParams, { action: "create_list", activate: "yes" })).toBe(false);
     expect(Value.Check(TrackerToolParams, { action: "update_item", done: "yes" })).toBe(false);
-    expect(Value.Check(TrackerToolParams, { action: "add_item", list_id: 1, text: [1, "x"] })).toBe(false);
-    expect(Value.Check(TrackerToolParams, { action: "update_item", items: [{ item_id: "Work:1", done: "yes" }] })).toBe(false);
+    expect(Value.Check(TrackerToolParams, { action: "add_item", list_id: 1, text: [1, "x"] })).toBe(
+      false,
+    );
+    expect(
+      Value.Check(TrackerToolParams, {
+        action: "update_item",
+        items: [{ item_id: "Work:1", done: "yes" }],
+      }),
+    ).toBe(false);
     expect(Value.Check(TrackerToolParams, { action: "update_item", item_id: 2 })).toBe(false); // ids are strings
   });
 
   it("rejects empty batch arrays", () => {
-    expect(Value.Check(TrackerToolParams, { action: "add_item", list_id: 1, text: [] })).toBe(false);
+    expect(Value.Check(TrackerToolParams, { action: "add_item", list_id: 1, text: [] })).toBe(
+      false,
+    );
     expect(Value.Check(TrackerToolParams, { action: "update_item", items: [] })).toBe(false);
-    expect(Value.Check(TrackerToolParams, { action: "create_list", name: "Work", initial_items: [] })).toBe(false);
-    expect(Value.Check(TrackerToolParams, { action: "create_list", name: "Work", initial_items: [1] })).toBe(false);
+    expect(
+      Value.Check(TrackerToolParams, { action: "create_list", name: "Work", initial_items: [] }),
+    ).toBe(false);
+    expect(
+      Value.Check(TrackerToolParams, { action: "create_list", name: "Work", initial_items: [1] }),
+    ).toBe(false);
     expect(Value.Check(TrackerToolParams, { action: "set_active", list_id: "one" })).toBe(false);
   });
 });
@@ -123,11 +141,19 @@ describe("validateTrackerCall (error-nudging layer)", () => {
   });
 
   it("nudges on mixed update_item forms and array text", () => {
-    const mixed = validateTrackerCall({ action: "update_item", item_id: "Work:2", items: [{ item_id: "Work:3" }] });
+    const mixed = validateTrackerCall({
+      action: "update_item",
+      item_id: "Work:2",
+      items: [{ item_id: "Work:3" }],
+    });
     expect(mixed.ok).toBe(false);
     if (!mixed.ok) expect(mixed.message).toContain("not both");
 
-    const arrayText = validateTrackerCall({ action: "update_item", item_id: "Work:2", text: ["a"] });
+    const arrayText = validateTrackerCall({
+      action: "update_item",
+      item_id: "Work:2",
+      text: ["a"],
+    });
     expect(arrayText.ok).toBe(false);
     if (!arrayText.ok) expect(arrayText.message).toContain("single string");
   });
@@ -175,7 +201,9 @@ describe("tracker tool prompt metadata", () => {
     expect(TRACKER_TOOL_METADATA.description.length).toBeGreaterThan(0);
     expect(TRACKER_TOOL_METADATA.promptSnippet.length).toBeGreaterThan(0);
     for (const action of TOOL_ACTIONS) {
-      expect(TRACKER_TOOL_METADATA.description, `description should mention ${action}`).toContain(action);
+      expect(TRACKER_TOOL_METADATA.description, `description should mention ${action}`).toContain(
+        action,
+      );
     }
   });
 

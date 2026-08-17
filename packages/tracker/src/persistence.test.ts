@@ -158,7 +158,9 @@ layer(
 
       const restored = yield* persistence.restore(legacy);
       const expected = new TrackerState({
-        lists: [new TodoList({ id: 1, name: "Work", items: [new TodoItem({ text: "a", done: false })] })],
+        lists: [
+          new TodoList({ id: 1, name: "Work", items: [new TodoItem({ text: "a", done: false })] }),
+        ],
         activeListId: 1,
         nextListId: 2,
       });

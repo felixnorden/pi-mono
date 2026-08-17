@@ -37,7 +37,8 @@ export class TrackerState extends Schema.Class<TrackerState>("tracker/TrackerSta
  * instances (its Declaration checks the class marker), and the constructors
  * validate their input (`new TodoItem({ text: 42, ... })` throws).
  */
-export const emptyState = (): TrackerState => new TrackerState({ lists: [], activeListId: null, nextListId: 1 });
+export const emptyState = (): TrackerState =>
+  new TrackerState({ lists: [], activeListId: null, nextListId: 1 });
 
 /**
  * Encode a `TrackerState` into its plain JSON shape (the session snapshot).

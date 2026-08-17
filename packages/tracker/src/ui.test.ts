@@ -1,7 +1,13 @@
 import { assert, it } from "@effect/vitest";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { TodoItem, TodoList, TrackerState } from "./domain.ts";
-import { cachedRender, renderTrackerWidget, TrackerOverlay, type TrackerUiAction } from "./ui.ts";
+import {
+  makeTrackerOverlay,
+  makeTrackerWidget,
+  renderTrackerWidget,
+  type TrackerOverlayHandle,
+  type TrackerUiAction,
+} from "./ui.ts";
 
 /**
  * Identity theme: styles pass text through unchanged, so render output is
@@ -38,11 +44,15 @@ const twoListState = (): TrackerState =>
 
 /** Assert `text` does not contain `needle` (@effect/vitest lacks doesNotMatch). */
 const notContain = (text: string, needle: string): void => {
-  assert.equal(text.includes(needle), false, `expected text not to contain ${JSON.stringify(needle)}`);
+  assert.equal(
+    text.includes(needle),
+    false,
+    `expected text not to contain ${JSON.stringify(needle)}`,
+  );
 };
 
 interface OverlayHarness {
-  readonly overlay: TrackerOverlay;
+  readonly overlay: TrackerOverlayHandle;
   readonly actions: TrackerUiAction[];
 }
 
@@ -55,7 +65,7 @@ interface OverlayHarness {
 const makeOverlay = (initial: TrackerState): OverlayHarness => {
   let current = initial;
   const actions: TrackerUiAction[] = [];
-  const overlay = new TrackerOverlay({
+  const overlay = makeTrackerOverlay({
     getState: () => current,
     theme: identityTheme,
     requestRender: () => {},
@@ -160,24 +170,6 @@ it("overlay recomputes when the cursor moves", () => {
   assert.match(h.overlay.render(80).join("\n"), /Items — Home/);
 });
 
-it("cachedRender serves lines per width and invalidates", () => {
-  let calls = 0;
-  const cached = cachedRender((width) => {
-    calls++;
-    return [`line@${width}`];
-  });
-
-  assert.deepStrictEqual(cached.render(10), ["line@10"]);
-  assert.strictEqual(calls, 1);
-  cached.render(10); // cache hit
-  assert.strictEqual(calls, 1);
-  cached.render(20); // width change
-  assert.strictEqual(calls, 2);
-  cached.invalidate();
-  cached.render(10);
-  assert.strictEqual(calls, 3);
-});
-
 // --------------------------------------------------------------------------
 // Widget pane
 // --------------------------------------------------------------------------
@@ -193,4 +185,20 @@ it("widget renders the active list's items", () => {
 it("widget renders nothing when no list is active (bridge hides it)", () => {
   const state = new TrackerState({ ...twoListState(), activeListId: null });
   assert.deepStrictEqual(renderTrackerWidget(state, identityTheme, 40), []);
+});
+
+it("widget survives the setWidget bridge wrapper (render/invalidate handed off by reference)", () => {
+  // Mirrors the tracker bridge: `return { render: widget.render, invalidate: widget.invalidate }`.
+  // pi calls render as a method of the wrapper; closure components carry no
+  // `this`, so the hand-off is safe by construction (resume-crash regression).
+  // oxlint-disable typescript/unbound-method -- intentional seam regression:
+  // closure components must survive detached hand-off.
+  const widget = makeTrackerWidget(twoListState(), identityTheme);
+  const wrapper = { render: widget.render, invalidate: widget.invalidate };
+  // oxlint-enable typescript/unbound-method
+  const lines = wrapper.render(40);
+  assert.match(lines.join("\n"), /Work \(1\/2\)/);
+  wrapper.invalidate();
+  assert.match(wrapper.render(40).join("\n"), /Work \(1\/2\)/);
+  assert.deepStrictEqual(wrapper.render(40), lines);
 });

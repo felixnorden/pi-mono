@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { makeBorderedBox } from "@ftrdotdev/pi-tui";
 import { Effect, Layer, ManagedRuntime, Option, Result } from "effect";
 import { TodoItem, TodoList, TrackerState, emptyState, encodeState } from "./domain.ts";
 import { TrackerPersistence } from "./persistence.ts";
@@ -12,7 +13,7 @@ import {
   type TrackerToolDetails,
   type TrackerToolParams,
 } from "./tool-metadata.ts";
-import { cachedRender, renderTrackerWidget, TrackerOverlay, type TrackerUiAction } from "./ui.ts";
+import { makeTrackerOverlay, makeTrackerWidget, type TrackerUiAction } from "./ui.ts";
 
 /** Custom-entry type used to persist the tracker state in the session. */
 const CUSTOM_TYPE = "tracker/state";
@@ -46,7 +47,9 @@ const requireParam = <T>(value: T | undefined, name: string): T => {
 export default function (pi: ExtensionAPI): void {
   const runtime = ManagedRuntime.make(
     TrackerStore.layer.pipe(
-      Layer.provideMerge(TrackerPersistence.layer((encoded) => pi.appendEntry(CUSTOM_TYPE, encoded))),
+      Layer.provideMerge(
+        TrackerPersistence.layer((encoded) => pi.appendEntry(CUSTOM_TYPE, encoded)),
+      ),
     ),
   );
 
@@ -78,11 +81,16 @@ export default function (pi: ExtensionAPI): void {
       case "update_item": {
         if (params.items !== undefined) {
           // Wire format is snake_case (item_id); the store uses itemId.
-          const batch = params.items.map(({ item_id, ...patch }) => ({ itemId: item_id, ...patch }));
+          const batch = params.items.map(({ item_id, ...patch }) => ({
+            itemId: item_id,
+            ...patch,
+          }));
           return withStore((store) => store.updateItems(batch));
         }
         const patch: UpdateItemPatch = {
-          ...(params.text !== undefined && !Array.isArray(params.text) ? { text: params.text } : {}),
+          ...(params.text !== undefined && !Array.isArray(params.text)
+            ? { text: params.text }
+            : {}),
           ...(params.done !== undefined ? { done: params.done } : {}),
         };
         return withStore((store) =>
@@ -123,7 +131,9 @@ export default function (pi: ExtensionAPI): void {
     await runtime.runPromise(
       withPersistence((p) => p.save(state)).pipe(
         Effect.catch((err) =>
-          Effect.logWarning(`tracker: persist failed: ${err instanceof Error ? err.message : String(err)}`),
+          Effect.logWarning(
+            `tracker: persist failed: ${err instanceof Error ? err.message : String(err)}`,
+          ),
         ),
       ),
     );
@@ -138,11 +148,18 @@ export default function (pi: ExtensionAPI): void {
       return;
     }
     ctx.ui.setWidget("tracker", (_tui, theme) => {
-      // The widget re-renders on every TUI frame, so cache rendered lines
-      // per width (tui.md "Performance"); invalidate() clears the cache on
-      // theme changes so the baked-in colors are rebuilt from the new theme.
-      const cached = cachedRender((width) => renderTrackerWidget(state, theme, width));
-      return { render: cached.render, invalidate: cached.invalidate };
+      // BorderedBox caches per width; the widget is re-registered on every
+      // state change and invalidate() clears the cache on theme changes, so
+      // stale themed output (ANSI colors baked into the cached strings) is
+      // never served.
+      const widget = makeTrackerWidget(state, theme);
+      // pi calls render/invalidate as methods of the object returned here,
+      // so hand over arrows, never detached methods — an unbound reference
+      // would rebind `this` to this wrapper and crash inside BorderedBox.
+      return {
+        render: (width) => widget.render(width),
+        invalidate: () => widget.invalidate(),
+      };
     });
   };
 
@@ -198,7 +215,9 @@ export default function (pi: ExtensionAPI): void {
           list.items.length === 0
             ? "  (no items)"
             : list.items
-                .map((item, i) => `  [${item.done ? "x" : " "}] #${list.name}:${i + 1}: ${item.text}`)
+                .map(
+                  (item, i) => `  [${item.done ? "x" : " "}] #${list.name}:${i + 1}: ${item.text}`,
+                )
                 .join("\n");
         return `[${list.id}] ${list.name} — ${done}/${list.items.length}${active}\n${items}`;
       })
@@ -409,13 +428,27 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       await ctx.ui.custom<void>((tui, theme, _kb, done) => {
-        return new TrackerOverlay({
+        // The overlay content is framed by the same house rounded box as the
+        // widget. makeBorderedBox's own cache is disabled so an overlay
+        // mutation at an unchanged width is never served stale rails; the
+        // overlay caches by its own (width, state, signature) fingerprint.
+        const overlay = makeTrackerOverlay({
           getState: () => state,
           theme,
           requestRender: () => tui.requestRender(),
           onAction: (action) => runUiAction(ctx, action),
           onClose: () => done(),
         });
+        const framed = makeBorderedBox(overlay, theme, {
+          label: "Tracker",
+          color: "border",
+          cache: false,
+        });
+        return {
+          render: (width) => framed.render(width),
+          invalidate: () => framed.invalidate(),
+          handleInput: (data) => overlay.handleInput(data),
+        };
       });
     },
   });

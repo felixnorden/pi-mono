@@ -25,15 +25,15 @@ The snapshot does not enter the LLM context.
 Ask Pi to manage your todolists. Pi calls the `tracker` tool. The tool
 supports these actions:
 
-| Action        | Purpose                             | Parameters                                          |
-| ------------- | ----------------------------------- | --------------------------------------------------- |
-| `list`        | Show all lists and items             | —                                                   |
+| Action        | Purpose                                   | Parameters                                     |
+| ------------- | ----------------------------------------- | ---------------------------------------------- |
+| `list`        | Show all lists and items                  | —                                              |
 | `create_list` | Create a list (becomes active by default) | `name`, `initial_items?`, `activate?`          |
-| `delete_list` | Delete a list                        | `list_id`                                           |
-| `set_active`  | Set or clear the active list         | `list_id` (optional)                                |
-| `add_item`    | Add one or more items                | `list_id`, `text` (string or array of strings)      |
-| `update_item` | Update one or more items             | `item_id`/`text?`/`done?` or `items`                |
-| `remove_item` | Remove an item                       | `item_id`                                           |
+| `delete_list` | Delete a list                             | `list_id`                                      |
+| `set_active`  | Set or clear the active list              | `list_id` (optional)                           |
+| `add_item`    | Add one or more items                     | `list_id`, `text` (string or array of strings) |
+| `update_item` | Update one or more items                  | `item_id`/`text?`/`done?` or `items`           |
+| `remove_item` | Remove an item                            | `item_id`                                      |
 
 `create_list` accepts `initial_items` (an array of item texts) to create the
 list with its first items in one call — list and items are created atomically.

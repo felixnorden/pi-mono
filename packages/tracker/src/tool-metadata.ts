@@ -48,15 +48,14 @@ export const TrackerToolParams = Type.Object({
         'Item id, as shown by the list action: listName:index (1-based position in the list, e.g. "Work:2"). Required for update_item (scalar form) and remove_item.',
     }),
   ),
-  name: Type.Optional(Type.String({ description: "Name for the new list. Required for create_list." })),
+  name: Type.Optional(
+    Type.String({ description: "Name for the new list. Required for create_list." }),
+  ),
   initial_items: Type.Optional(
-    Type.Array(
-      Type.String({ description: "Item text." }),
-      {
-        description: "For create_list: initial items, added when the list is created.",
-        minItems: 1,
-      },
-    ),
+    Type.Array(Type.String({ description: "Item text." }), {
+      description: "For create_list: initial items, added when the list is created.",
+      minItems: 1,
+    }),
   ),
   activate: Type.Optional(
     Type.Boolean({
@@ -68,24 +67,31 @@ export const TrackerToolParams = Type.Object({
     Type.Union(
       [
         Type.String({
-          description: "Item text. For add_item: the text of a new item. For update_item: the replacement text.",
+          description:
+            "Item text. For add_item: the text of a new item. For update_item: the replacement text.",
         }),
-        Type.Array(
-          Type.String({ description: "Item text." }),
-          { description: "For add_item: several item texts to add in one call.", minItems: 1 },
-        ),
+        Type.Array(Type.String({ description: "Item text." }), {
+          description: "For add_item: several item texts to add in one call.",
+          minItems: 1,
+        }),
       ],
       { description: "Item text: a single string, or (add_item only) an array of strings." },
     ),
   ),
-  done: Type.Optional(Type.Boolean({ description: "For update_item: true marks the item done, false reopens it." })),
+  done: Type.Optional(
+    Type.Boolean({ description: "For update_item: true marks the item done, false reopens it." }),
+  ),
   items: Type.Optional(
     Type.Array(
       Type.Object(
         {
-          item_id: Type.String({ description: 'Item id, as shown by the list action (listName:index, e.g. "Work:2").' }),
+          item_id: Type.String({
+            description: 'Item id, as shown by the list action (listName:index, e.g. "Work:2").',
+          }),
           text: Type.Optional(Type.String({ description: "Replacement text for the item." })),
-          done: Type.Optional(Type.Boolean({ description: "true marks the item done, false reopens it." })),
+          done: Type.Optional(
+            Type.Boolean({ description: "true marks the item done, false reopens it." }),
+          ),
         },
         // Patch objects are strict: a typo inside an item update fails here.
         { additionalProperties: false },
@@ -140,7 +146,9 @@ export function validateTrackerCall(args: unknown): TrackerCallValidation {
   }
   const typed = action as TrackerToolAction;
   const allowed = ACTION_PARAMS[typed];
-  const unexpected = Object.keys(record).filter((key) => key !== "action" && !allowed.includes(key));
+  const unexpected = Object.keys(record).filter(
+    (key) => key !== "action" && !allowed.includes(key),
+  );
   if (unexpected.length > 0) {
     return {
       ok: false,
@@ -153,7 +161,10 @@ export function validateTrackerCall(args: unknown): TrackerCallValidation {
   switch (typed) {
     case "create_list":
       if (record.name === undefined) {
-        return { ok: false, message: "create_list requires the 'name' parameter (the new list's name)." };
+        return {
+          ok: false,
+          message: "create_list requires the 'name' parameter (the new list's name).",
+        };
       }
       break;
     case "delete_list":
@@ -168,24 +179,34 @@ export function validateTrackerCall(args: unknown): TrackerCallValidation {
       if (record.text === undefined) {
         return {
           ok: false,
-          message: "add_item requires the 'text' parameter (a string, or an array of strings for several items).",
+          message:
+            "add_item requires the 'text' parameter (a string, or an array of strings for several items).",
         };
       }
       break;
     case "update_item":
       if (record.items !== undefined) {
-        if (record.item_id !== undefined || record.text !== undefined || record.done !== undefined) {
+        if (
+          record.item_id !== undefined ||
+          record.text !== undefined ||
+          record.done !== undefined
+        ) {
           return {
             ok: false,
-            message: "update_item: pass either item_id/text/done (one item) or items (several items in one call), not both.",
+            message:
+              "update_item: pass either item_id/text/done (one item) or items (several items in one call), not both.",
           };
         }
       } else if (record.item_id === undefined) {
-        return { ok: false, message: "update_item requires 'item_id' (or 'items' for batched updates)." };
+        return {
+          ok: false,
+          message: "update_item requires 'item_id' (or 'items' for batched updates).",
+        };
       } else if (Array.isArray(record.text)) {
         return {
           ok: false,
-          message: "update_item: 'text' must be a single string — use 'items' to update several items in one call.",
+          message:
+            "update_item: 'text' must be a single string — use 'items' to update several items in one call.",
         };
       }
       break;
@@ -238,7 +259,7 @@ const TRACKER_TOOL_DESCRIPTION =
   "Manage todolists and track progress. Use for task lists, checklists, milestones, and step-by-step " +
   "work; keep track of tasks with tracker instead of in chat or files. Work through items one at a " +
   "time, marking each done as it completes, so the list is the live working state.\n" +
-  "Item ids are listName:index — the 1-based position of the item in its list, e.g. \"Work:2\" (copy " +
+  'Item ids are listName:index — the 1-based position of the item in its list, e.g. "Work:2" (copy ' +
   "them from the list action output). Removing an item renumbers the items after it, so list again " +
   "before referencing items after a removal.\n" +
   "The tracker tool is strict: each action accepts only its own parameters — any other argument is " +
