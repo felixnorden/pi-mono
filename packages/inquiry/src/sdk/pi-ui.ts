@@ -15,7 +15,7 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { delimiter, join } from "path";
 import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
-import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
 import { QuestionResult, type Question } from "../core/domain.ts";
 import { initialMachineState, type MachineState } from "../core/machine.ts";
 import { buildScene } from "../core/scene.ts";
@@ -30,7 +30,7 @@ export const runQuestionUi = (
   questions: readonly Question[],
   cwd: string,
 ): Promise<QuestionResult> =>
-  ui.custom<QuestionResult>((tui, theme, _keybindings, done) => {
+  ui.custom<QuestionResult>((tui, theme, keybindings, done) => {
     const keys = Effect.runSync(Queue.unbounded<KeyEvent>());
     const cell: { state: MachineState } = { state: initialMachineState(questions) };
 
@@ -63,10 +63,26 @@ export const runQuestionUi = (
       ),
     );
 
+    // Width/state-keyed render cache: the TUI calls render() on every
+    // frame, but the scene only changes when the machine emits a new
+    // snapshot or the terminal is resized (tui.md "Performance").
+    const scene = makeSceneRenderer(() => cell.state, theme);
     return {
-      render: (width) => paintScene(buildScene(cell.state, width), theme),
-      invalidate: () => tui.requestRender(),
+      render: (width) => scene.render(width),
+      invalidate: () => {
+        scene.invalidate();
+        tui.requestRender();
+      },
       handleInput: (data) => {
+        // app.tools.expand (default ctrl+o): keep the transcript's tool-output
+        // expansion toggle working while the questionnaire owns input focus.
+        // The app only routes app actions through the editor, which is not
+        // focused here, so intercept the key ourselves. keybindings.matches()
+        // honors the user's keybindings.json (rebinds, "[]" disables).
+        if (keybindings.matches(data, "app.tools.expand")) {
+          ui.setToolsExpanded(!ui.getToolsExpanded());
+          return;
+        }
         const key = parseKey(data);
         if (key) Effect.runSync(Queue.offer(keys, key));
       },
@@ -75,6 +91,42 @@ export const runQuestionUi = (
       },
     };
   });
+
+/**
+ * Width/state-keyed scene renderer for the question box (tui.md
+ * "Performance"). `buildScene` is pure and the machine emits a fresh
+ * immutable snapshot on every transition, so identical (width, state) pairs
+ * always paint identical lines — the cache serves those lines across TUI
+ * frames while nothing changed, instead of rebuilding and repainting the
+ * scene. `invalidate()` clears the cache: the TUI calls it on theme changes,
+ * so the ANSI colors baked into cached lines are always rebuilt from the
+ * current theme.
+ */
+export const makeSceneRenderer = (
+  getState: () => MachineState,
+  theme: Theme,
+): { render(width: number): string[]; invalidate(): void } => {
+  let cachedWidth: number | undefined;
+  let cachedState: MachineState | undefined;
+  let cachedLines: string[] | undefined;
+  return {
+    render(width: number): string[] {
+      const state = getState();
+      if (cachedLines !== undefined && cachedState === state && cachedWidth === width) {
+        return cachedLines;
+      }
+      cachedState = state;
+      cachedWidth = width;
+      cachedLines = paintScene(buildScene(state, width), theme);
+      return cachedLines;
+    },
+    invalidate(): void {
+      cachedWidth = undefined;
+      cachedState = undefined;
+      cachedLines = undefined;
+    },
+  };
+};
 
 /**
  * File completion for the inline editor, backed by pi-tui's

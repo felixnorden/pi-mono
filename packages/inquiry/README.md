@@ -71,12 +71,10 @@ pick between options, or confirm a decision. Ask all open questions in one
   "questions": [
     {
       "prompt": "The full question text to display",
-      "options": [
-        { "label": "Short label", "description": "Optional one-line description" }
-      ],
-      "id": "optional-unique-id",        // defaults to q1, q2, ...
-      "label": "Scope",                  // short tab-bar label, defaults to Q1, Q2
-      "allowOther": true                 // defaults to true; false forces the listed options
+      "options": [{ "label": "Short label", "description": "Optional one-line description" }],
+      "id": "optional-unique-id", // defaults to q1, q2, ...
+      "label": "Scope", // short tab-bar label, defaults to Q1, Q2
+      "allowOther": true // defaults to true; false forces the listed options
     }
   ]
 }

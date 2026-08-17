@@ -38,6 +38,11 @@ const twoQuestions = (): readonly Question[] => [
 
 const plainLines = (scene: Scene): string[] => scene.lines.map(plain);
 
+// Helpers for the house rounded border (╭─╮│╰─╯) that frames the scene.
+const boxed = (content: string, width: number): string => "│" + content.padEnd(width - 2) + "│";
+const boxTop = (width: number): string => "╭" + "─".repeat(width - 2) + "╮";
+const boxBottom = (width: number): string => "╰" + "─".repeat(width - 2) + "╯";
+
 const openEditor = (state: MachineState): MachineState => {
   let s = state;
   s = step(s, KeyEvent.down).state;
@@ -46,28 +51,29 @@ const openEditor = (state: MachineState): MachineState => {
 };
 
 describe("buildScene: single question", () => {
-  it("renders separator, prompt, options and help, without a tab bar", () => {
+  it("renders a rounded border, prompt, options and help, without a tab bar", () => {
     const scene = buildScene(initialMachineState([question()]), 60);
     const lines = plainLines(scene);
-    expect(lines[0]).toBe("─".repeat(60));
-    expect(lines[1]).toBe(" Pick one?");
-    expect(lines[2]).toBe("");
-    expect(lines[3]).toBe("→ 1. Yes");
-    expect(lines[4]).toBe("  2. No");
-    expect(lines[5]).toBe("  3. Type something.");
-    expect(lines[6]).toBe("");
-    expect(lines[7]).toBe(" ↑↓ navigate • Enter to select • Esc to cancel");
-    expect(lines[8]).toBe("─".repeat(60));
+    expect(lines[0]).toBe(boxTop(60));
+    expect(lines[1]).toBe(boxed(" Pick one?", 60));
+    expect(lines[2]).toBe(boxed("", 60));
+    expect(lines[3]).toBe(boxed("→ 1. Yes", 60));
+    expect(lines[4]).toBe(boxed("  2. No", 60));
+    expect(lines[5]).toBe(boxed("  3. Type something.", 60));
+    expect(lines[6]).toBe(boxed("", 60));
+    expect(lines[7]).toBe(boxed(" ↑↓ navigate • Enter to select • Esc to cancel", 60));
+    expect(lines[8]).toBe(boxBottom(60));
     expect(lines).toHaveLength(9);
   });
 
   it("marks the selected option with accent spans", () => {
     const scene = buildScene(initialMachineState([question()]), 40);
+    // framed: [rail, marker, label, pad..., rail]
     const selectedLine = scene.lines[3]!;
-    expect(selectedLine[0]).toEqual({ text: "→ ", style: "accent" });
-    expect(selectedLine[1]).toEqual({ text: "1. Yes", style: "accent" });
+    expect(selectedLine[1]).toEqual({ text: "→ ", style: "accent" });
+    expect(selectedLine[2]).toEqual({ text: "1. Yes", style: "accent" });
     const unselectedLine = scene.lines[4]!;
-    expect(unselectedLine[1]).toEqual({ text: "2. No", style: "text" });
+    expect(unselectedLine[2]).toEqual({ text: "2. No", style: "text" });
   });
 
   it("shows descriptions indented under options", () => {
@@ -76,16 +82,16 @@ describe("buildScene: single question", () => {
     });
     const scene = buildScene(initialMachineState([q]), 40);
     const lines = plainLines(scene);
-    expect(lines).toContain("     Go ahead");
+    expect(lines.some((l) => l.includes("     Go ahead"))).toBe(true);
   });
 
   it("wraps long prompts with continuation indentation", () => {
     const q = question({ prompt: "A very long prompt that definitely wraps" });
     const scene = buildScene(initialMachineState([q]), 20);
     const lines = plainLines(scene);
-    expect(lines[1]).toBe(" A very long prompt");
-    expect(lines[2]).toBe(" that definitely");
-    expect(lines[3]).toBe(" wraps");
+    expect(lines[1]).toBe(boxed(" A very long", 20));
+    expect(lines[2]).toBe(boxed(" prompt that", 20));
+    expect(lines[3]).toBe(boxed(" definitely wraps", 20));
   });
 });
 
@@ -93,16 +99,16 @@ describe("buildScene: multi question", () => {
   it("renders a tab bar with the active tab marked by a bordered square", () => {
     const scene = buildScene(initialMachineState(twoQuestions()), 60);
     const lines = plainLines(scene);
-    expect(lines[1]).toBe(" ←  ▣ Q1   □ Q2   ✓ Submit  →");
-    expect(lines[2]).toBe("");
-    expect(lines[3]).toBe(" Pick one?");
+    expect(lines[1]).toBe(boxed(" ←  ▣ Q1   □ Q2   ✓ Submit  →", 60));
+    expect(lines[2]).toBe(boxed("", 60));
+    expect(lines[3]).toBe(boxed(" Pick one?", 60));
   });
 
   it("marks answered tabs with filled squares", () => {
     let state = initialMachineState(twoQuestions());
     state = step(state, KeyEvent.enter).state; // answer q1
     const scene = buildScene(state, 60);
-    expect(plainLines(scene)[1]).toBe(" ←  ■ Q1   ▣ Q2   ✓ Submit  →");
+    expect(plainLines(scene)[1]).toBe(boxed(" ←  ■ Q1   ▣ Q2   ✓ Submit  →", 60));
   });
 
   it("shows the submit tab summary with unanswered warnings", () => {
@@ -111,9 +117,9 @@ describe("buildScene: multi question", () => {
     state = step(state, KeyEvent.tab).state; // submit tab
     const scene = buildScene(state, 60);
     const lines = plainLines(scene);
-    expect(lines[3]).toBe(" Ready to submit");
-    expect(lines[5]).toBe(" Q1: Yes");
-    expect(lines[7]).toBe(" Unanswered: Q2");
+    expect(lines[3]).toBe(boxed(" Ready to submit", 60));
+    expect(lines[5]).toBe(boxed(" Q1: Yes", 60));
+    expect(lines[7]).toBe(boxed(" Unanswered: Q2", 60));
   });
 
   it("offers submit when all questions are answered", () => {
@@ -122,8 +128,8 @@ describe("buildScene: multi question", () => {
     state = step(state, KeyEvent.enter).state; // q2 answered, now submit tab
     const scene = buildScene(state, 60);
     const lines = plainLines(scene);
-    expect(lines).toContain(" Press Enter to submit");
-    expect(lines.some((l) => l.startsWith(" Unanswered"))).toBe(false);
+    expect(lines).toContain(boxed(" Press Enter to submit", 60));
+    expect(lines.some((l) => l.includes(" Unanswered"))).toBe(false);
   });
 
   it("shows the custom answer as a subtitle under 'Type something'", () => {
@@ -135,8 +141,8 @@ describe("buildScene: multi question", () => {
     state = step(state, KeyEvent.enter).state; // submit, advance to q2
     state = step(state, KeyEvent.shiftTab).state; // back to q1
     const lines = plainLines(buildScene(state, 60));
-    expect(lines).toContain("→ 3. Type something.");
-    expect(lines).toContain("     Current answer: hi");
+    expect(lines.some((l) => l.includes("→ 3. Type something."))).toBe(true);
+    expect(lines.some((l) => l.includes("     Current answer: hi"))).toBe(true);
   });
 
   it("shows the chosen option when returning to its tab", () => {
@@ -145,7 +151,7 @@ describe("buildScene: multi question", () => {
     state = step(state, KeyEvent.enter).state; // answer q1, advance to q2
     state = step(state, KeyEvent.shiftTab).state; // back to q1
     const lines = plainLines(buildScene(state, 60));
-    expect(lines).toContain("→ 2. No");
+    expect(lines.some((l) => l.includes("→ 2. No"))).toBe(true);
     expect(lines.some((l) => l.includes("Current answer"))).toBe(false);
   });
 
@@ -161,9 +167,11 @@ describe("buildScene: multi question", () => {
     state = step(state, KeyEvent.enter).state; // submit, advance to q2
     state = step(state, KeyEvent.shiftTab).state; // back to q1
     const lines = plainLines(buildScene(state, 60));
-    const descLine = lines.find((l) => l.trim() === "Go ahead");
+    const descLine = lines.find((l) => l.includes("Go ahead"));
     const answerLine = lines.find((l) => l.includes("Current answer: hi"));
-    expect(descLine?.replace("Go ahead", "")).toBe(answerLine?.replace("Current answer: hi", ""));
+    // Both subtitles must share the same indentation inside the box.
+    const before = (l: string, text: string) => l.slice(0, l.indexOf(text));
+    expect(before(descLine!, "Go ahead")).toBe(before(answerLine!, "Current answer: hi"));
   });
 
   it("shows a custom answer in the submit summary", () => {
@@ -175,8 +183,8 @@ describe("buildScene: multi question", () => {
     state = step(state, KeyEvent.enter).state; // submit, advance to q2
     state = step(state, KeyEvent.enter).state; // answer q2 "Yes", advance to submit
     const lines = plainLines(buildScene(state, 60));
-    expect(lines).toContain(" Q1: (wrote) hi");
-    expect(lines).toContain(" Q2: Yes");
+    expect(lines.some((l) => l.includes(" Q1: (wrote) hi"))).toBe(true);
+    expect(lines.some((l) => l.includes(" Q2: Yes"))).toBe(true);
   });
 });
 
@@ -184,14 +192,14 @@ describe("buildScene: editor mode", () => {
   it("shows the editor box with prompt and options", () => {
     const scene = buildScene(openEditor(initialMachineState([question()])), 40);
     const lines = plainLines(scene);
-    expect(lines[1]).toBe(" Pick one?");
-    expect(lines).toContain(" Your answer:");
+    expect(lines[1]).toBe(boxed(" Pick one?", 40));
+    expect(lines).toContain(boxed(" Your answer:", 40));
     expect(lines.some((l) => l.includes("Shift+Enter"))).toBe(true);
     expect(lines.some((l) => l.includes("Esc to go back"))).toBe(true);
-    expect(lines[3]).toBe("  1. Yes");
-    expect(lines[5]).toBe("→ 3. Type something. ✎");
-    // editor box frame, prefixed with the gutter space
-    expect(lines[8]).toBe(" ╭" + "─".repeat(36) + "╮");
+    expect(lines[3]).toBe(boxed("  1. Yes", 40));
+    expect(lines[5]).toBe(boxed("→ 3. Type something. ✎", 40));
+    // editor box frame, prefixed with the gutter space, inside the outer rails
+    expect(lines[8]).toBe("│ ╭" + "─".repeat(35) + "╮│");
   });
 
   it("does not render the navigation help while editing", () => {
@@ -210,8 +218,8 @@ describe("buildScene: editor mode", () => {
     const lines = plainLines(scene);
     const popupStart = lines.findIndex((l) => l.includes("→ main.ts"));
     expect(popupStart).toBeGreaterThan(-1);
-    expect(lines[popupStart]).toBe("  → main.ts");
-    expect(lines[popupStart + 1]).toBe("    utils/");
+    expect(lines[popupStart]).toBe(boxed("  → main.ts", 40));
+    expect(lines[popupStart + 1]).toBe(boxed("    utils/", 40));
     expect(lines.some((l) => l.includes("↑↓ pick") && l.includes("Enter/Tab complete"))).toBe(true);
     expect(lines.some((l) => l.includes("Shift+Enter"))).toBe(false);
   });
@@ -299,8 +307,10 @@ describe("buildEditorBox", () => {
     for (let i = 1; i <= 4; i++) {
       expect(plain(box[i]!)).toBe("│ aaaa │");
     }
-    // last line carries the trailing cursor cell
-    expect(plain(box[5]!)).toBe("│ aaaa  │");
+    // The last logical row is exactly full, so the trailing cursor cell
+    // would overflow the rails and is dropped — the row stays flush, matching
+    // BorderedBox's row clipping (see sdk/box-parity.test.ts).
+    expect(plain(box[5]!)).toBe("│ aaaa │");
     expect(plain(box[6]!)).toBe("╰" + "─".repeat(6) + "╯");
   });
 

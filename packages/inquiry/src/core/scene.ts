@@ -7,6 +7,7 @@
  * touches ANSI codes or terminal themes.
  */
 
+import { buildBoxFrame } from "@ftrdotdev/pi-tui/box-frame";
 import type { MachineState } from "./machine.ts";
 import { currentOptions, isAllAnswered, type SuggestionState } from "./machine.ts";
 import { truncateToWidth, visibleWidth } from "./text.ts";
@@ -151,33 +152,34 @@ const breakLongSpan = (token: Span, width: number): readonly Span[][] => {
 /**
  * Build the scene for the current machine state.
  *
- * Layout mirrors the legacy tools: accent separators, wrapped prompt,
+ * The whole questionnaire is framed in the house rounded border (╭─╮│╰─╯) —
+ * the same geometry `buildEditorBox` and the BorderedBox component use —
+ * replacing the legacy flat accent separators. Inside: wrapped prompt,
  * numbered options with `→ ` selection marker (the same arrow the main
  * editor's autocomplete popup uses), optional tab bar, inline editor box,
  * and a help line.
  */
 export const buildScene = (state: MachineState, width: number): Scene => {
   const renderWidth = Math.max(1, width);
+  const frame = buildBoxFrame(renderWidth, { paddingX: 0 });
+  if (!frame) return { lines: [] };
+  const contentWidth = frame.contentWidth;
   const lines: SceneLine[] = [];
   const question = state.questions[state.currentTab];
   const options = currentOptions(state);
 
   const pushWrapped = (prefix: Span, content: SceneLine): void => {
     const prefixWidth = visibleWidth(prefix.text);
-    if (prefixWidth >= renderWidth) {
+    if (prefixWidth >= contentWidth) {
       lines.push([prefix, ...content]);
       return;
     }
-    const wrapped = wrapLine(content, renderWidth - prefixWidth);
+    const wrapped = wrapLine(content, contentWidth - prefixWidth);
     for (let i = 0; i < wrapped.length; i++) {
       lines.push(
         i === 0 ? [prefix, ...wrapped[i]!] : [span(" ".repeat(prefixWidth)), ...wrapped[i]!],
       );
     }
-  };
-
-  const pushSeparator = (): void => {
-    lines.push([span("─".repeat(renderWidth), "accent")]);
   };
 
   const renderOptions = (): void => {
@@ -199,8 +201,6 @@ export const buildScene = (state: MachineState, width: number): Scene => {
       }
     }
   };
-
-  pushSeparator();
 
   // Tab bar (multi-question mode only)
   if (state.mode === "multi") {
@@ -235,13 +235,15 @@ export const buildScene = (state: MachineState, width: number): Scene => {
     renderOptions();
     lines.push([]);
     pushWrapped(span(" "), [span("Your answer:", "muted")]);
-    for (const editorLine of buildEditorBox(state.editor, Math.max(1, renderWidth - 2))) {
+    // The editor box spans the content between the rails minus its 1-space
+    // gutter; the popup floats two spaces deeper under the input.
+    for (const editorLine of buildEditorBox(state.editor, Math.max(1, contentWidth - 1))) {
       lines.push([span(" "), ...editorLine]);
     }
     if (state.suggestions) {
       for (const popupLine of buildSuggestionPopup(
         state.suggestions,
-        Math.max(1, renderWidth - 6),
+        Math.max(1, contentWidth - 4),
       )) {
         lines.push([span("  "), ...popupLine]);
       }
@@ -291,30 +293,54 @@ export const buildScene = (state: MachineState, width: number): Scene => {
         : "↑↓ navigate • Enter to select • Esc to cancel";
     pushWrapped(span(" "), [span(help, "dim")]);
   }
-  pushSeparator();
 
-  return { lines };
+  // Frame the interior: accent border with rails, body padded to the content
+  // width so the rails stay flush (the same layout the BorderedBox component
+  // produces around ANSI children).
+  const border = (text: string): Span => span(text, "accent");
+  const framed: SceneLine[] = [
+    [border(frame.top.left), border(frame.top.fill), border(frame.top.right)],
+  ];
+  for (const content of lines) {
+    const pad = contentWidth - visibleWidth(plain(content));
+    const body = pad > 0 ? [...content, span(" ".repeat(pad))] : content;
+    framed.push([border(frame.railLeft), ...body, border(frame.railRight)]);
+  }
+  framed.push([border(frame.bottom.left), border(frame.bottom.fill), border(frame.bottom.right)]);
+  return { lines: framed };
 };
 
 /**
  * Build the inline editor box lines (without the leading gutter space).
- *
- * Mirrors the legacy pi-tui editor look: accent `─` borders, content wrapped
- * to `boxWidth - 1` (one column reserved for the cursor), the cursor drawn as
- * an inverse-video cell (replacing the character under it, or a trailing
- * space at end of text), and content lines padded to the box width.
- */
-/**
- * Build the editor box: a rounded frame (`╭─╮` / `╰─╯`) with vertical rails,
- * matching the box style of the tui and tracker extensions. Content is
- * word-wrapped to `boxWidth - 4` (one space of padding inside each rail) and
- * padded so the rails stay flush; the cursor is drawn as a reverse-video
- * cell (a trailing space at the end of the text).
  */
 export const buildEditorBox = (editor: EditorState, boxWidth: number): readonly SceneLine[] => {
   const box = Math.max(4, boxWidth);
-  const contentWidth = box - 4;
+  const frame = buildBoxFrame(box, { paddingX: 1 });
+  if (!frame) return [];
+  const border = (text: string): Span => span(text, "border");
+  const rows = buildEditorRows(editor, frame.contentWidth);
+  return [
+    [border(frame.top.left), border(frame.top.fill), border(frame.top.right)],
+    ...rows.map((row) => [
+      border(frame.railLeft),
+      span(frame.padLeft),
+      ...row,
+      span(frame.padRight),
+      border(frame.railRight),
+    ]),
+    [border(frame.bottom.left), border(frame.bottom.fill), border(frame.bottom.right)],
+  ];
+};
 
+/**
+ * The editor's content rows, wrapped and padded to `contentWidth` (no frame).
+ * The cursor is a reverse-video cell that replaces the character under it, or
+ * a trailing space at the end of the text.
+ */
+export const buildEditorRows = (
+  editor: EditorState,
+  contentWidth: number,
+): readonly SceneLine[] => {
   const chars = Array.from(editor.text);
   const cursor = Math.min(editor.cursor, chars.length);
 
@@ -340,11 +366,7 @@ export const buildEditorBox = (editor: EditorState, boxWidth: number): readonly 
     }
   }
 
-  const frame = (char: string): Span => span(char, "border");
-
   const out: SceneLine[] = [];
-  out.push([frame("╭"), frame("─".repeat(box - 2)), frame("╮")]);
-
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
     const rowChars = Array.from(row.text);
@@ -367,17 +389,20 @@ export const buildEditorBox = (editor: EditorState, boxWidth: number): readonly 
       }
     }
     if (i === cursorRow && cursorAtEnd) {
-      spans.push(span(" ", "cursor"));
+      // Reserve a trailing cell for the cursor only when the row has room:
+      // at exact fill the cursor cell would overflow the frame rails, so it
+      // is dropped (the cursor rests on the last cell — the same clipping
+      // BorderedBox applies to body rows via truncateToWidth).
+      const roomForCursor = visibleWidth(plain(spans)) + 1 <= contentWidth;
+      if (roomForCursor) spans.push(span(" ", "cursor"));
     }
     // Pad content to the content width so the rails stay flush (the cursor
     // cell counts toward the width).
     const renderedWidth = visibleWidth(plain(spans));
     const padding = " ".repeat(Math.max(0, contentWidth - renderedWidth));
     if (padding) spans.push(span(padding));
-    out.push([frame("│"), span(" "), ...spans, span(" "), frame("│")]);
+    out.push(spans);
   }
-
-  out.push([frame("╰"), frame("─".repeat(box - 2)), frame("╯")]);
   return out;
 };
 
