@@ -20,8 +20,10 @@
       "effect": "4.0.0-rc.108"
     },
     "pi": {
+      "@earendil-works/pi-ai": "0.84.2",
       "@earendil-works/pi-coding-agent": "^0.84.2",
-      "@earendil-works/pi-tui": "^0.84.2"
+      "@earendil-works/pi-tui": "^0.84.2",
+      "typebox": "1.3.7"
     },
     "tooling": {
       "@types/bun": "latest",
