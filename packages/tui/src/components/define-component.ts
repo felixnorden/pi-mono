@@ -24,4 +24,10 @@ export interface ComponentMethods {
  * hand pi a class-method reference (`{ render: widget.render }`), which
  * rebinds `this` to the wrapper and breaks the component.
  */
-export const defineComponent = (methods: ComponentMethods): Component => ({ ...methods });
+export const defineComponent = (methods: ComponentMethods) => ({ ...methods }) satisfies Component;
+
+/**
+ * A component object as returned by {@link defineComponent}: the closures
+ * handed in, with an optional `dispose` lifecycle hook.
+ */
+export type DisposableComponent = ReturnType<typeof defineComponent>;
