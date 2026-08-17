@@ -10,7 +10,7 @@
     "test:watch": "vitest",
     "lint": "oxlint && oxlint --type-aware -A all -D typescript/unbound-method",
     "lint:fix": "oxlint --fix",
-    "fmt": "oxfmt -c oxfmt.config.ts",
+    "fmt": "oxfmt",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
