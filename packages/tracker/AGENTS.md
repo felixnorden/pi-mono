@@ -17,3 +17,13 @@ implementations live in `examples/extensions/todo.ts` (stateful tool with
 session persistence) and `examples/extensions/plan-mode/index.ts` (widget
 pane). The integration layer in `src/index.ts` deliberately stays thin:
 domain logic lives in Effect services; only the bridge touches `pi` APIs.
+
+## Component seam rule
+
+Every component handed to pi must be a plain object built from closures
+(`makeTrackerWidget`, `makeTrackerOverlay`, `makeBorderedBox`). Never hand pi
+a class-method reference (`{ render: widget.render }`): pi-tui invokes
+`render`/`invalidate` as methods of the wrapper object it received, so an
+unbound method loses `this` and crashes (the resume `computeLines` bug).
+Closure components carry no `this` and survive any hand-off. Enforced by the
+`typescript/unbound-method` lint rule (`oxlint --type-aware`).
