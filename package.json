@@ -6,6 +6,12 @@
   ],
   "type": "module",
   "module": "index.ts",
+  "scripts": {
+    "publish:tui": "cd packages/tui && bun publish --ignore-scripts",
+    "publish:tracker": "cd packages/tracker && bun publish --ignore-scripts",
+    "publish:inquiry": "cd packages/inquiry && bun publish --ignore-scripts",
+    "publish:packages": "bun run publish:tui && bun run publish:tracker && bun run publish:inquiry"
+  },
   "devDependencies": {
     "@types/bun": "catalog:tooling",
     "oxfmt": "catalog:tooling",

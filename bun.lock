@@ -15,9 +15,8 @@
       "name": "@ftrdotdev/pi-inquiry",
       "version": "0.1.0",
       "dependencies": {
-        "@ftrdotdev/pi-tui": "workspace:*",
+        "@ftrdotdev/pi-tui": "^0.1.0",
         "effect": "catalog:effect",
-        "typebox": "catalog:pi",
       },
       "devDependencies": {
         "@earendil-works/pi-ai": "catalog:pi",
@@ -31,40 +30,18 @@
         "vitest": "catalog:tooling",
       },
       "peerDependencies": {
-        "@earendil-works/pi-coding-agent": "catalog:pi",
-        "@earendil-works/pi-tui": "catalog:pi",
+        "@earendil-works/pi-coding-agent": "*",
+        "@earendil-works/pi-tui": "*",
+        "typebox": "*",
       },
     },
     "packages/tracker": {
       "name": "@ftrdotdev/pi-tracker",
+      "version": "0.1.0",
       "dependencies": {
-        "@earendil-works/pi-ai": "catalog:pi",
         "@effect/platform-node": "catalog:effect",
-        "@ftrdotdev/pi-tui": "workspace:*",
+        "@ftrdotdev/pi-tui": "^0.1.0",
         "effect": "catalog:effect",
-        "typebox": "catalog:pi",
-      },
-      "devDependencies": {
-        "@effect/tsgo": "catalog:effect",
-        "@effect/vitest": "catalog:effect",
-        "@types/bun": "catalog:tooling",
-        "oxlint": "catalog:tooling",
-        "oxlint-tsgolint": "catalog:tooling",
-        "typescript": "catalog:tooling",
-        "vitest": "catalog:tooling",
-      },
-      "peerDependencies": {
-        "@earendil-works/pi-coding-agent": "catalog:pi",
-        "@earendil-works/pi-tui": "catalog:pi",
-      },
-    },
-    "packages/tui": {
-      "name": "@ftrdotdev/pi-tui",
-      "dependencies": {
-        "@earendil-works/pi-ai": "catalog:pi",
-        "@effect/platform-node": "catalog:effect",
-        "effect": "catalog:effect",
-        "typebox": "catalog:pi",
       },
       "devDependencies": {
         "@effect/tsgo": "catalog:effect",
@@ -77,8 +54,34 @@
         "vitest": "catalog:tooling",
       },
       "peerDependencies": {
-        "@earendil-works/pi-coding-agent": "catalog:pi",
-        "@earendil-works/pi-tui": "catalog:pi",
+        "@earendil-works/pi-ai": "*",
+        "@earendil-works/pi-coding-agent": "*",
+        "@earendil-works/pi-tui": "*",
+        "typebox": "*",
+      },
+    },
+    "packages/tui": {
+      "name": "@ftrdotdev/pi-tui",
+      "version": "0.1.0",
+      "dependencies": {
+        "@effect/platform-node": "catalog:effect",
+        "effect": "catalog:effect",
+      },
+      "devDependencies": {
+        "@effect/tsgo": "catalog:effect",
+        "@effect/vitest": "catalog:effect",
+        "@types/bun": "catalog:tooling",
+        "oxfmt": "catalog:tooling",
+        "oxlint": "catalog:tooling",
+        "oxlint-tsgolint": "catalog:tooling",
+        "typescript": "catalog:tooling",
+        "vitest": "catalog:tooling",
+      },
+      "peerDependencies": {
+        "@earendil-works/pi-ai": "*",
+        "@earendil-works/pi-coding-agent": "*",
+        "@earendil-works/pi-tui": "*",
+        "typebox": "*",
       },
     },
   },

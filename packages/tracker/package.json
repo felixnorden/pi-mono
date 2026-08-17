@@ -1,9 +1,35 @@
 {
   "name": "@ftrdotdev/pi-tracker",
-  "private": true,
+  "version": "0.1.0",
   "description": "Session-persistent todolist extension for Pi",
+  "keywords": [
+    "effect",
+    "pi",
+    "pi-coding-agent",
+    "pi-package",
+    "todolist",
+    "tracker",
+    "extension",
+    "todo",
+    "task"
+  ],
+  "homepage": "https://github.com/felixnorden/pi-mono#readme",
+  "bugs": {
+    "url": "https://github.com/felixnorden/pi-mono/issues"
+  },
+  "license": "MIT",
+  "author": "Felix Nord\u00e9n <felixnorden@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felixnorden/pi-mono.git",
+    "directory": "packages/tracker"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "type": "module",
-  "module": "index.ts",
   "scripts": {
     "prepare": "effect-tsgo patch --typescript --oxlint",
     "test": "vitest run",
@@ -14,28 +40,32 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "catalog:pi",
     "@effect/platform-node": "catalog:effect",
-    "@ftrdotdev/pi-tui": "workspace:*",
-    "effect": "catalog:effect",
-    "typebox": "catalog:pi"
+    "@ftrdotdev/pi-tui": "^0.1.0",
+    "effect": "catalog:effect"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:effect",
     "@effect/vitest": "catalog:effect",
     "@types/bun": "catalog:tooling",
+    "oxfmt": "catalog:tooling",
     "oxlint": "catalog:tooling",
     "oxlint-tsgolint": "catalog:tooling",
     "typescript": "catalog:tooling",
     "vitest": "catalog:tooling"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "catalog:pi",
-    "@earendil-works/pi-tui": "catalog:pi"
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "pi": {
     "extensions": [
       "./src/index.ts"
     ]
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

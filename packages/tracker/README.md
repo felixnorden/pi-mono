@@ -115,14 +115,32 @@ The state restores on resume, fork, and tree navigation.
 
 ## Installation
 
-Place the `pi-tracker` directory in your Pi extensions directory. Pi loads
-`src/index.ts` as the entry point. The `pi.extensions` field in `package.json`
-declares it.
-
-Install dependencies with:
+Install from npm:
 
 ```bash
-bun install
+pi install npm:@ftrdotdev/pi-tracker
+```
+
+From git or a local checkout:
+
+```bash
+pi install git:github.com/felixnorden/pi-mono
+pi install ./path/to/pi-mono/packages/tracker
+```
+
+To try the package without installing it, use `-e` (temporary, current run
+only):
+
+```bash
+pi -e npm:@ftrdotdev/pi-tracker
+```
+
+Registration lives in `package.json` under the `pi` field:
+
+```json
+"pi": {
+  "extensions": ["./src/index.ts"]
+}
 ```
 
 ## Development

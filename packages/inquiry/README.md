@@ -34,8 +34,8 @@ pi install npm:@ftrdotdev/pi-inquiry
 From git or a local checkout:
 
 ```bash
-pi install git:github.com/felixnorden/pi-inquiry
-pi install ./path/to/pi-inquiry
+pi install git:github.com/felixnorden/pi-mono
+pi install ./path/to/pi-mono/packages/inquiry
 ```
 
 To try the package without installing it, use `-e` (temporary, current run

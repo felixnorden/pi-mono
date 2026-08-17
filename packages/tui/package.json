@@ -1,6 +1,33 @@
 {
   "name": "@ftrdotdev/pi-tui",
-  "private": true,
+  "version": "0.1.0",
+  "description": "House TUI components and the pi interface extension: themed boxes, a pure box-frame model, and the header/footer/editor/settings/preview chrome",
+  "keywords": [
+    "components",
+    "effect",
+    "pi",
+    "pi-coding-agent",
+    "pi-package",
+    "tui",
+    "extension",
+    "terminal"
+  ],
+  "homepage": "https://github.com/felixnorden/pi-mono#readme",
+  "bugs": {
+    "url": "https://github.com/felixnorden/pi-mono/issues"
+  },
+  "license": "MIT",
+  "author": "Felix Nord\u00e9n <felixnorden@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felixnorden/pi-mono.git",
+    "directory": "packages/tui"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "type": "module",
   "exports": {
     ".": {
@@ -10,7 +37,8 @@
     "./box-frame": {
       "types": "./src/frame/box-frame.ts",
       "default": "./src/frame/box-frame.ts"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
     "test": "vitest run",
@@ -22,10 +50,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "catalog:pi",
     "@effect/platform-node": "catalog:effect",
-    "effect": "catalog:effect",
-    "typebox": "catalog:pi"
+    "effect": "catalog:effect"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:effect",
@@ -38,12 +64,17 @@
     "vitest": "catalog:tooling"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "catalog:pi",
-    "@earendil-works/pi-tui": "catalog:pi"
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "pi": {
     "extensions": [
       "./src/index.ts"
     ]
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
