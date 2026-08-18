@@ -14,9 +14,9 @@
     },
     "packages/inquiry": {
       "name": "@ftrdotdev/pi-inquiry",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
-        "@ftrdotdev/pi-tui": "^0.1.0",
+        "@ftrdotdev/pi-tui": "^0.2.0",
         "effect": "catalog:effect",
       },
       "devDependencies": {
@@ -38,7 +38,7 @@
     },
     "packages/qrspi": {
       "name": "@ftrdotdev/pi-qrspi",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "catalog:pi",
         "@types/bun": "catalog:tooling",
@@ -49,10 +49,10 @@
     },
     "packages/tracker": {
       "name": "@ftrdotdev/pi-tracker",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@effect/platform-node": "catalog:effect",
-        "@ftrdotdev/pi-tui": "^0.1.0",
+        "@ftrdotdev/pi-tui": "^0.2.0",
         "effect": "catalog:effect",
       },
       "devDependencies": {
@@ -74,7 +74,7 @@
     },
     "packages/tui": {
       "name": "@ftrdotdev/pi-tui",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@effect/platform-node": "catalog:effect",
         "effect": "catalog:effect",

@@ -49,7 +49,7 @@
     "lint": "oxlint && oxlint --type-aware -A all -D typescript/unbound-method",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
-    "prepare": "effect-tsgo patch --typescript --oxlint",
+    "prepare": "bun effect-tsgo patch --typescript --oxlint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
