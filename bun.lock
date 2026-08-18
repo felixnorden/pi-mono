@@ -35,6 +35,17 @@
         "typebox": "*",
       },
     },
+    "packages/qrspi": {
+      "name": "@ftrdotdev/pi-qrspi",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@earendil-works/pi-coding-agent": "catalog:pi",
+        "@types/bun": "catalog:tooling",
+        "oxfmt": "catalog:tooling",
+        "oxlint": "catalog:tooling",
+        "typescript": "catalog:tooling",
+      },
+    },
     "packages/tracker": {
       "name": "@ftrdotdev/pi-tracker",
       "version": "0.1.0",
@@ -197,6 +208,8 @@
     "@effect/vitest": ["@effect/vitest@4.0.0-rc.108", "", { "peerDependencies": { "effect": "^4.0.0-rc.108", "vitest": ">=4.1.0 <5.0.0" } }, "sha512-XD2GP1JATN28wnIeFGsBqYMuQDCHIodKKgFulGyG91GvuHqgf2gz+WxR2LPdyNoKMtr7lsbRzVj07niSYtIKzA=="],
 
     "@ftrdotdev/pi-inquiry": ["@ftrdotdev/pi-inquiry@workspace:packages/inquiry"],
+
+    "@ftrdotdev/pi-qrspi": ["@ftrdotdev/pi-qrspi@workspace:packages/qrspi"],
 
     "@ftrdotdev/pi-tracker": ["@ftrdotdev/pi-tracker@workspace:packages/tracker"],
 
