@@ -1,6 +1,6 @@
 {
   "name": "@ftrdotdev/pi-inquiry",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Interactive questions for the pi coding agent: a single `question` tool renders option lists, tabbed forms, and free-text answers",
   "keywords": [
     "effect",
@@ -24,6 +24,7 @@
     "directory": "packages/inquiry"
   },
   "files": [
+    "index.ts",
     "src",
     "README.md",
     "LICENSE"
@@ -41,7 +42,7 @@
     "fmt": "oxfmt -c oxfmt.config.ts"
   },
   "dependencies": {
-    "@ftrdotdev/pi-tui": "^0.2.0",
+    "@ftrdotdev/pi-tui": "^0.2.1",
     "effect": "catalog:effect"
   },
   "devDependencies": {
@@ -62,7 +63,7 @@
   },
   "pi": {
     "extensions": [
-      "./src/tool/question.ts"
+      "./index.ts"
     ]
   }
 }
