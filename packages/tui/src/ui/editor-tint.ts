@@ -35,36 +35,28 @@ export class EditorTintService extends Context.Service<
     ) => void;
     readonly getTint: () => ThemeColor | undefined;
   }
->()("tui/editor/EditorTintService") {}
+>()("tui/editor/EditorTintService") {
+  static readonly layer = Layer.sync(EditorTintService, () => {
+    let providers: readonly BorderTintProvider[] = [];
+
+    const implementation = EditorTintService.of({
+      configure(update) {
+        providers = update(providers);
+      },
+      getTint() {
+        for (let i = providers.length - 1; i >= 0; i--) {
+          const tint = providers[i]?.getTint();
+          if (tint !== undefined) return tint;
+        }
+        return undefined;
+      },
+    });
+    return implementation;
+  });
+}
 
 /** Resolved instance shape (what `Effect.service(EditorTintService)` returns). */
 export type EditorTintServiceHandle = EditorTintService["Service"];
-
-// Module-level registry shared by every provider of the default layer.
-let providers: readonly BorderTintProvider[] = [];
-
-const implementation = EditorTintService.of({
-  configure(update) {
-    providers = update(providers);
-  },
-  getTint() {
-    for (let i = providers.length - 1; i >= 0; i--) {
-      const tint = providers[i]?.getTint();
-      if (tint !== undefined) return tint;
-    }
-    return undefined;
-  },
-});
-
-/** Default layer exposing the shared registry; extensions may override it. */
-export const EditorTintServiceDefault = Layer.succeed(EditorTintService, implementation);
-
-/**
- * Reset the shared registry (test support).
- */
-export function resetEditorTintProviders(): void {
-  providers = [];
-}
 
 /**
  * Upsert a provider by `id`: drop any existing provider with the same id,

@@ -19,9 +19,12 @@ import {
 } from "./state.ts";
 
 import { Effect, Layer } from "effect";
-import { NodeServices } from "@effect/platform-node";
+import * as NodePath from "@effect/platform-node/NodePath";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodeChildProcessSpawner from "@effect/platform-node/NodeChildProcessSpawner";
+
 import { VimRouter } from "./vim/vim-router.ts";
-import { EditorTintService, EditorTintServiceDefault } from "./ui/editor-tint.ts";
+import { EditorTintService } from "./ui/editor-tint.ts";
 
 function isInteractiveLaunch(): boolean {
   if (!process.stdout.isTTY) return false;
@@ -344,16 +347,25 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
 });
 
 export default function (pi: ExtensionAPI) {
-  const program = main(pi).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        TuiConfigService.layer,
-        GitStatusService.layer,
-        PreviewService.make(homedir),
-        EditorTintServiceDefault,
-      ).pipe(Layer.provideMerge(GitExecutionService.layer), Layer.provideMerge(NodeServices.layer)),
-    ),
+  const nodeLayer = NodeChildProcessSpawner.layer.pipe(
+    Layer.provide(Layer.mergeAll(NodePath.layer, NodeFileSystem.layer)),
   );
+  const gitExecLayer = GitExecutionService.layer.pipe(Layer.provide(nodeLayer));
+  const gitLayer = Layer.provide(GitStatusService.layer, gitExecLayer);
+  const previewLayer = PreviewService.make(homedir).pipe(
+    Layer.provide(Layer.merge(NodePath.layer, NodeFileSystem.layer)),
+  );
+  const tuiLayer = TuiConfigService.layer.pipe(Layer.provide(NodeFileSystem.layer));
+
+  const allLayers = Layer.mergeAll(
+    tuiLayer,
+    EditorTintService.layer,
+    previewLayer,
+    gitExecLayer,
+    gitLayer,
+  );
+
+  const program = main(pi).pipe(Effect.provide(allLayers));
 
   Effect.runSync(program);
 }

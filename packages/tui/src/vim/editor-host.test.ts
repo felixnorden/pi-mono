@@ -17,9 +17,7 @@ import { TuiEditor, type TuiEditorOptions } from "../ui/editor.ts";
 import { vimModeGlyph, vimModeTint } from "./mode-indicator.ts";
 import {
   EditorTintService,
-  EditorTintServiceDefault,
   type EditorTintServiceHandle,
-  resetEditorTintProviders,
   upsertBorderTintProvider,
 } from "../ui/editor-tint.ts";
 import { closeAutocomplete } from "./editor-close-autocomplete.ts";
@@ -234,25 +232,27 @@ it("tracks a changing tint source across renders", () => {
 // ---------------------------------------------------------------------------
 
 const resolveTint = (): EditorTintServiceHandle =>
-  Effect.runSync(
-    Effect.service(EditorTintService).pipe(Effect.provide(EditorTintServiceDefault)),
-  );
+  Effect.runSync(Effect.service(EditorTintService).pipe(Effect.provide(EditorTintService.layer)));
 
 /**
- * Mirror installEditor's wiring on a bare TuiEditor: ask the shared service
- * for the tint and register vim's provider reading the live modal state.
+ * Mirror installEditor's wiring on a bare TuiEditor. installEditor receives a
+ * single resolved service handle and uses it for both the editor's border
+ * getter and vim's provider registration; a per-test handle is passed in (or
+ * freshly resolved) so both closures see the same provider registry.
  */
-const makeVimTintEditor = (getVimEnabled: () => boolean): TuiEditor => {
-  resetEditorTintProviders();
+const makeVimTintEditor = (
+  getVimEnabled: () => boolean,
+  tint: EditorTintServiceHandle = resolveTint(),
+): TuiEditor => {
   const tui = { terminal: { rows: 24, write() {} }, requestRender() {} } as unknown as TUI;
   const kb = new TuiKeybindingsManager(TUI_KEYBINDINGS, {}) as unknown as KeybindingsManager;
   setKeybindings(kb);
   const editor = new TuiEditor(tui, fakeEditorTheme, kb, {
     getVimEnabled,
     tintPaint: (color, s) => `${color}:${s}`,
-    getBorderTint: () => resolveTint().getTint(),
+    getBorderTint: () => tint.getTint(),
   });
-  resolveTint().configure((current) =>
+  tint.configure((current) =>
     upsertBorderTintProvider(current, { id: "vim", getTint: () => vimModeTint(editor.vimState) }),
   );
   return editor;
@@ -279,11 +279,12 @@ it("vim stays untinted when the toggle is off", () => {
 });
 
 it("another extension can override vim's tint through configure", () => {
-  const editor = makeVimTintEditor(() => true);
+  const tint = resolveTint();
+  const editor = makeVimTintEditor(() => true, tint);
   editor.handleInput("\x1b"); // normal → vim tints syntaxOperator
   assert.ok(topBorderOf(editor).includes("syntaxOperator:"));
   // A later .configure from a different extension takes precedence.
-  resolveTint().configure((cur) =>
+  tint.configure((cur) =>
     upsertBorderTintProvider(cur, { id: "my-extension", getTint: () => "error" }),
   );
   assert.ok(topBorderOf(editor).includes("error:"));

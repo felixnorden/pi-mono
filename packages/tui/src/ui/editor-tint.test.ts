@@ -3,20 +3,12 @@ import { Effect } from "effect";
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import {
   EditorTintService,
-  EditorTintServiceDefault,
   type EditorTintServiceHandle,
-  resetEditorTintProviders,
   upsertBorderTintProvider,
 } from "./editor-tint.ts";
 
 const resolveTint = (): EditorTintServiceHandle =>
-  Effect.runSync(
-    Effect.service(EditorTintService).pipe(Effect.provide(EditorTintServiceDefault)),
-  );
-
-afterEach(() => {
-  resetEditorTintProviders();
-});
+  Effect.runSync(Effect.service(EditorTintService).pipe(Effect.provide(EditorTintService.layer)));
 
 // ---------------------------------------------------------------------------
 // EditorTintService (configure / getTint)
@@ -28,9 +20,7 @@ it("returns undefined with no providers registered", () => {
 
 it("returns the registered provider's tint", () => {
   const tint = resolveTint();
-  tint.configure((cur) =>
-    upsertBorderTintProvider(cur, { id: "a", getTint: () => "success" }),
-  );
+  tint.configure((cur) => upsertBorderTintProvider(cur, { id: "a", getTint: () => "success" }));
   assert.strictEqual(tint.getTint(), "success");
 });
 
@@ -44,9 +34,7 @@ it("the last provider with a defined tint wins (later .configure overrides)", ()
 it("providers whose tint is undefined fall through to earlier ones", () => {
   const tint = resolveTint();
   tint.configure((cur) => upsertBorderTintProvider(cur, { id: "base", getTint: () => "success" }));
-  tint.configure((cur) =>
-    upsertBorderTintProvider(cur, { id: "pass", getTint: () => undefined }),
-  );
+  tint.configure((cur) => upsertBorderTintProvider(cur, { id: "pass", getTint: () => undefined }));
   // "pass" is last but undefined → falls through to "base"
   assert.strictEqual(tint.getTint(), "success");
 });
