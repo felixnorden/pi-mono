@@ -51,6 +51,7 @@ const getState = () => state;
 const config: TuiConfig = {
   enabled: true,
   settingsLanguage: "en",
+  vim: false,
   icons: { mode: "ascii" },
   footerSegments: {
     cwd: true,

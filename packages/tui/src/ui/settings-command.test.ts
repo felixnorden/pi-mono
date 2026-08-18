@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
+import { Effect } from "effect";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_CONFIG, type TuiConfig } from "../config.ts";
+import { VimRouter } from "../vim/vim-router.ts";
 import { makeSettingsUi, type SettingsUiHandle } from "./settings-command.ts";
 
 // Pass-through theme: selections and the active tab are detected via
@@ -13,23 +15,31 @@ const theme = {
 
 const RENDER_WIDTH = 120;
 
+// The settings UI injects an always-true gate for its own router instance
+// (per-consumer gate injection), so its h/j/k/l stay unconditional regardless
+// of the vim toggle.
+const settingsRouter = Effect.runSync(
+  Effect.service(VimRouter).pipe(Effect.provide(VimRouter.make(() => true))),
+);
+
 interface UiSpy {
   ui: SettingsUiHandle;
   changes: TuiConfig[];
   closes: number;
 }
 
-const makeUi = (): UiSpy => {
+const makeUi = (overrides: Partial<TuiConfig> = {}): UiSpy => {
   const spy: UiSpy = { ui: undefined!, changes: [], closes: 0 };
   spy.ui = makeSettingsUi(
     theme,
-    structuredClone(DEFAULT_CONFIG),
+    { ...structuredClone(DEFAULT_CONFIG), ...overrides },
     (config) => {
       spy.changes.push(config);
     },
     () => {
       spy.closes += 1;
     },
+    settingsRouter,
   );
   return spy;
 };
@@ -59,8 +69,26 @@ it("starts with the first item of the features tab selected", () => {
   assert.strictEqual(selectedShows(ui, "Language"), false);
 });
 
+it("renders the Vim mode item on the features tab showing Off by default", () => {
+  const { ui } = makeUi();
+  const lines = rendered(ui);
+  assert.strictEqual(lines.some((line) => line.includes("Vim mode") && line.includes("Off")), true);
+});
+
+it("Space toggles vim on and reports the change", () => {
+  const { ui, changes } = makeUi();
+  ui.handleInput("j"); // move from Enabled to Vim mode
+  ui.handleInput(" ");
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0]!.vim, true);
+  assert.strictEqual(changes[0]!.enabled, true); // other fields untouched
+  assert.strictEqual(rendered(ui).some((line) => line.includes("Vim mode") && line.includes("On")), true);
+});
+
 it("j moves the selection down and wraps to the first item at the end", () => {
   const { ui } = makeUi();
+  ui.handleInput("j");
+  assert.strictEqual(selectedShows(ui, "Vim mode"), true);
   ui.handleInput("j");
   assert.strictEqual(selectedShows(ui, "Language"), true);
   ui.handleInput("j");
@@ -72,7 +100,29 @@ it("k moves the selection up and wraps to the last item at the top", () => {
   ui.handleInput("k");
   assert.strictEqual(selectedShows(ui, "Language"), true);
   ui.handleInput("k");
+  assert.strictEqual(selectedShows(ui, "Vim mode"), true);
+  ui.handleInput("k");
   assert.strictEqual(selectedShows(ui, "Enabled"), true);
+});
+
+it("j moves the selection when vim is on too", () => {
+  const { ui } = makeUi({ vim: true });
+  ui.handleInput("j");
+  assert.strictEqual(selectedShows(ui, "Vim mode"), true);
+  ui.handleInput("j");
+  assert.strictEqual(selectedShows(ui, "Language"), true);
+});
+
+it("h switches tabs with vim off (settings gate is unconditional)", () => {
+  const { ui } = makeUi({ vim: false });
+  ui.handleInput("h");
+  assert.strictEqual(activeTab(ui), "Telemetry");
+});
+
+it("j moves the selection with vim off (settings gate is unconditional)", () => {
+  const { ui } = makeUi({ vim: false });
+  ui.handleInput("j");
+  assert.strictEqual(selectedShows(ui, "Vim mode"), true);
 });
 
 // ---------------------------------------------------------------------------
@@ -105,6 +155,7 @@ it("h switches to the previous tab and wraps from the first tab to the last", ()
 
 it("remembers the selected item per tab when navigating with h/l", () => {
   const { ui } = makeUi();
+  ui.handleInput("j"); // features: Vim mode
   ui.handleInput("j"); // features: Language
   ui.handleInput("l"); // → Icons
   ui.handleInput("h"); // → back to features
@@ -118,7 +169,7 @@ it("remembers the selected item per tab when navigating with h/l", () => {
 it("the arrow keys still move the selection", () => {
   const { ui } = makeUi();
   ui.handleInput("\x1b[B"); // down
-  assert.strictEqual(selectedShows(ui, "Language"), true);
+  assert.strictEqual(selectedShows(ui, "Vim mode"), true);
   ui.handleInput("\x1b[A"); // up
   assert.strictEqual(selectedShows(ui, "Enabled"), true);
 });

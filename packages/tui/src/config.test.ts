@@ -121,6 +121,39 @@ it.effect("load applies a top-level partial override", () =>
   }),
 );
 
+it.effect("load returns vim on when the file stores it", () =>
+  Effect.gen(function* () {
+    const mem = makeMemFs({ [TEST_PATH]: JSON.stringify({ vim: true }) });
+    const cfg = yield* runWithMem(
+      mem,
+      Effect.gen(function* () {
+        const svc = yield* TuiConfigService;
+        return yield* svc.load;
+      }),
+    );
+    assert.strictEqual(cfg.vim, true);
+    assert.strictEqual(cfg.enabled, DEFAULT_CONFIG.enabled);
+    assert.strictEqual(cfg.settingsLanguage, DEFAULT_CONFIG.settingsLanguage);
+    assert.deepStrictEqual(cfg.icons, DEFAULT_CONFIG.icons);
+    assert.deepStrictEqual(cfg.footerSegments, DEFAULT_CONFIG.footerSegments);
+    assert.deepStrictEqual(cfg.telemetry, DEFAULT_CONFIG.telemetry);
+  }),
+);
+
+it.effect("load defaults vim to off when the file omits it", () =>
+  Effect.gen(function* () {
+    const mem = makeMemFs({ [TEST_PATH]: JSON.stringify({ enabled: true }) });
+    const cfg = yield* runWithMem(
+      mem,
+      Effect.gen(function* () {
+        const svc = yield* TuiConfigService;
+        return yield* svc.load;
+      }),
+    );
+    assert.strictEqual(cfg.vim, false);
+  }),
+);
+
 it.effect("load applies a nested partial override", () =>
   Effect.gen(function* () {
     const mem = makeMemFs({ [TEST_PATH]: JSON.stringify({ icons: { mode: "nerd" } }) });
@@ -313,6 +346,23 @@ it.effect("save writes the config and load reads it back", () =>
   }),
 );
 
+it.effect("save round-trips the vim field", () =>
+  Effect.gen(function* () {
+    const mem = makeMemFs();
+    const cfg = yield* runWithMem(
+      mem,
+      Effect.gen(function* () {
+        const svc = yield* TuiConfigService;
+        yield* svc.save({ ...DEFAULT_CONFIG, vim: true });
+        return yield* svc.load;
+      }),
+    );
+    assert.strictEqual(cfg.vim, true);
+    const encoded = mem.files.get(TEST_PATH)!;
+    assert.strictEqual(encoded.includes('"vim": true'), true);
+  }),
+);
+
 it.effect("save creates missing directories recursively", () =>
   Effect.gen(function* () {
     const mem = makeMemFs();
@@ -385,6 +435,17 @@ it("getConfigPath returns tui.json inside the agent directory", () => {
 it("DEFAULT_CONFIG decodes cleanly through the TuiConfig schema", () => {
   const decoded = Schema.decodeSync(TuiConfig)(DEFAULT_CONFIG);
   assert.deepStrictEqual({ ...decoded }, DEFAULT_CONFIG);
+});
+
+it("default config is vim-off", () => {
+  assert.strictEqual(DEFAULT_CONFIG.vim, false);
+});
+
+it("applyDefaults defaults vim to off from a partial file", () => {
+  const partial = { footerSegments: { cwd: false } } as const;
+  const cfg: TuiConfigType = applyDefaults(partial);
+  assert.strictEqual(cfg.vim, false);
+  assert.strictEqual(cfg.enabled, DEFAULT_CONFIG.enabled);
 });
 
 it("applyDefaults fills in every field from a partial file", () => {

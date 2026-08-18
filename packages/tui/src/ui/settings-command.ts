@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { makeBorderedBox } from "../components/bordered-box.ts";
 import type { IconMode, TuiConfig, SettingsLanguage } from "../config.ts";
+import { VimRouter } from "../vim/vim-router.ts";
 
 interface SettingItem {
   id: string;
@@ -28,6 +29,7 @@ const COPY = {
     hint: "Tab/Shift+Tab/←/→/h/l: tabs · ↑/↓/j/k: move · Enter/Space: change · Esc/q: close",
     labels: {
       enabled: "Enabled",
+      vim: "Vim mode",
       language: "Language",
       iconMode: "Icon mode",
       cwd: "CWD",
@@ -76,6 +78,10 @@ function toggleEnabled(config: TuiConfig): TuiConfig {
   return { ...config, enabled: !config.enabled };
 }
 
+function toggleVim(config: TuiConfig): TuiConfig {
+  return { ...config, vim: !config.vim };
+}
+
 function toggleLanguage(config: TuiConfig): TuiConfig {
   return { ...config, settingsLanguage: config.settingsLanguage };
 }
@@ -93,6 +99,11 @@ function buildFeaturesItems(config: TuiConfig, copy: SettingsCopy): SettingItem[
       id: "enabled",
       label: copy.labels.enabled,
       currentValue: config.enabled ? copy.values.on : copy.values.off,
+    },
+    {
+      id: "vim",
+      label: copy.labels.vim,
+      currentValue: config.vim ? copy.values.on : copy.values.off,
     },
     {
       id: "settingsLanguage",
@@ -159,6 +170,7 @@ function buildItems(tab: Tab, config: TuiConfig): SettingItem[] {
 function handleSettingChange(tab: Tab, itemId: string, config: TuiConfig): TuiConfig {
   if (tab === "features") {
     if (itemId === "enabled") return toggleEnabled(config);
+    if (itemId === "vim") return toggleVim(config);
     if (itemId === "settingsLanguage") return toggleLanguage(config);
   }
   if (tab === "icons" && itemId === "mode") return cycleIconMode(config);
@@ -190,6 +202,7 @@ export const makeSettingsUi = (
   config: TuiConfig,
   onChange: (config: TuiConfig) => void,
   onClose: () => void,
+  router: VimRouter["Service"],
 ): SettingsUiHandle => {
   let tab: Tab = "features";
   let currentConfig = config;
@@ -267,7 +280,10 @@ export const makeSettingsUi = (
 
   /**
    * Move the list selection by `offset` items, wrapping around at both ends.
-   * Mirrors SelectList's arrow-key behavior for the vim j/k keys.
+   * This is the consumer that maps a router navigation intent onto the
+   * widget's own cursor/wrap state. The settings UI injects an always-true
+   * gate for its own router instance, so j/k drive this unconditionally
+   * (h/l drive switchTab) with or without the vim toggle.
    */
   const moveSelection = (offset: number): void => {
     const items = buildItems(tab, currentConfig);
@@ -280,12 +296,21 @@ export const makeSettingsUi = (
   };
 
   const handleInput = (data: string): void => {
-    if (matchesKey(data, Key.tab) || matchesKey(data, Key.right) || matchesKey(data, "l")) {
+    const intent = router.decodeNavigation(data);
+    if (intent?.kind === "move") {
+      if (intent.dir === "down") moveSelection(1);
+      else if (intent.dir === "up") moveSelection(-1);
+      else if (intent.dir === "right") switchTab(1);
+      else if (intent.dir === "left") switchTab(-1);
+      invalidate();
+      return;
+    }
+    if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
       switchTab(1);
       invalidate();
       return;
     }
-    if (matchesKey(data, Key.shift("tab")) || matchesKey(data, Key.left) || matchesKey(data, "h")) {
+    if (matchesKey(data, Key.shift("tab")) || matchesKey(data, Key.left)) {
       switchTab(-1);
       invalidate();
       return;
@@ -294,11 +319,7 @@ export const makeSettingsUi = (
       onClose();
       return;
     }
-    if (matchesKey(data, "j")) {
-      moveSelection(1);
-    } else if (matchesKey(data, "k")) {
-      moveSelection(-1);
-    } else if (matchesKey(data, Key.space) || data === " ") {
+    if (matchesKey(data, Key.space) || data === " ") {
       const selected = selectList.getSelectedItem();
       if (selected) applySetting(selected.value);
     } else {
@@ -338,6 +359,7 @@ export function registerSettingsCommand(
     getConfig: () => TuiConfig;
     onConfigChanged: (config: TuiConfig) => void;
   },
+  router: VimRouter["Service"],
 ): void {
   pi.registerCommand("tui", {
     description: "Open the tui settings UI",
@@ -350,6 +372,7 @@ export function registerSettingsCommand(
             hooks.getConfig(),
             (config) => hooks.onConfigChanged(config),
             () => done(undefined),
+            router,
           );
           return {
             render: (w: number) => ui.render(w),

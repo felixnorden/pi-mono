@@ -20,6 +20,8 @@ import {
 
 import { Effect, Layer } from "effect";
 import { NodeServices } from "@effect/platform-node";
+import { VimRouter } from "./vim/vim-router.ts";
+import { EditorTintService, EditorTintServiceDefault } from "./ui/editor-tint.ts";
 
 function isInteractiveLaunch(): boolean {
   if (!process.stdout.isTTY) return false;
@@ -66,6 +68,7 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
   const turnTelemetry = new TurnTelemetryTracker();
 
   const conf = yield* TuiConfigService;
+  const tint = yield* EditorTintService;
 
   let config: TuiConfig = structuredClone(DEFAULT_CONFIG);
   let active = false;
@@ -101,7 +104,7 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
           },
         },
       );
-      cleanupEditor = installEditor(pi, ctx);
+      cleanupEditor = installEditor(pi, ctx, { getVimEnabled: () => config.vim, tint });
       active = true;
     }
   };
@@ -303,27 +306,41 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
 
   registerPreview(pi, effectContext);
 
-  registerSettingsCommand(pi, {
-    getConfig: () => config,
-    onConfigChanged: (newConfig) =>
-      Effect.runSyncWith(effectContext)(
-        Effect.gen(function* () {
-          {
-            const wasEnabled = config.enabled;
-            yield* conf.save(newConfig);
-            config = newConfig;
-            if (lastCtx && wasEnabled !== newConfig.enabled) {
-              if (newConfig.enabled) {
-                applyUi(lastCtx);
-              } else {
-                uninstallUi(lastCtx);
+  // The settings UI injects an always-true gate for its own router instance
+  // (per-consumer gate injection): its h/j/k/l stay unconditional with or
+  // without the vim toggle. Every other surface gates on the live config.
+  // The layer is synchronous (Layer.succeed), so it yields directly here.
+  const settingsRouter = yield* Effect.service(VimRouter).pipe(
+    Effect.provide(VimRouter.make(() => true)),
+  );
+
+  registerSettingsCommand(
+    pi,
+    {
+      getConfig: () => config,
+      onConfigChanged: (newConfig) =>
+        // The save performs real file I/O (async FileSystem node layer), so it
+        // must run asynchronously; runSync would die on the async boundary.
+        Effect.runPromiseWith(effectContext)(
+          Effect.gen(function* () {
+            {
+              const wasEnabled = config.enabled;
+              yield* conf.save(newConfig);
+              config = newConfig;
+              if (lastCtx && wasEnabled !== newConfig.enabled) {
+                if (newConfig.enabled) {
+                  applyUi(lastCtx);
+                } else {
+                  uninstallUi(lastCtx);
+                }
               }
+              requestFooterRender?.();
             }
-            requestFooterRender?.();
-          }
-        }),
-      ),
-  });
+          }),
+        ),
+    },
+    settingsRouter,
+  );
 });
 
 export default function (pi: ExtensionAPI) {
@@ -333,6 +350,7 @@ export default function (pi: ExtensionAPI) {
         TuiConfigService.layer,
         GitStatusService.layer,
         PreviewService.make(homedir),
+        EditorTintServiceDefault,
       ).pipe(Layer.provideMerge(GitExecutionService.layer), Layer.provideMerge(NodeServices.layer)),
     ),
   );

@@ -16,6 +16,7 @@ const SettingsLanguageSchema = Schema.Literals(["en"] as const);
 export class TuiConfig extends Schema.Class<TuiConfig>("tui/config/TuiConfig")({
   enabled: Schema.Boolean,
   settingsLanguage: SettingsLanguageSchema,
+  vim: Schema.Boolean,
   icons: Schema.Struct({ mode: IconModeSchema }),
   footerSegments: Schema.Struct({
     cwd: Schema.Boolean,
@@ -44,6 +45,7 @@ export type TelemetryConfig = TuiConfig["telemetry"];
 export const DEFAULT_CONFIG: TuiConfig = {
   enabled: true,
   settingsLanguage: "en",
+  vim: false,
   icons: { mode: "auto" },
   footerSegments: {
     cwd: true,
@@ -82,6 +84,7 @@ const FileSchema = Schema.fromJsonString(
   Schema.Struct({
     enabled: OptionalBoolean,
     settingsLanguage: OptionalSettingsLanguage,
+    vim: OptionalBoolean,
     icons: Schema.optional(Schema.Struct({ mode: OptionalIconMode })),
     footerSegments: Schema.optional(
       Schema.Struct({
@@ -122,6 +125,7 @@ export function applyDefaults(partial: TuiConfigFile): TuiConfig {
   return {
     enabled: partial.enabled ?? DEFAULT_CONFIG.enabled,
     settingsLanguage: partial.settingsLanguage ?? DEFAULT_CONFIG.settingsLanguage,
+    vim: partial.vim ?? DEFAULT_CONFIG.vim,
     icons: {
       mode: partial.icons?.mode ?? DEFAULT_CONFIG.icons.mode,
     },
