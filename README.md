@@ -6,11 +6,11 @@ shipped on npm under the `@ftrdotdev` scope.
 
 ## Packages
 
-| Package | npm | What it does |
-| ------- | --- | ------------ |
-| [pi-tui](packages/tui/README.md) | [`@ftrdotdev/pi-tui`](https://www.npmjs.com/package/@ftrdotdev/pi-tui) | House TUI components (themed `BorderedBox`, the pure `box-frame` model) and the pi interface extension: header, footer, editor, `/settings`, preview, telemetry |
-| [pi-tracker](packages/tracker/README.md) | [`@ftrdotdev/pi-tracker`](https://www.npmjs.com/package/@ftrdotdev/pi-tracker) | Session-persistent todolists: `tracker` tool, `/tracker` command, live widget above the editor |
-| [pi-inquiry](packages/inquiry/README.md) | [`@ftrdotdev/pi-inquiry`](https://www.npmjs.com/package/@ftrdotdev/pi-inquiry) | Interactive `question` tool: option lists, tabbed forms, free-text answers |
+| Package                                  | npm                                                                            | What it does                                                                                                                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [pi-tui](packages/tui/README.md)         | [`@ftrdotdev/pi-tui`](https://www.npmjs.com/package/@ftrdotdev/pi-tui)         | House TUI components (themed `BorderedBox`, the pure `box-frame` model) and the pi interface extension: header, footer, editor, `/settings`, preview, telemetry |
+| [pi-tracker](packages/tracker/README.md) | [`@ftrdotdev/pi-tracker`](https://www.npmjs.com/package/@ftrdotdev/pi-tracker) | Session-persistent todolists: `tracker` tool, `/tracker` command, live widget above the editor                                                                  |
+| [pi-inquiry](packages/inquiry/README.md) | [`@ftrdotdev/pi-inquiry`](https://www.npmjs.com/package/@ftrdotdev/pi-inquiry) | Interactive `question` tool: option lists, tabbed forms, free-text answers                                                                                      |
 
 ## Install
 
@@ -49,8 +49,8 @@ Packages are published with `bun publish` — npm cannot resolve the
 publish in dependency order (pi-tui first):
 
 ```bash
-bun run publish:packages        # tui -> tracker -> inquiry
-bun run publish:tui             # or publish one  (tracker, inquiry)
+bun run publish:packages        # tui -> tracker -> inquiry -> qrspi
+bun run publish:tui             # or publish one  (tracker, inquiry, qrspi)
 ```
 
 `--ignore-scripts` is used because `bun publish` runs lifecycle scripts
@@ -60,6 +60,38 @@ dev tooling and do not affect the tarball.
 Packages declare `publishConfig.access: "public"` (scoped packages default
 to restricted on npm) and carry the `pi-package` keyword for the
 [pi package gallery](https://pi.dev/packages).
+
+## Releases
+
+Version bumps and changelogs are managed with
+[changesets](https://changesets.dev). Each change ships with a changeset file
+that records its bump type (`patch` / `minor` / `major`) and notes:
+
+```bash
+bun changeset   # create a changeset for the current change
+```
+
+On release, apply the pending changesets (bumps versions, updates internal
+`@ftrdotdev/*` dependency ranges, and writes each package's `CHANGELOG.md`):
+
+```bash
+bun run version:packages
+```
+
+Review the bumps, then publish and tag:
+
+```bash
+bun run release    # version:packages + publish + git tag
+```
+
+The `release` script runs `changeset version`, then the existing `bun publish`
+steps in dependency order, then `changeset git-tag` to create the
+`@ftrdotdev/<pkg>@x.y.z` tags. Each published package gets its own
+`CHANGELOG.md`.
+
+> `@ftrdotdev/pi-qrspi` ships skills that are fetched at `prepack` time
+> (`bun run prepack`), so `publish:qrspi` runs that fetch before `bun publish`.
+> It versions independently of the fixed group.
 
 ## License
 

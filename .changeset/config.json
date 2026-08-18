@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@4.0.0/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "baseBranch": "main",
+  "access": "public",
+  "format": "auto",
+  "fixed": [
+    [
+      "@ftrdotdev/pi-tui",
+      "@ftrdotdev/pi-tracker",
+      "@ftrdotdev/pi-inquiry"
+    ]
+  ],
+  "updateInternalDependencies": "patch",
+  "privatePackages": {
+    "version": false,
+    "tag": false
+  }
+}
