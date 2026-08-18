@@ -4,21 +4,21 @@
   "description": "Session-persistent todolist extension for Pi",
   "keywords": [
     "effect",
+    "extension",
     "pi",
     "pi-coding-agent",
     "pi-package",
-    "todolist",
-    "tracker",
-    "extension",
+    "task",
     "todo",
-    "task"
+    "todolist",
+    "tracker"
   ],
   "homepage": "https://github.com/felixnorden/pi-mono#readme",
   "bugs": {
     "url": "https://github.com/felixnorden/pi-mono/issues"
   },
   "license": "MIT",
-  "author": "Felix Nord\u00e9n <felixnorden@gmail.com>",
+  "author": "Felix Nordén <felixnorden@gmail.com>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/felixnorden/pi-mono.git",
@@ -30,6 +30,9 @@
     "LICENSE"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "prepare": "effect-tsgo patch --typescript --oxlint",
     "test": "vitest run",
@@ -64,8 +67,5 @@
     "extensions": [
       "./src/index.ts"
     ]
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }

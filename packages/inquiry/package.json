@@ -4,20 +4,20 @@
   "description": "Interactive questions for the pi coding agent: a single `question` tool renders option lists, tabbed forms, and free-text answers",
   "keywords": [
     "effect",
+    "extension",
     "interactive",
     "pi",
     "pi-coding-agent",
     "pi-package",
     "question",
-    "tui",
-    "extension"
+    "tui"
   ],
   "homepage": "https://github.com/felixnorden/pi-mono#readme",
   "bugs": {
     "url": "https://github.com/felixnorden/pi-mono/issues"
   },
   "license": "MIT",
-  "author": "Felix Nord\u00e9n <felixnorden@gmail.com>",
+  "author": "Felix Nordén <felixnorden@gmail.com>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/felixnorden/pi-mono.git",
@@ -29,6 +29,9 @@
     "LICENSE"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "prepare": "effect-tsgo patch --typescript --oxlint",
     "test": "vitest run",
@@ -61,8 +64,5 @@
     "extensions": [
       "./src/tool/question.ts"
     ]
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }

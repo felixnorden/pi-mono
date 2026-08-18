@@ -5,19 +5,19 @@
   "keywords": [
     "components",
     "effect",
+    "extension",
     "pi",
     "pi-coding-agent",
     "pi-package",
-    "tui",
-    "extension",
-    "terminal"
+    "terminal",
+    "tui"
   ],
   "homepage": "https://github.com/felixnorden/pi-mono#readme",
   "bugs": {
     "url": "https://github.com/felixnorden/pi-mono/issues"
   },
   "license": "MIT",
-  "author": "Felix Nord\u00e9n <felixnorden@gmail.com>",
+  "author": "Felix Nordén <felixnorden@gmail.com>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/felixnorden/pi-mono.git",
@@ -39,6 +39,9 @@
       "default": "./src/frame/box-frame.ts"
     },
     "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "test": "vitest run",
@@ -73,8 +76,5 @@
     "extensions": [
       "./src/index.ts"
     ]
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }
