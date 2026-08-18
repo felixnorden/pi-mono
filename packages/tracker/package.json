@@ -1,6 +1,6 @@
 {
   "name": "@ftrdotdev/pi-tracker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Session-persistent todolist extension for Pi",
   "keywords": [
     "effect",
@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:effect",
-    "@ftrdotdev/pi-tui": "^0.1.0",
+    "@ftrdotdev/pi-tui": "^0.2.0",
     "effect": "catalog:effect"
   },
   "devDependencies": {
