@@ -1,0 +1,52 @@
+{
+  "name": "@ftrdotdev/pi-qrspi",
+  "version": "0.1.0",
+  "homepage": "https://github.com/felixnorden/skills/blob/main/packages/pi-qrspi/README.md",
+  "bugs": {
+    "url": "https://github.com/felixnorden/skills/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felixnorden/pi-mono.git",
+    "path": "packages/qrspi"
+  },
+  "files": [
+    "prompts",
+    "extensions",
+    "skills/planning-workflow",
+    "skills/tdd"
+  ],
+  "type": "module",
+  "scripts": {
+    "fetch:skills": "bun run scripts/fetch-skills.ts",
+    "prepare": "[ -d skills/planning-workflow ] || bun run fetch:skills",
+    "prepack": "bun run fetch:skills",
+    "pack": "bun pm pack --destination ./dist",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "catalog:pi",
+    "@types/bun": "catalog:tooling",
+    "oxfmt": "catalog:tooling",
+    "oxlint": "catalog:tooling",
+    "typescript": "catalog:tooling"
+  },
+  "pi": {
+    "prompts": [
+      "./prompts"
+    ],
+    "skills": [
+      "./skills/planning-workflow",
+      "./skills/tdd"
+    ],
+    "extensions": [
+      "./extensions"
+    ]
+  }
+}
