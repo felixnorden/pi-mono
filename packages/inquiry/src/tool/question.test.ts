@@ -42,7 +42,7 @@ describe("question tool registration", () => {
 
   it("provides guidelines that each name the tool", () => {
     const tool = register();
-    expect(tool.promptGuidelines).toHaveLength(4);
+    expect(tool.promptGuidelines).toHaveLength(5);
     for (const bullet of tool.promptGuidelines ?? []) {
       expect(bullet).toContain("question");
     }

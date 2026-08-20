@@ -42,6 +42,16 @@ describe("pi validation of the generated schema", () => {
     expect(validateToolCall(tools, call(args))).toEqual(args);
   });
 
+  it("accepts the multiple flag for multi-select questions", () => {
+    const args = {
+      questions: [{ prompt: "Pick any?", options: [{ label: "A" }], multiple: true }],
+    };
+    expect(validateToolCall(tools, call(args))).toEqual(args);
+    expect(() =>
+      validateToolCall(tools, call({ ...args, questions: [{ multiple: "yes" }] })),
+    ).toThrow();
+  });
+
   it("coerces stringified booleans", () => {
     const args = { questions: [{ prompt: "p", options: [{ label: "a" }], allowOther: "false" }] };
     expect(validateToolCall(tools, call(args))).toEqual({

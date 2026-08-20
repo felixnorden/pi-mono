@@ -43,6 +43,12 @@ export const QuestionParamsSchema = Schema.Struct({
   allowOther: Schema.optionalKey(
     Schema.Boolean.annotate({ description: "Allow 'Type something' option (default: true)" }),
   ),
+  multiple: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "Ask for one or more answers instead of a single choice; renders checkboxes and lets the user add custom alternatives (default: false)",
+    }),
+  ),
 });
 
 export type QuestionParams = typeof QuestionParamsSchema.Type;
@@ -109,6 +115,7 @@ export class Question extends Schema.Class<Question>("inquiry/core/domain/Questi
   prompt: Schema.String,
   options: Schema.Array(Option),
   allowOther: Schema.Boolean,
+  multiple: Schema.Boolean,
 }) {}
 
 export class Answer extends Schema.Class<Answer>("inquiry/core/domain/Answer")({
@@ -130,7 +137,7 @@ export class QuestionResult extends Schema.Class<QuestionResult>(
  * Normalize wire params into domain questions.
  *
  * Applies the defaults: `id` falls back to `q{n}`, `label` to `Q{n}`,
- * `allowOther` defaults to `true`.
+ * `allowOther` defaults to `true`, `multiple` to `false`.
  */
 export const normalizeQuestions = (params: QuestionListParams): readonly Question[] =>
   params.questions.map(
@@ -145,5 +152,6 @@ export const normalizeQuestions = (params: QuestionListParams): readonly Questio
             : new Option({ label: o.label, description: o.description }),
         ),
         allowOther: q.allowOther !== false,
+        multiple: q.multiple === true,
       }),
   );

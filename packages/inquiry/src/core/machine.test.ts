@@ -5,6 +5,8 @@ import {
   currentOptions,
   initialMachineState,
   isAtCompletionContext,
+  isMultiEntrySelected,
+  multiEntries,
   openSuggestions,
   step,
   textBeforeCursor,
@@ -19,6 +21,7 @@ const question = (over: Partial<QuestionType> = {}): QuestionType =>
     prompt: "Pick one?",
     options: [new Option({ label: "Yes" }), new Option({ label: "No" })],
     allowOther: true,
+    multiple: false,
     ...over,
   });
 
@@ -193,7 +196,7 @@ describe("multi question", () => {
   it("answers and advances to the next tab", () => {
     const result = step(initialMachineState(twoQuestions()), KeyEvent.enter);
     expect(result.state.currentTab).toBe(1);
-    expect(result.state.answers.get("q1")?.label).toBe("Yes");
+    expect(result.state.answers.get("q1")?.[0]?.label).toBe("Yes");
     expect(result.action.type).toBe("none");
   });
 
@@ -318,8 +321,8 @@ describe("multi question", () => {
     state = step(state, KeyEvent.enter).state; // reopen, pre-filled
     state = step(state, KeyEvent.char("!")).state;
     state = step(state, KeyEvent.enter).state; // re-submit "hey!"
-    expect(state.answers.get("q1")?.label).toBe("hey!");
-    expect(state.answers.get("q1")?.wasCustom).toBe(true);
+    expect(state.answers.get("q1")?.[0]?.label).toBe("hey!");
+    expect(state.answers.get("q1")?.[0]?.wasCustom).toBe(true);
     expect(state.currentTab).toBe(1);
   });
 
@@ -333,6 +336,157 @@ describe("multi question", () => {
     state = step(state, KeyEvent.enter).state; // answer q1 "Yes", advance to q2
     expect(state.currentTab).toBe(1);
     expect(state.optionIndex).toBe(1); // q2's answer "No" is highlighted
+  });
+});
+
+describe("multi-select question", () => {
+  const multiQuestion = (): QuestionType => question({ multiple: true });
+
+  it("starts with checkbox options and an add entry", () => {
+    const state = initialMachineState([multiQuestion()]);
+    expect(multiEntries(state).map((e) => e.kind)).toEqual(["option", "option", "add"]);
+    expect(isMultiEntrySelected(state, multiEntries(state)[0]!)).toBe(false);
+  });
+
+  it("toggles an option on and off with space", () => {
+    let state = initialMachineState([multiQuestion()]);
+    state = step(state, KeyEvent.char(" ")).state; // toggle option 0 on
+    expect(state.answers.get("q1")?.[0]).toMatchObject({ index: 1, wasCustom: false });
+    expect(isMultiEntrySelected(state, multiEntries(state)[0]!)).toBe(true);
+    state = step(state, KeyEvent.char(" ")).state; // toggle the same option off
+    expect(state.answers.get("q1")).toBeUndefined(); // emptied, no stale key
+    expect(isMultiEntrySelected(state, multiEntries(state)[0]!)).toBe(false);
+  });
+
+  it("selects several options before confirming", () => {
+    let state = initialMachineState([multiQuestion()]);
+    state = step(state, KeyEvent.char(" ")).state; // Yes
+    state = step(state, KeyEvent.down).state;
+    state = step(state, KeyEvent.char(" ")).state; // No
+    expect(state.answers.get("q1")?.map((a) => a.index)).toEqual([1, 2]);
+  });
+
+  it("selects a single option with space", () => {
+    let state = initialMachineState([question()]);
+    const result = step(state, KeyEvent.char(" "));
+    expect(result.action.type).toBe("complete");
+    if (result.action.type === "complete") {
+      expect(result.action.result.answers.map((a) => a.label)).toEqual(["Yes"]);
+    }
+  });
+
+  it("adds a custom answer from the editor without advancing", () => {
+    let state = initialMachineState([multiQuestion()]);
+    state = step(state, KeyEvent.down).state;
+    state = step(state, KeyEvent.down).state; // "add"
+    state = step(state, KeyEvent.char(" ")).state; // open editor
+    expect(state.inputMode).toBe(true);
+    for (const ch of ["M", "y"]) state = step(state, KeyEvent.char(ch)).state;
+    const next = step(state, KeyEvent.enter); // submit
+    expect(next.state.inputMode).toBe(false);
+    expect(next.state.currentTab).toBe(0); // stays on the tab
+    expect(next.state.answers.get("q1")?.map((a) => [a.label, a.wasCustom])).toEqual([
+      ["My", true],
+    ]);
+  });
+
+  it("opens the add-editor with enter on the add row, like single-select", () => {
+    let state = initialMachineState([multiQuestion()]);
+    state = step(state, KeyEvent.down).state;
+    state = step(state, KeyEvent.down).state; // "add"
+    const next = step(state, KeyEvent.enter); // enter instead of space
+    expect(next.action.type).toBe("none");
+    expect(next.state.inputMode).toBe(true);
+    expect(next.state.currentTab).toBe(0); // did not advance
+    // Enter on an option row still confirms rather than opening the editor
+    let confirm = initialMachineState([multiQuestion()]);
+    confirm = step(confirm, KeyEvent.char(" ")).state; // select option 0
+    const done = step(confirm, KeyEvent.enter);
+    expect(done.action.type).toBe("complete");
+  });
+
+  it("types a space into the add-editor instead of toggling", () => {
+    let state = initialMachineState([multiQuestion()]);
+    state = step(state, KeyEvent.down).state;
+    state = step(state, KeyEvent.down).state; // "add"
+    state = step(state, KeyEvent.char(" ")).state; // open editor
+    expect(state.inputMode).toBe(true);
+    state = step(state, KeyEvent.char("h")).state;
+    state = step(state, KeyEvent.char(" ")).state; // space while typing
+    state = step(state, KeyEvent.char("i")).state;
+    expect(state.editor.text).toBe("h i"); // inserted literally, not a toggle
+    expect(state.answers.get("q1")).toBeUndefined(); // selection untouched
+  });
+
+  it("removes an added custom answer chip with space", () => {
+    let state = initialMachineState([multiQuestion()]);
+    state = step(state, KeyEvent.down).state;
+    state = step(state, KeyEvent.down).state; // "add"
+    state = step(state, KeyEvent.char(" ")).state;
+    for (const ch of ["M", "y"]) state = step(state, KeyEvent.char(ch)).state;
+    state = step(state, KeyEvent.enter).state; // submit -> chip at index 2
+    state = step(state, KeyEvent.char(" ")).state; // space on the chip removes it
+    expect(state.answers.get("q1")).toBeUndefined();
+  });
+
+  it("blocks Enter until at least one answer is chosen", () => {
+    let state = initialMachineState([multiQuestion()]);
+    const blocked = step(state, KeyEvent.enter); // no selection yet
+    expect(blocked.action.type).toBe("none");
+    expect(state.answers.get("q1")).toBeUndefined();
+  });
+
+  it("completes a single multi-select question on Enter", () => {
+    let state = initialMachineState([multiQuestion()]);
+    state = step(state, KeyEvent.char(" ")).state; // Yes
+    const result = step(state, KeyEvent.enter); // confirm
+    expect(result.action.type).toBe("complete");
+    if (result.action.type === "complete") {
+      expect(result.action.result.cancelled).toBe(false);
+      expect(result.action.result.answers.map((a) => a.label)).toEqual(["Yes"]);
+    }
+  });
+
+  it("combines chosen options and custom answers in the result", () => {
+    let state = initialMachineState([multiQuestion()]);
+    state = step(state, KeyEvent.char(" ")).state; // Yes
+    state = step(state, KeyEvent.down).state;
+    state = step(state, KeyEvent.char(" ")).state; // No
+    state = step(state, KeyEvent.down).state; // "add"
+    state = step(state, KeyEvent.char(" ")).state;
+    for (const ch of ["M", "y"]) state = step(state, KeyEvent.char(ch)).state;
+    state = step(state, KeyEvent.enter).state; // submit custom -> chip at index 2
+    const result = step(state, KeyEvent.enter); // confirm
+    expect(result.action.type).toBe("complete");
+    if (result.action.type === "complete") {
+      expect(result.action.result.answers.map((a) => [a.label, a.wasCustom])).toEqual([
+        ["Yes", false],
+        ["No", false],
+        ["My", true],
+      ]);
+    }
+  });
+
+  it("advances a multi-select question to the next tab on Enter", () => {
+    let state = initialMachineState([multiQuestion(), question({ id: "q2" })]);
+    state = step(state, KeyEvent.char(" ")).state; // select option 0 on q1
+    const done = step(state, KeyEvent.enter); // confirm -> q2
+    expect(done.action.type).toBe("none");
+    expect(done.state.currentTab).toBe(1);
+  });
+
+  it("resets the highlight when returning to an answered multi-select tab", () => {
+    let state = initialMachineState([multiQuestion(), question({ id: "q2" })]);
+    state = step(state, KeyEvent.char(" ")).state; // select option 0
+    state = step(state, KeyEvent.enter).state; // advance to q2
+    state = step(state, KeyEvent.shiftTab).state; // back to q1
+    expect(state.currentTab).toBe(0);
+    expect(state.optionIndex).toBe(0); // multi-select has no single highlight
+  });
+
+  it("hides the add entry when allowOther is false", () => {
+    const state = initialMachineState([question({ multiple: true, allowOther: false })]);
+    expect(multiEntries(state).map((e) => e.kind)).toEqual(["option", "option"]);
   });
 });
 

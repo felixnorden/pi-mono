@@ -28,6 +28,7 @@ const question = (over: Partial<QuestionType> = {}): QuestionType =>
     prompt: "Pick one?",
     options: [new Option({ label: "Yes" }), new Option({ label: "No" })],
     allowOther: true,
+    multiple: false,
     ...over,
   });
 
@@ -185,6 +186,57 @@ describe("buildScene: multi question", () => {
     const lines = plainLines(buildScene(state, 60));
     expect(lines.some((l) => l.includes(" Q1: (wrote) hi"))).toBe(true);
     expect(lines.some((l) => l.includes(" Q2: Yes"))).toBe(true);
+  });
+});
+
+describe("buildScene: multi-select question", () => {
+  const multiQuestion = (): QuestionType => question({ multiple: true });
+
+  it("renders checkbox options and an add entry", () => {
+    const scene = buildScene(initialMachineState([multiQuestion()]), 60);
+    const lines = plainLines(scene);
+    expect(lines[3]).toBe(boxed("→ □ 1. Yes", 60));
+    expect(lines[4]).toBe(boxed("  □ 2. No", 60));
+    expect(lines[5]).toBe(boxed("  + Add your own answer", 60));
+  });
+
+  it("shows multi-select controls in the help line", () => {
+    const scene = buildScene(initialMachineState([multiQuestion()]), 60);
+    expect(plainLines(scene).some((l) => l.includes("Space toggles • Enter confirm"))).toBe(true);
+  });
+
+  it("marks selected options with a filled box", () => {
+    let state = initialMachineState([multiQuestion()]);
+    state = step(state, KeyEvent.char(" ")).state; // select option 0
+    const lines = plainLines(buildScene(state, 60));
+    expect(lines[3]).toBe(boxed("→ ■ 1. Yes", 60));
+    expect(lines[4]).toBe(boxed("  □ 2. No", 60));
+  });
+
+  it("renders an added custom answer as a chip", () => {
+    let state = initialMachineState([multiQuestion()]);
+    state = step(state, KeyEvent.down).state;
+    state = step(state, KeyEvent.down).state; // "add"
+    state = step(state, KeyEvent.char(" ")).state; // open editor
+    for (const ch of ["h", "i"]) state = step(state, KeyEvent.char(ch)).state;
+    state = step(state, KeyEvent.enter).state; // submit
+    const lines = plainLines(buildScene(state, 60));
+    expect(lines.some((l) => l.includes("■ hi"))).toBe(true);
+    expect(lines.some((l) => l.includes("+ Add your own answer"))).toBe(true);
+  });
+
+  it("shows an added custom answer in the submit summary alongside the option", () => {
+    let state = initialMachineState([multiQuestion(), question({ id: "q2" })]);
+    state = step(state, KeyEvent.char(" ")).state; // select option 0 on q1
+    state = step(state, KeyEvent.down).state;
+    state = step(state, KeyEvent.down).state; // "add"
+    state = step(state, KeyEvent.char(" ")).state; // open editor
+    for (const ch of ["h", "i"]) state = step(state, KeyEvent.char(ch)).state;
+    state = step(state, KeyEvent.enter).state; // submit custom
+    state = step(state, KeyEvent.enter).state; // confirm -> q2
+    state = step(state, KeyEvent.enter).state; // answer q2 -> submit tab
+    const lines = plainLines(buildScene(state, 60));
+    expect(lines.some((l) => l.includes(" Q1: 1. Yes, (wrote) hi"))).toBe(true);
   });
 });
 

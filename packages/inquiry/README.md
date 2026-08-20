@@ -74,7 +74,8 @@ pick between options, or confirm a decision. Ask all open questions in one
       "options": [{ "label": "Short label", "description": "Optional one-line description" }],
       "id": "optional-unique-id", // defaults to q1, q2, ...
       "label": "Scope", // short tab-bar label, defaults to Q1, Q2
-      "allowOther": true // defaults to true; false forces the listed options
+      "allowOther": true, // defaults to true; false forces the listed options
+      "multiple": false // defaults to false; true asks for one or more answers
     }
   ]
 }
@@ -87,6 +88,22 @@ pick between options, or confirm a decision. Ask all open questions in one
 - `allowOther` — when `true` (default), the user can also type a free-text
   answer ("Type something."). Set it to `false` only when one of the listed
   options is required.
+- `multiple` — when `true`, the question is multi-select: the options render
+  as checkboxes and the user picks one or more of them, then presses Enter to
+  confirm the selection instead of choosing a single one. Space toggles a
+  checkbox on or off; Enter confirms. This is the natural way to ask "which
+  of these apply?" without turning each option into its own binary question.
+
+### Multi-select answers
+
+A multi-select question keeps an "Add your own answer" entry (when
+`allowOther` is true) so the user can type additional alternatives; each typed
+answer becomes one more chosen value. Space toggles each option and removes a
+typed chip; Enter confirms and records the whole selection. As with a
+single-select question, pressing Enter on the "Add your own answer" row opens
+the type mode (Space does too). In the result, a multi-select question
+contributes one `Answer` per chosen option or typed alternative, all sharing
+the question's `id`.
 
 ### Result
 
@@ -103,10 +120,15 @@ The tool returns its answers both as human-readable content and in
       wasCustom: false,              // true when the user typed a free-text answer
       index: 2                       // option index, absent for custom answers
     }
+    // A multi-select question contributes one entry per chosen value.
   ],
   cancelled: false                   // true when the user dismissed the form
 }
 ```
+
+The tool groups a question's answers together in its output, so a
+multi-select question reads as e.g. `Q1: user selected: 1. A, 2. B, user
+wrote: X` rather than several detached rows.
 
 Treat a cancelled result as the user declining to answer. Do not re-ask
 unless the answer is essential; then ask once more in a different form.

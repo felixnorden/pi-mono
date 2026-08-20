@@ -9,7 +9,13 @@
 
 import { buildBoxFrame } from "@ftrdotdev/pi-tui/box-frame";
 import type { MachineState } from "./machine.ts";
-import { currentOptions, isAllAnswered, type SuggestionState } from "./machine.ts";
+import {
+  currentOptions,
+  isAllAnswered,
+  isMultiEntrySelected,
+  multiEntries,
+  type SuggestionState,
+} from "./machine.ts";
 import { truncateToWidth, visibleWidth } from "./text.ts";
 import type { EditorState } from "./editor.ts";
 
@@ -183,6 +189,10 @@ export const buildScene = (state: MachineState, width: number): Scene => {
   };
 
   const renderOptions = (): void => {
+    if (question?.multiple) {
+      renderMultiOptions();
+      return;
+    }
     for (let i = 0; i < options.length; i++) {
       const option = options[i]!;
       const selected = i === state.optionIndex;
@@ -194,10 +204,41 @@ export const buildScene = (state: MachineState, width: number): Scene => {
         pushWrapped(span("     "), [span(option.description, "muted")]);
       } else if (option.isOther && !state.inputMode && question) {
         // Show an existing custom answer as a subtitle under "Type something".
-        const answer = state.answers.get(question.id);
+        const answer = state.answers.get(question.id)?.[0];
         if (answer?.wasCustom) {
           pushWrapped(span("     "), [span(`Current answer: ${answer.label}`, "muted")]);
         }
+      }
+    }
+  };
+
+  /**
+   * Multi-select question rows: checkbox options, removable custom-answer
+   * chips, and the "Add your own answer" entry.
+   */
+  const renderMultiOptions = (): void => {
+    const entries = multiEntries(state);
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i]!;
+      const selected = i === state.optionIndex;
+      const checked = isMultiEntrySelected(state, entry);
+      let labelText: string;
+      let description: string | undefined;
+      if (entry.kind === "option") {
+        // Reuse the tab bar's outline (`□`) / filled (`■`) boxes so a checked
+        // checkbox reads like a filled tab square.
+        labelText = `${checked ? "■" : "□"} ${entry.index + 1}. ${entry.label}`;
+        description = entry.description;
+      } else if (entry.kind === "custom") {
+        labelText = `■ ${entry.label}`;
+      } else {
+        labelText = "+ Add your own answer";
+      }
+      pushWrapped(selected ? span("→ ", "accent") : span("  "), [
+        span(labelText, selected ? "accent" : "text"),
+      ]);
+      if (description) {
+        pushWrapped(span("     "), [span(description, "muted")]);
       }
     }
   };
@@ -260,13 +301,19 @@ export const buildScene = (state: MachineState, width: number): Scene => {
     pushWrapped(span(" "), [span("Ready to submit", "accent", true)]);
     lines.push([]);
     for (const q of state.questions) {
-      const answer = state.answers.get(q.id);
-      if (answer) {
-        const prefix = answer.wasCustom ? "(wrote) " : "";
-        pushWrapped(span(" "), [
-          span(`${q.label}: `, "muted"),
-          span(prefix + answer.label, "text"),
-        ]);
+      const answers = state.answers.get(q.id);
+      if (answers && answers.length > 0) {
+        // A single answer keeps the legacy bare label; a multi-select answer
+        // lists each chosen option/alternative with its index.
+        const rendered =
+          answers.length === 1
+            ? answers[0]!.wasCustom
+              ? `(wrote) ${answers[0]!.label}`
+              : answers[0]!.label
+            : answers
+                .map((a) => (a.wasCustom ? `(wrote) ${a.label}` : `${a.index}. ${a.label}`))
+                .join(", ");
+        pushWrapped(span(" "), [span(`${q.label}: `, "muted"), span(rendered, "text")]);
       }
     }
     lines.push([]);
@@ -287,10 +334,15 @@ export const buildScene = (state: MachineState, width: number): Scene => {
 
   lines.push([]);
   if (!state.inputMode) {
+    const isMultiSelect = question?.multiple === true;
     const help =
       state.mode === "multi"
-        ? "Tab/←→ navigate • ↑↓ select • Enter confirm • Esc cancel"
-        : "↑↓ navigate • Enter to select • Esc to cancel";
+        ? isMultiSelect
+          ? "Tab/←→ navigate • ↑↓ move • Space toggles • Enter confirm • Esc cancel"
+          : "Tab/←→ navigate • ↑↓ select • Enter confirm • Esc cancel"
+        : isMultiSelect
+          ? "↑↓ move • Space toggles • Enter confirm • Esc cancel"
+          : "↑↓ navigate • Enter to select • Esc to cancel";
     pushWrapped(span(" "), [span(help, "dim")]);
   }
 

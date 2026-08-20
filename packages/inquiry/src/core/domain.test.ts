@@ -25,12 +25,14 @@ describe("decodeParams", () => {
           prompt: "Pick one?",
           options: [{ label: "Yes", description: "Go ahead" }],
           allowOther: false,
+          multiple: true,
         },
       ],
     });
     expect(params.questions[0]?.id).toBe("scope");
     expect(params.questions[0]?.label).toBe("Scope");
     expect(params.questions[0]?.allowOther).toBe(false);
+    expect(params.questions[0]?.multiple).toBe(true);
     expect(params.questions[0]?.options[0]?.description).toBe("Go ahead");
   });
 
@@ -135,13 +137,28 @@ describe("normalizeQuestions", () => {
     const questions = normalizeQuestions(
       decodeParams({
         questions: [
-          { id: "x", label: "Scope", prompt: "p", options: [{ label: "a" }], allowOther: false },
+          {
+            id: "x",
+            label: "Scope",
+            prompt: "p",
+            options: [{ label: "a" }],
+            allowOther: false,
+            multiple: true,
+          },
         ],
       }),
     );
     expect(questions[0]?.id).toBe("x");
     expect(questions[0]?.label).toBe("Scope");
     expect(questions[0]?.allowOther).toBe(false);
+    expect(questions[0]?.multiple).toBe(true);
+  });
+
+  it("defaults multiple to false", () => {
+    const questions = normalizeQuestions(
+      decodeParams({ questions: [{ prompt: "p", options: [{ label: "a" }] }] }),
+    );
+    expect(questions[0]?.multiple).toBe(false);
   });
 
   it("maps option labels and descriptions", () => {

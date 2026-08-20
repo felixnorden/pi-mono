@@ -27,6 +27,7 @@ describe("makeSceneRenderer cache", () => {
         prompt: "Pick one?",
         options: [new Option({ label: "Yes" }), new Option({ label: "No" })],
         allowOther: true,
+        multiple: false,
       }),
     ]);
     return { state, theme, paints: () => count };
@@ -128,6 +129,7 @@ describe("runQuestionUi input routing", () => {
       prompt: "Pick one?",
       options: [new Option({ label: "Yes" })],
       allowOther: true,
+      multiple: false,
     }),
   ];
 

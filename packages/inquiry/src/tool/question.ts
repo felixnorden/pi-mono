@@ -17,6 +17,7 @@ import {
   decodeParams,
   normalizeQuestions,
   prepareQuestionArgs,
+  type Answer,
 } from "../core/domain.ts";
 import { runQuestionUi } from "../sdk/pi-ui.ts";
 
@@ -33,6 +34,7 @@ const questionToolSystemPromptContribution = {
     "Use question whenever you need the user to decide something, pick between options, or confirm a decision — instead of ending your reply with a question in plain text",
     "Ask all open questions in one question call, with one entry per question in questions[]; a single question shows a simple option list, multiple questions show a tabbed interface with a submit tab",
     "Keep options short: a label plus an optional one-line description, 2-5 options per question. The user can also type a free-text answer ('Type something.'), so only set allowOther: false when one of the listed options is required",
+    "Set multiple: true on a question when the user should pick one or more answers (checkboxes) rather than a single option — for example instead of asking several binary questions, one per option; the user can still add custom alternatives when allowOther is true",
     "Treat a cancelled question result as the user declining to answer: do not re-ask unless the answer is essential, and then ask once more in a different form",
   ],
 } as const;
@@ -57,7 +59,7 @@ export default function question(pi: ExtensionAPI) {
     name: "question",
     label: "Question",
     description:
-      "Ask the user one or more multiple-choice questions and get their answers back. Use whenever you need input from the user: clarifying ambiguous requirements, choosing between approaches or options, or confirming a decision. Prefer this over asking in plain text — it renders as a selectable list (single question) or a tabbed form (multiple questions) and lets the user type a custom answer.",
+      "Ask the user one or more multiple-choice questions and get their answers back. Use whenever you need input from the user: clarifying ambiguous requirements, choosing between approaches or options, or confirming a decision. Prefer this over asking in plain text — it renders as a selectable list (single question) or a tabbed form (multiple questions) and lets the user type a custom answer. Set multiple: true to ask for one or more answers as checkboxes (for example, instead of asking several binary yes/no questions, one per option).",
     // Single source of truth: generated from the Effect schema in the core.
     parameters: QuestionListParamsJsonSchema as TSchema,
     promptSnippet: questionToolSystemPromptContribution.snippet,
@@ -109,12 +111,20 @@ export default function question(pi: ExtensionAPI) {
         };
       }
 
-      const answerLines = result.answers.map((a) => {
-        const qLabel = questions.find((q) => q.id === a.id)?.label ?? a.id;
-        if (a.wasCustom) {
-          return `${qLabel}: user wrote: ${a.label}`;
-        }
-        return `${qLabel}: user selected: ${a.index}. ${a.label}`;
+      // Group answers by question so a multi-select question reads as one
+      // block ("Q1: selected 1. A, wrote: X") rather than several rows.
+      const byId = new Map<string, Answer[]>();
+      for (const a of result.answers) {
+        const list = byId.get(a.id) ?? [];
+        list.push(a);
+        byId.set(a.id, list);
+      }
+      const answerLines = [...byId.entries()].map(([id, ans]) => {
+        const qLabel = questions.find((q) => q.id === id)?.label ?? id;
+        const parts = ans.map((a) =>
+          a.wasCustom ? `user wrote: ${a.label}` : `user selected: ${a.index}. ${a.label}`,
+        );
+        return `${qLabel}: ${parts.join(", ")}`;
       });
 
       return {
@@ -163,12 +173,20 @@ export default function question(pi: ExtensionAPI) {
       if (details.cancelled) {
         return new Text(theme.fg("warning", "Cancelled"), 0, 0);
       }
-      const lines = details.answers.map((a) => {
-        if (a.wasCustom) {
-          return `${theme.fg("success", "✓ ")}${theme.fg("accent", a.id)}: ${theme.fg("muted", "(wrote) ")}${a.label}`;
-        }
-        const display = a.index ? `${a.index}. ${a.label}` : a.label;
-        return `${theme.fg("success", "✓ ")}${theme.fg("accent", a.id)}: ${display}`;
+      // Group by question so a multi-select answer renders as one line.
+      const grouped = new Map<string, Array<(typeof details.answers)[number]>>();
+      for (const a of details.answers ?? []) {
+        const list = grouped.get(a.id) ?? [];
+        list.push(a);
+        grouped.set(a.id, list);
+      }
+      const lines = [...grouped.entries()].map(([id, ans]) => {
+        const parts = ans.map((a) =>
+          a.wasCustom
+            ? `${theme.fg("muted", "(wrote) ")}${a.label}`
+            : `${a.index ? `${a.index}. ` : ""}${a.label}`,
+        );
+        return `${theme.fg("success", "✓ ")}${theme.fg("accent", id)}: ${parts.join(", ")}`;
       });
       return new Text(lines.join("\n"), 0, 0);
     },

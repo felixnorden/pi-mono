@@ -13,6 +13,7 @@ const question = (over: Partial<QuestionType> = {}): QuestionType =>
     prompt: "Pick one?",
     options: [new Option({ label: "Yes" }), new Option({ label: "No" })],
     allowOther: true,
+    multiple: false,
     ...over,
   });
 
@@ -115,6 +116,48 @@ describe("runQuestionnaire", () => {
       const harness = yield* run([question()], [KeyEvent.enter]);
       expect(harness.states.length).toBeGreaterThanOrEqual(1);
       expect(harness.states[0]?.mode).toBe("single");
+    }),
+  );
+
+  it.effect("collects several answers from a multi-select question", () =>
+    Effect.gen(function* () {
+      const harness = yield* run(
+        [question({ multiple: true })],
+        [
+          KeyEvent.char(" "), // toggle Yes
+          KeyEvent.down,
+          KeyEvent.down,
+          KeyEvent.char(" "), // open the add editor
+          KeyEvent.char("M"),
+          KeyEvent.char("y"),
+          KeyEvent.enter, // submit custom "My"
+          KeyEvent.enter, // confirm selection
+        ],
+      );
+      expect(harness.completed?.cancelled).toBe(false);
+      expect(harness.completed?.answers.map((a) => [a.label, a.wasCustom])).toEqual([
+        ["Yes", false],
+        ["My", true],
+      ]);
+    }),
+  );
+
+  it.effect("advances a multi-select question to the next tab on Enter", () =>
+    Effect.gen(function* () {
+      const harness = yield* run(
+        [question({ multiple: true }), question({ id: "q2", label: "Q2" })],
+        [
+          KeyEvent.char(" "), // toggle Yes on q1
+          KeyEvent.enter, // confirm -> q2
+          KeyEvent.enter, // answer q2 -> submit tab
+          KeyEvent.enter, // confirm submission
+        ],
+      );
+      expect(harness.completed?.cancelled).toBe(false);
+      const q1 = harness.completed?.answers.find((a) => a.id === "q1");
+      const q2 = harness.completed?.answers.find((a) => a.id === "q2");
+      expect(q1).toMatchObject({ label: "Yes", index: 1, wasCustom: false });
+      expect(q2).toMatchObject({ label: "Yes", index: 1, wasCustom: false });
     }),
   );
 

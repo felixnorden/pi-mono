@@ -39,6 +39,52 @@ export interface OptionChoice {
   readonly isOther: boolean;
 }
 
+/**
+ * One row in a multi-select question's option list. The selection itself
+ * lives in the question's answer array; these entries only describe what each
+ * row is so the machine and the scene stay in sync.
+ */
+export type MultiEntry =
+  | {
+      readonly kind: "option";
+      readonly index: number;
+      readonly label: string;
+      readonly description?: string;
+    }
+  | { readonly kind: "custom"; readonly label: string }
+  | { readonly kind: "add" };
+
+/**
+ * The rows shown on the active multi-select question's tab: the checkbox
+ * options, then any custom answers already added (as removable chips), and
+ * the "Add your own answer" entry when `allowOther` is set.
+ */
+export const multiEntries = (state: MachineState): readonly MultiEntry[] => {
+  const question = state.questions[state.currentTab];
+  if (!question?.multiple) return [];
+  const answers = state.answers.get(question.id) ?? [];
+  const entries: MultiEntry[] = question.options.map((o, i) => ({
+    kind: "option",
+    index: i,
+    label: o.label,
+    ...(o.description === undefined ? {} : { description: o.description }),
+  }));
+  for (const a of answers) {
+    if (a.wasCustom) entries.push({ kind: "custom", label: a.label });
+  }
+  if (question.allowOther) entries.push({ kind: "add" });
+  return entries;
+};
+
+/** Whether a multi-select checkbox row is currently selected. */
+export const isMultiEntrySelected = (state: MachineState, entry: MultiEntry): boolean => {
+  const question = state.questions[state.currentTab];
+  if (!question) return false;
+  const answers = state.answers.get(question.id) ?? [];
+  if (entry.kind === "option") return isOptionSelected(answers, entry.index);
+  return false;
+};
+
 /** The open file-completion popup over the inline editor. */
 export interface SuggestionState {
   /** The `@` token prefix the items replace. */
@@ -58,7 +104,8 @@ export interface MachineState {
   readonly optionIndex: number;
   /** Whether the inline "Type something" editor is open. */
   readonly inputMode: boolean;
-  readonly answers: ReadonlyMap<string, Answer>;
+  /** Answers grouped by question id; a multi-select question holds several. */
+  readonly answers: ReadonlyMap<string, readonly Answer[]>;
   readonly editor: EditorState;
   /** Open file-completion popup, or null when closed. */
   readonly suggestions: SuggestionState | null;
@@ -166,23 +213,36 @@ const bestSuggestionIndex = (items: readonly SuggestionItem[], prefix: string): 
   return 0;
 };
 
-const stepInOptions = (state: MachineState, event: KeyEvent): StepResult =>
-  Match.valueTags(event, {
+const stepInOptions = (state: MachineState, event: KeyEvent): StepResult => {
+  const question = state.questions[state.currentTab];
+  const onQuestion = state.currentTab < state.questions.length;
+  return Match.valueTags(event, {
     // Tab navigation (multi-question mode only)
     tab: () => (state.mode === "multi" ? moveTab(state, 1) : ignore(state)),
     right: () => (state.mode === "multi" ? moveTab(state, 1) : ignore(state)),
     shiftTab: () => (state.mode === "multi" ? moveTab(state, -1) : ignore(state)),
     left: () => (state.mode === "multi" ? moveTab(state, -1) : ignore(state)),
     // Selection moves are inert on the submit tab
-    up: () =>
-      state.currentTab >= state.questions.length ? ignore(state) : moveSelection(state, -1),
-    down: () =>
-      state.currentTab >= state.questions.length ? ignore(state) : moveSelection(state, 1),
+    up: () => (onQuestion ? moveSelection(state, -1) : ignore(state)),
+    down: () => (onQuestion ? moveSelection(state, 1) : ignore(state)),
+    // Enter confirms the choice: a single-select question records and advances;
+    // a multi-select question confirms the selection and moves on.
     enter: () =>
-      state.currentTab >= state.questions.length ? maybeSubmit(state) : chooseOption(state),
+      !onQuestion
+        ? maybeSubmit(state)
+        : question?.multiple
+          ? confirmMultiple(state, question)
+          : chooseOption(state),
     escape: () => complete(state, true),
-    // Everything else is ignored while navigating options
-    char: () => ignore(state),
+    // Space (a `char(" ")` event) toggles selections on a multi-select
+    // question and selects on a single-select question; other characters are
+    // ignored while navigating options.
+    char: (event) =>
+      onQuestion && event.char === " "
+        ? question?.multiple
+          ? toggleMultiEntry(state, question)
+          : chooseOption(state)
+        : ignore(state),
     paste: () => ignore(state),
     shiftEnter: () => ignore(state),
     backspace: () => ignore(state),
@@ -190,6 +250,7 @@ const stepInOptions = (state: MachineState, event: KeyEvent): StepResult =>
     home: () => ignore(state),
     end: () => ignore(state),
   });
+};
 
 const moveTab = (state: MachineState, dir: -1 | 1): StepResult => {
   const totalTabs = state.questions.length + 1;
@@ -214,7 +275,8 @@ const enterTab = (state: MachineState): MachineState => ({
 const answeredOptionIndex = (state: MachineState): number | undefined => {
   const question = state.questions[state.currentTab];
   if (!question) return undefined;
-  const answer = state.answers.get(question.id);
+  if (question.multiple) return undefined; // no single "current answer" to highlight
+  const answer = state.answers.get(question.id)?.[0];
   if (!answer) return undefined;
   const options = optionsForTab(state.questions, state.currentTab);
   if (answer.wasCustom) return options.length - 1; // the "Type something" entry
@@ -222,9 +284,15 @@ const answeredOptionIndex = (state: MachineState): number | undefined => {
   return Math.min(Math.max(0, answer.index - 1), options.length - 1);
 };
 
+/** Number of rows the user can navigate on the active tab. */
+const navigableCount = (state: MachineState): number => {
+  const question = state.questions[state.currentTab];
+  return question?.multiple ? multiEntries(state).length : currentOptions(state).length;
+};
+
 const moveSelection = (state: MachineState, dir: -1 | 1): StepResult => {
-  const options = currentOptions(state);
-  const optionIndex = Math.min(Math.max(0, state.optionIndex + dir), options.length - 1);
+  const count = navigableCount(state);
+  const optionIndex = Math.min(Math.max(0, state.optionIndex + dir), count - 1);
   return { state: { ...state, optionIndex }, action: { type: "none" } };
 };
 
@@ -235,10 +303,11 @@ const maybeSubmit = (state: MachineState): StepResult =>
 /** Enter on a question tab: pick the highlighted option, or open the editor. */
 const chooseOption = (state: MachineState): StepResult => {
   const question = state.questions[state.currentTab];
+  if (!question) return ignore(state);
   const option = currentOptions(state)[state.optionIndex];
-  if (!question || !option) return ignore(state);
+  if (!option) return ignore(state);
   if (option.isOther) {
-    const existing = state.answers.get(question.id);
+    const existing = state.answers.get(question.id)?.[0];
     return {
       state: {
         ...state,
@@ -252,6 +321,36 @@ const chooseOption = (state: MachineState): StepResult => {
   return advanceAfterAnswer(
     withAnswer(state, question, option.label, false, state.optionIndex + 1),
   );
+};
+
+/** Space on a multi-select row: toggle an option, remove a chip, or open the editor. */
+const toggleMultiEntry = (state: MachineState, question: Question): StepResult => {
+  const entry = multiEntries(state)[state.optionIndex];
+  if (!entry) return ignore(state);
+  switch (entry.kind) {
+    case "option":
+      return { state: toggleOption(state, question, entry.index), action: { type: "none" } };
+    case "custom":
+      return { state: removeCustom(state, question, entry.label), action: { type: "none" } };
+    case "add":
+      return {
+        state: { ...state, inputMode: true, editor: emptyEditor(), suggestions: null },
+        action: { type: "none" },
+      };
+  }
+};
+
+/** Enter on a multi-select question: open the add-editor or confirm and move on. */
+const confirmMultiple = (state: MachineState, question: Question): StepResult => {
+  const entry = multiEntries(state)[state.optionIndex];
+  // Mirror single-select: Enter on "Add your own answer" opens the type mode.
+  if (entry?.kind === "add") {
+    return {
+      state: { ...state, inputMode: true, editor: emptyEditor(), suggestions: null },
+      action: { type: "none" },
+    };
+  }
+  return answersFor(state, question).length === 0 ? ignore(state) : advanceAfterAnswer(state);
 };
 
 const stepInEditor = (state: MachineState, event: KeyEvent): StepResult =>
@@ -332,13 +431,61 @@ const submitEditor = (state: MachineState): StepResult => {
   const question = state.questions[state.currentTab];
   if (!question) return ignore(state);
   const label = state.editor.text.trim() || "(no response)";
+  const closed = { inputMode: false, editor: emptyEditor(), suggestions: null } as const;
+  if (question.multiple) {
+    // Multi-select: each typed answer becomes one added alternative and the
+    // user stays on the tab to add more or confirm with Done.
+    return { state: { ...addCustom(state, question, label), ...closed }, action: { type: "none" } };
+  }
   const next = withAnswer(state, question, label, true);
-  return advanceAfterAnswer({
-    ...next,
-    inputMode: false,
-    editor: emptyEditor(),
-    suggestions: null,
-  });
+  return advanceAfterAnswer({ ...next, ...closed });
+};
+
+const answersFor = (state: MachineState, question: Question): readonly Answer[] =>
+  state.answers.get(question.id) ?? [];
+
+const isOptionSelected = (answers: readonly Answer[], index: number): boolean =>
+  answers.some((a) => !a.wasCustom && a.index === index + 1);
+
+/** Toggle a checkbox option on/off in the question's answer array. */
+const toggleOption = (
+  state: MachineState,
+  question: Question,
+  optionIndex: number,
+): MachineState => {
+  const current = answersFor(state, question);
+  const answers = new Map(state.answers);
+  if (isOptionSelected(current, optionIndex)) {
+    const next = current.filter((a) => !(a.wasCustom === false && a.index === optionIndex + 1));
+    if (next.length === 0) answers.delete(question.id);
+    else answers.set(question.id, next);
+  } else {
+    const answer = new Answer({
+      id: question.id,
+      label: question.options[optionIndex]!.label,
+      wasCustom: false,
+      index: optionIndex + 1,
+    });
+    answers.set(question.id, [...current, answer]);
+  }
+  return { ...state, answers };
+};
+
+/** Remove a custom answer chip by label. */
+const removeCustom = (state: MachineState, question: Question, label: string): MachineState => {
+  const answers = new Map(state.answers);
+  const next = answersFor(state, question).filter((a) => !(a.wasCustom && a.label === label));
+  if (next.length === 0) answers.delete(question.id);
+  else answers.set(question.id, next);
+  return { ...state, answers };
+};
+
+/** Append a newly typed custom alternative to the question's answers. */
+const addCustom = (state: MachineState, question: Question, label: string): MachineState => {
+  const answers = new Map(state.answers);
+  const answer = new Answer({ id: question.id, label, wasCustom: true });
+  answers.set(question.id, [...answersFor(state, question), answer]);
+  return { ...state, answers };
 };
 
 const withAnswer = (
@@ -352,8 +499,8 @@ const withAnswer = (
   answers.set(
     question.id,
     index === undefined
-      ? new Answer({ id: question.id, label, wasCustom })
-      : new Answer({ id: question.id, label, wasCustom, index }),
+      ? [new Answer({ id: question.id, label, wasCustom })]
+      : [new Answer({ id: question.id, label, wasCustom, index })],
   );
   return { ...state, answers };
 };
@@ -371,7 +518,7 @@ const complete = (state: MachineState, cancelled: boolean): StepResult => ({
     type: "complete",
     result: new QuestionResult({
       questions: [...state.questions],
-      answers: [...state.answers.values()],
+      answers: [...state.answers.values()].flatMap((group) => group),
       cancelled,
     }),
   },
