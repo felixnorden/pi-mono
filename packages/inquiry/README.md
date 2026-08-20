@@ -62,7 +62,7 @@ with pi-specific adapters under `src/sdk/`.
 
 The model calls `question` whenever it needs the user to decide something,
 pick between options, or confirm a decision. Ask all open questions in one
-`question` call, with one entry per question in `questions[]`.
+`question` call. Put one question per entry in `questions[]`.
 
 ### Parameters
 
@@ -130,8 +130,8 @@ The tool groups a question's answers together in its output, so a
 multi-select question reads as e.g. `Q1: user selected: 1. A, 2. B, user
 wrote: X` rather than several detached rows.
 
-Treat a cancelled result as the user declining to answer. Do not re-ask
-unless the answer is essential; then ask once more in a different form.
+Treat a cancelled result as a declined answer. Do not re-ask unless the
+answer is needed for the next step. When you re-ask, change the form.
 
 ## Pairing with the tracker
 

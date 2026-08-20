@@ -281,7 +281,7 @@ export const doneMarkReminder = (
 const TRACKER_TOOL_DESCRIPTION =
   "Manage todolists and track progress. Use for task lists, checklists, milestones, and step-by-step " +
   "work; keep track of tasks with tracker instead of in chat or files. Work through items one at a " +
-  "time, marking each done as it completes, so the list is the live working state.\n" +
+  "time, marking each done as it completes, so the list always shows current progress.\n" +
   'Item ids are listName:index — the 1-based position of the item in its list, e.g. "Work:2" (copy ' +
   "them from the list action output). Removing an item renumbers the items after it, so list again " +
   "before referencing items after a removal.\n" +

@@ -32,10 +32,10 @@ const questionToolSystemPromptContribution = {
     "Ask the user to decide: interactive questions with selectable options or a typed answer",
   guidelines: [
     "Use question whenever you need the user to decide something, pick between options, or confirm a decision — instead of ending your reply with a question in plain text",
-    "Ask all open questions in one question call, with one entry per question in questions[]; a single question shows a simple option list, multiple questions show a tabbed interface with a submit tab",
+    "Ask all open questions in one call. Put one question per entry in questions[]. A single question shows a simple option list. Multiple questions show a tabbed interface with a submit tab.",
     "Keep options short: a label plus an optional one-line description, 2-5 options per question. The user can also type a free-text answer ('Type something.'), so only set allowOther: false when one of the listed options is required",
     "Set multiple: true on a question when the user should pick one or more answers (checkboxes) rather than a single option — for example instead of asking several binary questions, one per option; the user can still add custom alternatives when allowOther is true",
-    "Treat a cancelled question result as the user declining to answer: do not re-ask unless the answer is essential, and then ask once more in a different form",
+    "Treat a cancelled question result as a declined answer. Do not re-ask unless the answer is needed for the next step. When you re-ask, change the form.",
   ],
 } as const;
 
@@ -59,7 +59,7 @@ export default function question(pi: ExtensionAPI) {
     name: "question",
     label: "Question",
     description:
-      "Ask the user one or more multiple-choice questions and get their answers back. Use whenever you need input from the user: clarifying ambiguous requirements, choosing between approaches or options, or confirming a decision. Prefer this over asking in plain text — it renders as a selectable list (single question) or a tabbed form (multiple questions) and lets the user type a custom answer. Set multiple: true to ask for one or more answers as checkboxes (for example, instead of asking several binary yes/no questions, one per option).",
+      "Ask the user one or more multiple-choice questions and get their answers back. Use whenever you need input from the user: clarifying ambiguous requirements, choosing between approaches or options, or confirming a decision. Prefer this over asking in plain text. It is a selectable list (single question) or a tabbed form (multiple questions). It lets the user type a custom answer. Set multiple: true to ask for one or more answers as checkboxes (for example, instead of asking several binary yes/no questions, one per option).",
     // Single source of truth: generated from the Effect schema in the core.
     parameters: QuestionListParamsJsonSchema as TSchema,
     promptSnippet: questionToolSystemPromptContribution.snippet,

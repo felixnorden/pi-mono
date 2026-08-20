@@ -5,6 +5,18 @@
   "bugs": {
     "url": "https://github.com/felixnorden/pi-mono/issues"
   },
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-coding-agent",
+    "coding-agent",
+    "planning",
+    "tdd",
+    "qrspi",
+    "workflow",
+    "skill",
+    "extension"
+  ],
   "license": "MIT",
   "author": "Felix Nordén <felixnorden@gmail.com>",
   "repository": {

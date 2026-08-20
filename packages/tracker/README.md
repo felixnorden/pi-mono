@@ -73,7 +73,7 @@ list is active.
 
 The intended rhythm: break multi-step work into items up front (one item per
 deliverable), work through them one at a time, and mark each done as it
-completes. The list — shown in the widget — is the live working state; the
+completes. The list — shown in the widget — always shows current progress; the
 agent should read it with `list` before starting and after finishing, and
 update item text with `update_item` when scope changes.
 
