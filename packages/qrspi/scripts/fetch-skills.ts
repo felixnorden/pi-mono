@@ -9,7 +9,7 @@
 import { $ } from "bun";
 
 const SKILLS_REPO = "https://github.com/felixnorden/skills";
-const PINNED_REF = "v0.1.1";
+const PINNED_REF = "v0.1.2";
 const SKILL_NAMES = ["planning-workflow", "tdd"] as const;
 const TMP_DIR = "/tmp/qrspi-skills";
 
