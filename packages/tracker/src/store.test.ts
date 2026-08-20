@@ -473,7 +473,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
     }),
   );
 
-  it.effect("updateItems applies several patches in one call", () =>
+  it.effect("updateItems applies several patches within one list", () =>
     Effect.gen(function* () {
       const store = yield* TrackerStore;
       yield* store.reset(emptyState());
@@ -481,10 +481,10 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const list = yield* store.createList("Work");
       yield* store.addItems(list.id, ["a", "b", "c"]);
 
-      const updated = yield* store.updateItems([
-        { itemId: "Work:1", done: true },
-        { itemId: "Work:2", text: "bee" },
-        { itemId: "Work:3", text: "sea", done: true },
+      const updated = yield* store.updateItems(list.id, [
+        { index: 1, done: true },
+        { index: 2, text: "bee" },
+        { index: 3, text: "sea", done: true },
       ]);
       // Returned in patch order, with the final state of each item.
       assert.deepStrictEqual(
@@ -495,10 +495,8 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
           ["sea", true],
         ],
       );
-
-      const state = yield* store.state;
       assert.deepStrictEqual(
-        state.lists[0]?.items.map((i) => [i.text, i.done]),
+        (yield* store.state).lists[0]?.items.map((i) => [i.text, i.done]),
         [
           ["a", true],
           ["bee", false],
@@ -508,7 +506,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
     }),
   );
 
-  it.effect("updateItems with all-empty patches is a no-op", () =>
+  it.effect("updateItems fails atomically for an out-of-range index", () =>
     Effect.gen(function* () {
       const store = yield* TrackerStore;
       yield* store.reset(emptyState());
@@ -517,12 +515,29 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.addItem(list.id, "a");
       const before = yield* store.state;
 
-      const result = yield* store.updateItems([{ itemId: "Work:1" }, { itemId: "Work:1" }]);
-      assert.deepStrictEqual(
-        result.map((i) => i.text),
-        ["a", "a"],
+      const result = yield* Effect.result(
+        store.updateItems(list.id, [
+          { index: 1, done: true },
+          { index: 99, done: true },
+        ]),
       );
+      assert(Result.isFailure(result));
+      assert.strictEqual(Option.getOrThrow(Result.getFailure(result)).reason, "ItemNotFound");
+      // The valid patch in the batch was not applied.
       assert.deepStrictEqual(yield* store.state, before);
+    }),
+  );
+
+  it.effect("updateItems fails for a missing list", () =>
+    Effect.gen(function* () {
+      const store = yield* TrackerStore;
+      yield* store.reset(emptyState());
+
+      const result = yield* Effect.result(
+        store.updateItems(999, [{ index: 1, done: true }]),
+      );
+      assert(Result.isFailure(result));
+      assert.strictEqual(Option.getOrThrow(Result.getFailure(result)).reason, "ListNotFound");
     }),
   );
 
@@ -536,9 +551,9 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const before = yield* store.state;
 
       const result = yield* Effect.result(
-        store.updateItems([
-          { itemId: "Work:1", done: true },
-          { itemId: "Work:1", text: "  " },
+        store.updateItems(list.id, [
+          { index: 1, done: true },
+          { index: 1, text: "  " },
         ]),
       );
       assert(Result.isFailure(result));
@@ -547,37 +562,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
     }),
   );
 
-  it.effect("updateItems fails atomically when any item is missing", () =>
-    Effect.gen(function* () {
-      const store = yield* TrackerStore;
-      yield* store.reset(emptyState());
-
-      const list = yield* store.createList("Work");
-      yield* store.addItem(list.id, "a");
-      const before = yield* store.state;
-
-      const noList = yield* Effect.result(store.updateItems([{ itemId: "Nope:1", done: true }]));
-      assert(Result.isFailure(noList));
-      const noListFailure = Option.getOrThrow(Result.getFailure(noList));
-      assert.strictEqual(noListFailure.reason, "ItemNotFound");
-      assert.strictEqual(noListFailure.itemId, "Nope:1");
-
-      const noItem = yield* Effect.result(
-        store.updateItems([
-          { itemId: "Work:1", done: true },
-          { itemId: "Work:99", done: true },
-        ]),
-      );
-      assert(Result.isFailure(noItem));
-      const failure = Option.getOrThrow(Result.getFailure(noItem));
-      assert.strictEqual(failure.reason, "ItemNotFound");
-      assert.strictEqual(failure.itemId, "Work:99");
-      // The valid patch in the batch was not applied.
-      assert.deepStrictEqual(yield* store.state, before);
-    }),
-  );
-
-  it.effect("updateItems with duplicate item ids: the last patch wins", () =>
+  it.effect("updateItems with duplicate index: the last patch wins", () =>
     Effect.gen(function* () {
       const store = yield* TrackerStore;
       yield* store.reset(emptyState());
@@ -585,9 +570,9 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const list = yield* store.createList("Work");
       yield* store.addItem(list.id, "a");
 
-      const updated = yield* store.updateItems([
-        { itemId: "Work:1", text: "first" },
-        { itemId: "Work:1", text: "second", done: true },
+      const updated = yield* store.updateItems(list.id, [
+        { index: 1, text: "first" },
+        { index: 1, text: "second", done: true },
       ]);
       assert.deepStrictEqual(
         updated.map((i) => [i.text, i.done]),
@@ -599,44 +584,6 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       assert.deepStrictEqual(
         (yield* store.state).lists[0]?.items.map((i) => [i.text, i.done]),
         [["second", true]],
-      );
-    }),
-  );
-
-  it.effect("updateItems spans several lists in one atomic batch", () =>
-    Effect.gen(function* () {
-      const store = yield* TrackerStore;
-      yield* store.reset(emptyState());
-
-      const work = yield* store.createList("Work");
-      yield* store.addItem(work.id, "a");
-      yield* store.addItem(work.id, "b");
-      const home = yield* store.createList("Home", { activate: false });
-      yield* store.addItem(home.id, "c");
-
-      const updated = yield* store.updateItems([
-        { itemId: "Work:1", done: true },
-        { itemId: "Home:1", text: "water plants" },
-      ]);
-      assert.deepStrictEqual(
-        updated.map((i) => [i.text, i.done]),
-        [
-          ["a", true],
-          ["water plants", false],
-        ],
-      );
-
-      const state = yield* store.state;
-      assert.deepStrictEqual(
-        state.lists[0]?.items.map((i) => [i.text, i.done]),
-        [
-          ["a", true],
-          ["b", false],
-        ],
-      );
-      assert.deepStrictEqual(
-        state.lists[1]?.items.map((i) => [i.text, i.done]),
-        [["water plants", false]],
       );
     }),
   );

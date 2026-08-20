@@ -80,12 +80,12 @@ export default function (pi: ExtensionAPI): void {
       }
       case "update_item": {
         if (params.items !== undefined) {
-          // Wire format is snake_case (item_id); the store uses itemId.
-          const batch = params.items.map(({ item_id, ...patch }) => ({
-            itemId: item_id,
-            ...patch,
-          }));
-          return withStore((store) => store.updateItems(batch));
+          // Batch form: list_id + index-based patches within one list (mirrors
+          // add_item's list_id + text[]). The store resolves each index against
+          // that single list.
+          const listId = requireParam(params.list_id, "list_id");
+          const batch = params.items;
+          return withStore((store) => store.updateItems(listId, batch));
         }
         const patch: UpdateItemPatch = {
           ...(params.text !== undefined && !Array.isArray(params.text)
@@ -94,7 +94,7 @@ export default function (pi: ExtensionAPI): void {
           ...(params.done !== undefined ? { done: params.done } : {}),
         };
         return withStore((store) =>
-          store.updateItems([{ itemId: requireParam(params.item_id, "item_id"), ...patch }]),
+          store.updateItem(requireParam(params.item_id, "item_id"), patch),
         );
       }
       case "remove_item":
@@ -279,22 +279,43 @@ export default function (pi: ExtensionAPI): void {
       case "update_item": {
         const items = value as TodoItem[];
         details.items = items;
-        const patches =
-          params.items !== undefined
-            ? params.items
-            : [{ item_id: params.item_id, text: params.text, done: params.done }];
+        // Normalize both forms into patch records the renderer and reminder
+        // share: each has a display id plus optional text/done.
+        const batch = params.items;
+        const list =
+          batch !== undefined ? current.lists.find((l) => l.id === params.list_id) : undefined;
+        const listName = list ? list.name : `#${params.list_id}`;
+        const patches: Array<{ id: string; text?: string; done?: boolean }> =
+          batch !== undefined
+            ? batch.map((p) => ({ id: `${listName}:${p.index}`, text: p.text, done: p.done }))
+            : [
+                {
+                  id: params.item_id ?? "?",
+                  text:
+                    params.text !== undefined && !Array.isArray(params.text)
+                      ? params.text
+                      : undefined,
+                  done: params.done,
+                },
+              ];
         const parts = items.map((item, i) => {
           const patch = patches[i]!;
           const changes: string[] = [];
           if (patch.done !== undefined) changes.push(item.done ? "completed" : "uncompleted");
           if (patch.text !== undefined) changes.push(`text: ${item.text}`);
-          return `${patch.item_id}${changes.length === 0 ? " (no change)" : ` (${changes.join(", ")})`}`;
+          return `${patch.id}${changes.length === 0 ? " (no change)" : ` (${changes.join(", ")})`}`;
         });
         text = `Updated ${items.length} item${items.length === 1 ? "" : "s"}: ${parts.join(", ")}`;
-        // Anti-pattern guard: batch-marking done items at once is the
-        // terminal-batch signature; the reminder lands in the result so the
-        // caller sees it exactly where the behavior happens.
-        const reminder = doneMarkReminder(patches);
+        // Anti-pattern guard: batch-marking the *last* open items at once is
+        // the terminal-batch signature; the reminder lands in the result so
+        // the caller sees it exactly where the behavior happens. `current` is
+        // the post-call state, so remaining open items tell us whether this
+        // batch cleared the tracker (terminal) or just caught up mid-work.
+        const openRemaining = current.lists.reduce(
+          (n, l) => n + l.items.filter((i) => !i.done).length,
+          0,
+        );
+        const reminder = doneMarkReminder(patches, openRemaining);
         if (reminder !== null) text += `\n${reminder}`;
         break;
       }

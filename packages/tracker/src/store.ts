@@ -138,10 +138,14 @@ export interface UpdateItemPatch {
   readonly done?: boolean;
 }
 
-/** An `UpdateItemPatch` that also names the item it targets (batch form). */
-export interface UpdateItemPatchWithId extends UpdateItemPatch {
-  /** `listName:index`, as shown by the list action (e.g. `Work:2`). */
-  readonly itemId: string;
+/**
+ * An `UpdateItemPatch` that targets an item by its 1-based position within a
+ * single list (mirrors `add_item`'s `list_id + text[]` shape: the list is
+ * factored out, the patches are positional).
+ */
+export interface UpdateItemInListPatch extends UpdateItemPatch {
+  /** 1-based position of the item within its list (e.g. 2 for the second item). */
+  readonly index: number;
 }
 
 /** Options for `createList`: activation behavior and initial items. */
@@ -173,7 +177,8 @@ export class TrackerStore extends Context.Service<
       patch: UpdateItemPatch,
     ) => Effect.Effect<TodoItem, TrackerError>;
     readonly updateItems: (
-      patches: readonly UpdateItemPatchWithId[],
+      listId: number,
+      patches: readonly UpdateItemInListPatch[],
     ) => Effect.Effect<TodoItem[], TrackerError>;
     readonly removeItem: (itemId: string) => Effect.Effect<void, TrackerError>;
   }
@@ -404,12 +409,14 @@ export class TrackerStore extends Context.Service<
       });
 
       /**
-       * Batched updates. Each patch's `itemId` names its own list
-       * (`listName:index`), so one batch may span several lists. The whole
-       * batch fails atomically if any target is missing.
+       * Per-list batched updates, mirroring `addItems(listId, texts)`: the
+       * list is named once and each patch targets an item by its 1-based
+       * position (`index`) within that list. The whole batch fails atomically
+       * if the list is missing or any index is out of range.
        */
       const updateItems = Effect.fn("TrackerStore.updateItems")(function* (
-        patches: readonly UpdateItemPatchWithId[],
+        listId: number,
+        patches: readonly UpdateItemInListPatch[],
       ) {
         // Reject empty replacement texts up front so the whole batch fails
         // before touching the state (atomicity).
@@ -423,52 +430,54 @@ export class TrackerStore extends Context.Service<
         }
         return yield* mutate(
           (s): readonly [Result.Result<TodoItem[], TrackerError>, TrackerState] => {
-            // Every target item must exist; the batch fails atomically otherwise.
-            const resolved: Array<{
-              readonly index: number;
-              readonly list: TodoList;
-              readonly item: TodoItem;
-            }> = [];
+            const list = s.lists.find((l) => l.id === listId);
+            if (!list) {
+              return [
+                Result.fail(
+                  new TrackerError({
+                    reason: "ListNotFound",
+                    message: listNotFoundMessage(s, listId),
+                    listId,
+                  }),
+                ),
+                s,
+              ];
+            }
+            // Resolve every target position; the batch fails atomically if any
+            // index is out of range.
+            const positions: number[] = [];
             for (const patch of patches) {
-              const r = resolveItemOrError(s, patch.itemId);
-              if (!r.ok) {
-                return [Result.fail(r.error), s];
+              if (patch.index < 1 || patch.index > list.items.length) {
+                return [
+                  Result.fail(
+                    new TrackerError({
+                      reason: "ItemNotFound",
+                      message:
+                        `Item ${list.name}:${patch.index} not found — list "${list.name}" has ` +
+                        `${list.items.length} item${list.items.length === 1 ? "" : "s"}`,
+                    }),
+                  ),
+                  s,
+                ];
               }
-              resolved.push({ index: r.index, list: r.list, item: r.item });
+              positions.push(patch.index);
             }
-            // All-empty batch: return the current items, leave state untouched.
-            if (patches.every((patch) => patch.text === undefined && patch.done === undefined)) {
-              return [Result.succeed(resolved.map((r) => r.item)), s];
-            }
-            // Later patches win for duplicate positions. Group by list id so
-            // affected lists are rebuilt exactly once each.
-            const byList = new Map<number, Map<number, UpdateItemPatch>>();
-            for (const [i, patch] of patches.entries()) {
-              const listId = resolved[i]!.list.id;
-              let patchesByIndex = byList.get(listId);
-              if (!patchesByIndex) {
-                patchesByIndex = new Map();
-                byList.set(listId, patchesByIndex);
-              }
-              patchesByIndex.set(resolved[i]!.index, patch);
-            }
-            const lists = s.lists.map((l) => {
-              const patchesByIndex = byList.get(l.id);
-              if (!patchesByIndex) return l;
-              const nextItems = l.items.map((item, idx) => {
-                const patch = patchesByIndex.get(idx + 1);
-                if (!patch) return item;
-                const text = patch.text === undefined ? item.text : patch.text.trim();
-                const done = patch.done ?? item.done;
-                return new TodoItem({ text, done });
-              });
-              return new TodoList({ id: l.id, name: l.name, items: nextItems });
+            // Later patches win for duplicate positions.
+            const byIndex = new Map<number, UpdateItemPatch>();
+            patches.forEach((patch, i) => byIndex.set(positions[i]!, patch));
+            const nextItems = list.items.map((item, idx) => {
+              const patch = byIndex.get(idx + 1);
+              if (!patch) return item;
+              const text = patch.text === undefined ? item.text : patch.text.trim();
+              const done = patch.done ?? item.done;
+              return new TodoItem({ text, done });
             });
+            const lists = s.lists.map((l) =>
+              l.id === listId ? new TodoList({ id: l.id, name: l.name, items: nextItems }) : l,
+            );
             return [
               // Results in patch order so the caller can map them 1:1.
-              Result.succeed(
-                resolved.map((r) => lists.find((l) => l.id === r.list.id)!.items[r.index - 1]!),
-              ),
+              Result.succeed(positions.map((index) => nextItems[index - 1]!)),
               new TrackerState({ ...s, lists }),
             ];
           },

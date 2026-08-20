@@ -32,7 +32,7 @@ supports these actions:
 | `delete_list` | Delete a list                             | `list_id`                                      |
 | `set_active`  | Set or clear the active list              | `list_id` (optional)                           |
 | `add_item`    | Add one or more items                     | `list_id`, `text` (string or array of strings) |
-| `update_item` | Update one or more items                  | `item_id`/`text?`/`done?` or `items`           |
+| `update_item` | Update one or more items                  | `item_id`/`text?`/`done?` or `list_id` + `items` |
 | `remove_item` | Remove an item                            | `item_id`                                      |
 
 `create_list` accepts `initial_items` (an array of item texts) to create the
@@ -46,19 +46,21 @@ items: an id is just the list name plus the array position, so ids are
 unique across lists because list names are unique, and ids shift when items
 are removed (`Work:3` becomes `Work:2`) — re-list before referencing items
 after a removal. `update_item` accepts the scalar form (`item_id` with
-optional `text`/`done`) or a batched `items` array
-(`[{item_id, text?, done?}, ...]`); batches may span lists, since each
-`item_id` names its own list. Creating a list makes it the active list (the
-widget switches to it); pass `activate: false` to keep the current active
-list.
+optional `text`/`done`) or a per-list batched form: `list_id` plus an
+`items` array (`[{index, text?, done?}, ...]`) where `index` is the item's
+1-based position in that list — mirroring `add_item`'s `list_id + text[]`
+shape, so one batch stays within a single list. Creating a list makes it the
+active list (the widget switches to it); pass `activate: false` to keep the
+current active list.
 
 The tool validates every call and returns an error that names exactly what to
 fix: each action accepts only its own parameters, required fields are
 enforced, and the two `update_item` forms never mix. Read the error and retry
 with corrected parameters — not-found errors also list the available ids.
 `update_item` also appends a reminder when one call marks two or more items
-done at once: the working rhythm is to mark each item done in the same turn
-it completes, never batch the marking at the end.
+done and leaves no open items behind (the terminal batch): the working
+rhythm is to mark each item done in the same turn it completes, never batch
+the marking at the end.
 
 Example prompt:
 

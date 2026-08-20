@@ -39,7 +39,7 @@ export const TrackerToolParams = Type.Object({
   list_id: Type.Optional(
     Type.Number({
       description:
-        "List id, as shown by the list action. Required for delete_list, add_item; optional for set_active (omit to deselect).",
+        "List id, as shown by the list action. Required for delete_list, add_item, and for update_item's items={...} batch; optional for set_active (omit to deselect).",
     }),
   ),
   item_id: Type.Optional(
@@ -85,8 +85,9 @@ export const TrackerToolParams = Type.Object({
     Type.Array(
       Type.Object(
         {
-          item_id: Type.String({
-            description: 'Item id, as shown by the list action (listName:index, e.g. "Work:2").',
+          index: Type.Number({
+            description:
+              '1-based position of the item within list_id (e.g. 2 for the second item).',
           }),
           text: Type.Optional(Type.String({ description: "Replacement text for the item." })),
           done: Type.Optional(
@@ -98,7 +99,7 @@ export const TrackerToolParams = Type.Object({
       ),
       {
         description:
-          "For update_item: one or more item updates in a single call (all in the same list). Alternative to item_id/text/done.",
+          "For update_item: one or more item updates within a single list_id (mirrors add_item's list_id + text[]). Alternative to item_id/text/done.",
         minItems: 1,
       },
     ),
@@ -114,7 +115,7 @@ const ACTION_PARAMS: Readonly<Record<TrackerToolAction, readonly string[]>> = {
   delete_list: ["list_id"],
   set_active: ["list_id"],
   add_item: ["list_id", "text"],
-  update_item: ["item_id", "text", "done", "items"],
+  update_item: ["list_id", "item_id", "text", "done", "items"],
   remove_item: ["item_id"],
 };
 
@@ -186,6 +187,7 @@ export function validateTrackerCall(args: unknown): TrackerCallValidation {
       break;
     case "update_item":
       if (record.items !== undefined) {
+        // Batch form: list_id + items (index-based, one list).
         if (
           record.item_id !== undefined ||
           record.text !== undefined ||
@@ -194,13 +196,21 @@ export function validateTrackerCall(args: unknown): TrackerCallValidation {
           return {
             ok: false,
             message:
-              "update_item: pass either item_id/text/done (one item) or items (several items in one call), not both.",
+              "update_item: pass either item_id/text/done (one item) or list_id + items (several items in one list), not both.",
+          };
+        }
+        if (record.list_id === undefined) {
+          return {
+            ok: false,
+            message:
+              "update_item with 'items' requires the 'list_id' parameter (the list whose items are being updated).",
           };
         }
       } else if (record.item_id === undefined) {
         return {
           ok: false,
-          message: "update_item requires 'item_id' (or 'items' for batched updates).",
+          message:
+            "update_item requires 'item_id' (one item) or 'list_id' + 'items' (several items in one list).",
         };
       } else if (Array.isArray(record.text)) {
         return {
@@ -240,18 +250,31 @@ export interface TrackerToolDetails {
 /**
  * Anti-pattern guard: the tracker guideline says to mark each item done in
  * the same turn it completes and never batch the marking at the end. A call
- * that marks two or more items done at once is the terminal-batch signature.
- * Returns a reminder (or null when the call is fine); it is advisory text,
- * never a rejection, so legitimate same-turn multi-completions still work.
+ * that marks two or more items done at once AND leaves no open items behind is
+ * the terminal-batch signature — the agent did all its work, then finished the
+ * list in one sweep. Returns a reminder (or null when the call is fine); it is
+ * advisory text, never a rejection, so legitimate same-turn multi-completions
+ * (when work is still open) still pass silently.
+ *
+ * @param patches the update_item patches in call order.
+ * @param openRemaining number of not-done items across all lists *after* the
+ *   call (0 means the batch cleared the whole tracker). Pass undefined when
+ *   the post-call state isn't known.
  */
 export const doneMarkReminder = (
   patches: readonly { readonly done?: boolean }[],
+  openRemaining?: number,
 ): string | null => {
   const doneCount = patches.filter((patch) => patch.done === true).length;
+  // Only the terminal batch — two or more done marks with nothing left open —
+  // is flagged. Batches that finish several items while other work remains are
+  // normal mid-turn progress and stay quiet. When the post-call open count is
+  // unknown (not 0) we stay quiet rather than guess at a terminal batch.
   if (doneCount < 2) return null;
+  if (openRemaining !== 0) return null;
   return (
-    `Note: this call completed ${doneCount} items at once — the tracker guideline is to mark ` +
-    "each item done in the same turn it completes, not batch the marking at the end."
+    `Note: this call completed ${doneCount} items at once and left no open items — the tracker ` +
+    "guideline is to mark each item done in the same turn it completes, not batch the marking at the end."
   );
 };
 
@@ -272,18 +295,20 @@ const TRACKER_TOOL_DESCRIPTION =
   "- set_active: list_id (omit the field to deselect)\n" +
   "- add_item: list_id (required), text (required: a string, or an array of strings to add several " +
   "items in one call)\n" +
-  "- update_item: item_id (required, listName:index) with optional text/done, or items=" +
-  "[{item_id, text?, done?}, ...] for several updates in one call (items may span lists; never " +
-  "mix the two forms)\n" +
+  "- update_item: update several items in one list with list_id (required) + items=[{index, " +
+  "text?, done?}, ...] — just like add_item's list_id + text[] (index is the item's 1-based " +
+  "position in that list), or one item with item_id + optional text/done. Never mix the two " +
+  "forms. Example: update_item list_id=2 items=[{index: 2, done: true}, {index: 3, text: \"Ship " +
+  "the fix\"}]\n" +
   "- remove_item: item_id (required, listName:index)";
 
 const TRACKER_TOOL_PROMPT_SNIPPET =
-  "Manage todolists and track progress: create lists with initial items, add/update/remove items, " +
-  "batch adds and updates in one call";
+  "Manage todolists and track progress: create lists with initial items, add/update/remove items. " +
+  "Batch adds with text arrays and updates with update_item list_id + items=[...] in one call";
 
 const TRACKER_TOOL_PROMPT_GUIDELINES = [
   "Use tracker for todo lists, checklists, and multi-step work. Put progress in tracker, not in prose.",
-  "Break work into tracker items up front. One item per deliverable. Mark an item done in the same turn it completes. Never batch the marking at the end. Batch related adds and updates in one call.",
+  "Break work into tracker items up front. One item per deliverable. Mark an item done in the same turn it completes. Never batch the marking at the end. Batch related adds and updates in one call — use update_item's list_id + items=[...] form to update several entries in one list at once.",
   "Before starting work, call tracker with action list. Work from the list, not from memory. Re-check it when the task drifts.",
   "Copy tracker item ids (listName:index, e.g. Work:2) from the list action output; removing an item renumbers the items after it.",
   "When a tracker call fails, read the error. It tells you what to fix. Not-found errors name the available ids. Retry with corrected parameters in the same turn. Never repeat the same failing call.",

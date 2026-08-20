@@ -27,9 +27,10 @@ describe("tracker tool parameter schema", () => {
       { action: "update_item", item_id: "Work:2" },
       {
         action: "update_item",
+        list_id: 1,
         items: [
-          { item_id: "Work:1", done: true },
-          { item_id: "Work:2", text: "New text" },
+          { index: 1, done: true },
+          { index: 2, text: "New text" },
         ],
       },
       { action: "remove_item", item_id: "Work:2" },
@@ -57,7 +58,16 @@ describe("tracker tool parameter schema", () => {
     expect(
       Value.Check(TrackerToolParams, {
         action: "update_item",
-        items: [{ item_id: "Work:1", done: "yes" }],
+        list_id: 1,
+        items: [{ index: "one", done: "yes" }],
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(TrackerToolParams, {
+        // item_id inside the batch is a typo now; patch objects are strict.
+        action: "update_item",
+        list_id: 1,
+        items: [{ item_id: "Work:1", done: true }],
       }),
     ).toBe(false);
     expect(Value.Check(TrackerToolParams, { action: "update_item", item_id: 2 })).toBe(false); // ids are strings
@@ -91,7 +101,7 @@ describe("validateTrackerCall (error-nudging layer)", () => {
       { action: "add_item", list_id: 1, text: ["a", "b"] },
       { action: "update_item", item_id: "Work:2" },
       { action: "update_item", item_id: "Work:2", text: "x", done: true },
-      { action: "update_item", items: [{ item_id: "Work:2", done: true }] },
+      { action: "update_item", list_id: 1, items: [{ index: 2, done: true }] },
       { action: "remove_item", item_id: "Work:2" },
     ];
     for (const call of valid) {
@@ -114,14 +124,15 @@ describe("validateTrackerCall (error-nudging layer)", () => {
     expect(bare.ok).toBe(false);
     if (!bare.ok) expect(bare.message).toContain("accepts no parameters");
 
-    // The old numeric contract (list_id + numeric item_id) is rejected with
-    // the new parameter list, so a stale agent call self-corrects.
-    const stale = validateTrackerCall({ action: "update_item", list_id: 1, item_id: 2 });
-    expect(stale.ok).toBe(false);
-    if (!stale.ok) {
-      expect(stale.message).toContain("list_id");
-      expect(stale.message).toContain("item_id");
-    }
+    // The old numeric contract (list_id + numeric item_id) is enforced by the
+    // schema (item_id must be a string), not here; the mixed-form and
+    // missing-list_id nudges below cover the batch contract.
+    const batch = validateTrackerCall({
+      action: "update_item",
+      list_id: 1,
+      items: [{ index: 2, done: true }],
+    });
+    expect(batch.ok).toBe(true);
   });
 
   it("nudges on missing required fields", () => {
@@ -144,10 +155,17 @@ describe("validateTrackerCall (error-nudging layer)", () => {
     const mixed = validateTrackerCall({
       action: "update_item",
       item_id: "Work:2",
-      items: [{ item_id: "Work:3" }],
+      items: [{ index: 3 }],
     });
     expect(mixed.ok).toBe(false);
     if (!mixed.ok) expect(mixed.message).toContain("not both");
+
+    const missingList = validateTrackerCall({
+      action: "update_item",
+      items: [{ index: 1, done: true }],
+    });
+    expect(missingList.ok).toBe(false);
+    if (!missingList.ok) expect(missingList.message).toContain("list_id");
 
     const arrayText = validateTrackerCall({
       action: "update_item",
@@ -171,22 +189,30 @@ describe("validateTrackerCall (error-nudging layer)", () => {
   });
 });
 
-describe("doneMarkReminder (batch done-mark guard)", () => {
-  it("reminds when one call marks two or more items done", () => {
-    const reminder = doneMarkReminder([{ done: true }, { done: true }]);
+describe("doneMarkReminder (terminal batch done-mark guard)", () => {
+  it("reminds when one call marks two or more items done and clears the tracker", () => {
+    const reminder = doneMarkReminder([{ done: true }, { done: true }], 0);
     expect(reminder).not.toBeNull();
     expect(reminder).toContain("same turn");
+    expect(reminder).toContain("no open items");
     expect(reminder).toContain("2 items");
   });
 
-  it("is silent for single done marks and text-only batches", () => {
-    expect(doneMarkReminder([{ done: true }])).toBeNull();
-    expect(doneMarkReminder([{}, {}])).toBeNull(); // text-only/no-op patches
-    expect(doneMarkReminder([])).toBeNull();
+  it("is silent when a multi-done batch leaves open items (mid-turn progress)", () => {
+    // Two done marks but other work still open: not a terminal batch.
+    expect(doneMarkReminder([{ done: true }, { done: true }], 1)).toBeNull();
+    // Multi-done batch, post-call state unknown: stay quiet rather than guess.
+    expect(doneMarkReminder([{ done: true }, { done: true }])).toBeNull();
+  });
+
+  it("is silent for single done marks, text-only batches, and empty batches", () => {
+    expect(doneMarkReminder([{ done: true }], 0)).toBeNull();
+    expect(doneMarkReminder([{}, {}], 0)).toBeNull(); // text-only/no-op patches
+    expect(doneMarkReminder([], 0)).toBeNull();
   });
 
   it("does not count reopening (done: false) as marking done", () => {
-    expect(doneMarkReminder([{ done: true }, { done: false }])).toBeNull();
+    expect(doneMarkReminder([{ done: true }, { done: false }], 0)).toBeNull();
   });
 });
 
