@@ -1,6 +1,6 @@
 {
   "name": "@ftrdotdev/pi-tui",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "House TUI components and the pi interface extension: themed boxes, a pure box-frame model, and the header/footer/editor/settings/preview chrome",
   "keywords": [
     "components",

@@ -1,6 +1,6 @@
 {
   "name": "@ftrdotdev/pi-inquiry",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Interactive questions for the pi coding agent: a single `question` tool renders option lists, tabbed forms, and free-text answers",
   "keywords": [
     "effect",
@@ -42,7 +42,7 @@
     "fmt": "oxfmt -c oxfmt.config.ts"
   },
   "dependencies": {
-    "@ftrdotdev/pi-tui": "^0.2.1",
+    "@ftrdotdev/pi-tui": "^0.3.0",
     "effect": "catalog:effect"
   },
   "devDependencies": {

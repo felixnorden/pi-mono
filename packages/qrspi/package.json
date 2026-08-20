@@ -1,6 +1,6 @@
 {
   "name": "@ftrdotdev/pi-qrspi",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "homepage": "https://github.com/felixnorden/pi-mono/blob/main/packages/qrspi/README.md",
   "bugs": {
     "url": "https://github.com/felixnorden/pi-mono/issues"
