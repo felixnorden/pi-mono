@@ -11,7 +11,7 @@ import { SessionLifecycle } from "./session-lifecycle.ts";
 import { PreviewService, registerPreview } from "./ui/preview.ts";
 import { registerSettingsCommand } from "./ui/settings-command.ts";
 import { formatTurnTelemetry, TurnTelemetryTracker } from "./telemetry.ts";
-import { ActivityTracker } from "./activity.ts";
+import { ActivityTracker, toTrackerEvent, type TrackerEventSource } from "./activity.ts";
 import {
   createInitialState,
   getModelMeta,
@@ -220,6 +220,10 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
   pi.on("session_shutdown", async (_event, ctx) => {
     sessionLifecycle.shutdown();
     stopWorkingTimer();
+    // Session handoff resets the timer state machine: the next session
+    // starts from a clean tracker (matches the session_start reset).
+    state.tracker = new ActivityTracker();
+    state.lastDoneIn = undefined;
     if (active) {
       uninstallUi(ctx);
     }
@@ -267,8 +271,19 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
     turnTelemetry.handle(event);
   });
 
+  // Translate pi event fields into tracker descriptors at the boundary and
+  // drop the no-op mappings (user/toolResult messages). The tracker never
+  // sees pi types; only assistant message spans and tool executions charge
+  // buckets. The tracker ignores events while no run is open, so a stray
+  // event outside the current session is harmless.
+  const track = (source: TrackerEventSource) => {
+    const mapped = toTrackerEvent(source);
+    if (mapped) state.tracker.handle(mapped);
+  };
+
   pi.on("message_start", (event) => {
     turnTelemetry.handle(event);
+    track({ kind: "message_start", role: event.message.role, now: Date.now() });
   });
 
   pi.on("message_update", (event) => {
@@ -277,6 +292,7 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
 
   pi.on("tool_execution_start", (event) => {
     turnTelemetry.handle(event);
+    track({ kind: "tool_execution_start", toolCallId: event.toolCallId, now: Date.now() });
   });
 
   pi.on("turn_end", (event) => {
@@ -306,12 +322,14 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
 
   pi.on("message_end", (event, ctx) => {
     turnTelemetry.handle(event);
+    track({ kind: "message_end", role: event.message.role, now: Date.now() });
     if (!sessionLifecycle.isCurrent()) return;
     invalidateUsageCache();
     refreshInteractiveState(ctx);
   });
 
-  pi.on("tool_execution_end", (_event, ctx) => {
+  pi.on("tool_execution_end", (event, ctx) => {
+    track({ kind: "tool_execution_end", toolCallId: event.toolCallId, now: Date.now() });
     refreshInteractiveState(ctx);
   });
 

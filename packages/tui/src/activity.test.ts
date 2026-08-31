@@ -1,8 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import {
   ActivityTracker,
+  toTrackerEvent,
   type ActivityEvent,
   type TimeBreakdown,
+  type TrackerEventSource,
 } from "./activity.ts";
 
 // ---------------------------------------------------------------------------
@@ -223,4 +225,57 @@ it("parity: waitingMs reports the open wait span and 0 when no prompt is open", 
   ]);
   assert.strictEqual(waiting.waitingMs(5000), 1000);
   assert.strictEqual(waiting.isWaiting(), true);
+});
+
+// ---------------------------------------------------------------------------
+// toTrackerEvent — maps pi-shaped event fields onto tracker descriptors at
+// the wire boundary. The tracker never imports pi types; index.ts reads the
+// pi event fields and passes a plain object here.
+// ---------------------------------------------------------------------------
+
+it("toTrackerEvent maps pi message roles and tool calls onto tracker descriptors", () => {
+  // Assistant message_start opens an inference span.
+  assert.deepStrictEqual(
+    toTrackerEvent({ kind: "message_start", role: "assistant", now: 1000 }),
+    { type: "message_start", role: "assistant", now: 1000 },
+  );
+  // toolResult message_end never maps to an assistant span.
+  assert.strictEqual(
+    toTrackerEvent({ kind: "message_end", role: "toolResult", now: 2000 }),
+    undefined,
+  );
+  // User messages never map either.
+  assert.strictEqual(
+    toTrackerEvent({ kind: "message_start", role: "user", now: 2000 }),
+    undefined,
+  );
+  // Tool executions carry their call id through.
+  assert.deepStrictEqual(
+    toTrackerEvent({ kind: "tool_execution_start", toolCallId: "call_1", now: 3000 }),
+    { type: "tool_start", callId: "call_1", now: 3000 },
+  );
+  assert.deepStrictEqual(
+    toTrackerEvent({ kind: "tool_execution_end", toolCallId: "call_1", now: 4000 }),
+    { type: "tool_end", callId: "call_1", now: 4000 },
+  );
+});
+
+it("toTrackerEvent feeds the tracker a live inference/tool script", () => {
+  // The full boundary: the wiring opens the run directly (agent_start) and
+  // routes message/tool events through the mapper; deterministic buckets out.
+  const tracker = new ActivityTracker();
+  tracker.handle({ type: "run_start", now: 1000 });
+  const script: TrackerEventSource[] = [
+    { kind: "message_start", role: "assistant", now: 1000 },
+    { kind: "tool_execution_start", toolCallId: "call_1", now: 2000 },
+    { kind: "tool_execution_end", toolCallId: "call_1", now: 4000 },
+    { kind: "message_end", role: "assistant", now: 5000 },
+  ];
+  for (const event of script) {
+    const mapped = toTrackerEvent(event);
+    if (mapped) tracker.handle(mapped);
+  }
+  const breakdown = tracker.breakdown(6000);
+  // tool 2000..4000 = 2s; inference 1000..2000 + 4000..5000 = 2s.
+  assert.deepStrictEqual(breakdown, { inference: 2000, tool: 2000, wait: 0, total: 5000 });
 });

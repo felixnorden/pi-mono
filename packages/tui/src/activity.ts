@@ -233,3 +233,42 @@ export class ActivityTracker {
     return { inference, tool, wait };
   }
 }
+
+// ---------------------------------------------------------------------------
+// toTrackerEvent — the pi-to-tracker seam. index.ts reads pi event fields
+// (message.role, toolCallId) and passes a plain object; the tracker module
+// never imports pi types (mock boundary rule). Only assistant messages map
+// to tracker descriptors; user and toolResult messages return undefined and
+// are dropped by the wiring.
+// ---------------------------------------------------------------------------
+
+export type TrackerEventSource =
+  // role accepts any string: pi message roles include custom app roles beyond
+  // the tracker vocabulary (user/assistant/toolResult); only `assistant`
+  // maps, so the boundary needs no knowledge of pi's full union. Each kind
+  // is a single literal so TS narrows the discriminated union exactly.
+  | { kind: "message_start"; role: string; now: number }
+  | { kind: "message_end"; role: string; now: number }
+  | { kind: "tool_execution_start"; toolCallId: string; now: number }
+  | { kind: "tool_execution_end"; toolCallId: string; now: number };
+
+/**
+ * Translates a pi-shaped event field set into an `ActivityEvent`, or
+ * `undefined` when the event must not charge a tracker bucket (every
+ * non-assistant message). The call id passes through to pair parallel tool
+ * executions per call.
+ */
+export function toTrackerEvent(source: TrackerEventSource): ActivityEvent | undefined {
+  if (source.kind === "message_start" || source.kind === "message_end") {
+    // toolResult messages would otherwise pair as an assistant span; the
+    // tracker already ignores non-assistant roles, but the boundary kills
+    // them before they reach the machine.
+    if (source.role !== "assistant") return undefined;
+    return { type: source.kind, role: "assistant", now: source.now };
+  }
+  return {
+    type: source.kind === "tool_execution_start" ? "tool_start" : "tool_end",
+    callId: source.toolCallId,
+    now: source.now,
+  };
+}
