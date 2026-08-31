@@ -7,6 +7,7 @@
  */
 
 import { Schema } from "effect";
+import { stripLeadingEmoji } from "./text.ts";
 
 // ---------------------------------------------------------------------------
 // Wire schemas (tool parameters) — the single source of truth. The tool's
@@ -137,20 +138,24 @@ export class QuestionResult extends Schema.Class<QuestionResult>(
  * Normalize wire params into domain questions.
  *
  * Applies the defaults: `id` falls back to `q{n}`, `label` to `Q{n}`,
- * `allowOther` defaults to `true`, `multiple` to `false`.
+ * `allowOther` defaults to `true`, `multiple` to `false`. Model-authored
+ * display text (prompt, label, option label/description) has leading marker
+ * emoji stripped — the UI already provides the selection affordances those
+ * markers duplicate.
  */
 export const normalizeQuestions = (params: QuestionListParams): readonly Question[] =>
   params.questions.map(
     (q, i) =>
       new Question({
         id: q.id ?? `q${i + 1}`,
-        label: q.label ?? `Q${i + 1}`,
-        prompt: q.prompt,
-        options: q.options.map((o) =>
-          o.description === undefined
-            ? new Option({ label: o.label })
-            : new Option({ label: o.label, description: o.description }),
-        ),
+        label: stripLeadingEmoji(q.label ?? `Q${i + 1}`),
+        prompt: stripLeadingEmoji(q.prompt),
+        options: q.options.map((o) => {
+          const label = stripLeadingEmoji(o.label);
+          const description =
+            o.description === undefined ? undefined : stripLeadingEmoji(o.description);
+          return description ? new Option({ label, description }) : new Option({ label });
+        }),
         allowOther: q.allowOther !== false,
         multiple: q.multiple === true,
       }),

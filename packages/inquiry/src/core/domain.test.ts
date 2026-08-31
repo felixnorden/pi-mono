@@ -168,4 +168,42 @@ describe("normalizeQuestions", () => {
     expect(questions[0]?.options[0]?.label).toBe("a");
     expect(questions[0]?.options[0]?.description).toBe("d");
   });
+
+  it("strips leading marker emoji from prompt, label and options", () => {
+    const questions = normalizeQuestions(
+      decodeParams({
+        questions: [
+          {
+            id: "q7",
+            label: "❓ Q7 deployBlock",
+            prompt:
+              "❓ Q7 — deployBlock guard: should anything guard it?\n\n➡️ Recommended: A — document-only.",
+            options: [
+              {
+                label: "✅ Document-only",
+                description:
+                  "➡️ Recommended. Zero mechanics; the Slice-13 gate + docs cover operator responsibility.",
+              },
+              { label: "One-shot warning log" },
+            ],
+          },
+        ],
+      }),
+    );
+    const q = questions[0]!;
+    expect(q.label).toBe("Q7 deployBlock");
+    expect(q.prompt).toBe("Q7 — deployBlock guard: should anything guard it?\n\nRecommended: A — document-only.");
+    expect(q.options[0]?.label).toBe("Document-only");
+    expect(q.options[0]?.description).toBe(
+      "Recommended. Zero mechanics; the Slice-13 gate + docs cover operator responsibility.",
+    );
+    expect(q.options[1]?.label).toBe("One-shot warning log");
+  });
+
+  it("drops option descriptions that strip to empty", () => {
+    const questions = normalizeQuestions(
+      decodeParams({ questions: [{ prompt: "p", options: [{ label: "a", description: "➡️" }] }] }),
+    );
+    expect(questions[0]?.options[0]?.description).toBeUndefined();
+  });
 });

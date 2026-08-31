@@ -1,5 +1,19 @@
 # @ftrdotdev/pi-tracker
 
+## 0.4.0
+
+### Patch Changes
+
+- 483f6f4: Tighten the agent-facing tool guidance.
+
+  - Rewrite the `question` tool description and prompt guidelines: split long sentences, use the imperative, and make the "cancelled question" guidance concrete.
+  - Update the `tracker` tool description so the working-state claim is concrete instead of "live".
+
+- Updated dependencies [c89b1a6]
+- Updated dependencies [2d3c636]
+- Updated dependencies [a113d38]
+  - @ftrdotdev/pi-tui@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes

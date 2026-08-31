@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Option, Question, type Question as QuestionType } from "./domain.ts";
+import { decodeParams, normalizeQuestions } from "./domain.ts";
 import { KeyEvent } from "./keyboard.ts";
 import {
   initialMachineState,
@@ -12,6 +13,7 @@ import {
   buildEditorBox,
   buildScene,
   buildSuggestionPopup,
+  clampLine,
   line,
   plain,
   span,
@@ -408,6 +410,107 @@ describe("buildEditorBox", () => {
     expect(plain(box[1]!)).toBe("│ aaaa │");
     expect(plain(box[2]!)).toBe("│ aa   │");
     expect(plain(box[3]!)).toBe("│ b    │");
+  });
+});
+
+describe("buildScene: terminal-width crash regression", () => {
+  // Independent pi-tui-style measure (the module under test must never emit a
+  // line pi's crash guard would reject: "Rendered line exceeds terminal
+  // width"). The 2026-08-31 incident: the model prefixed a prompt
+  // continuation with ➡️; the old per-code-point measure counted it as one
+  // column, pi counts two, and the framed line came out 111 on a 110-column
+  // terminal, killing the agent.
+  const terminalColumns = (text: string): number => {
+    const rgiEmoji = /^\p{RGI_Emoji}$/v;
+    const couldBeEmoji = (s: string): boolean => {
+      const cp = s.codePointAt(0) ?? 0;
+      return (
+        (cp >= 0x1f000 && cp <= 0x1fbff) ||
+        (cp >= 0x2300 && cp <= 0x23ff) ||
+        (cp >= 0x2600 && cp <= 0x27bf) ||
+        (cp >= 0x2b50 && cp <= 0x2b55) ||
+        s.includes("\uFE0F") ||
+        s.length > 2
+      );
+    };
+    let w = 0;
+    for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)) {
+      if (segment === "\t") { w += 3; continue; }
+      if (couldBeEmoji(segment) && rgiEmoji.test(segment)) { w += 2; continue; }
+      for (const ch of segment) {
+        const cp = ch.codePointAt(0)!;
+        if (cp === 0xfe0f || cp === 0x200d) w += 0;
+        else if (cp >= 0x2e80) w += 2;
+        else w += 1;
+      }
+    }
+    return w;
+  };
+
+  // The Q7 payload from the crashing session, minus the noise the strip
+  // removes. Width 110 matches the crashed terminal.
+  const q7CrashPayload = () => ({
+    id: "q7",
+    label: "Q7 deployBlock",
+    prompt:
+      "❓ Q7 — deployBlock guard: under net-deltas semantics, deployBlock set AFTER contract creation is legitimate (read model = deltas since deploy). A deployBlock in the future is indistinguishable from a token not yet deployed — both idle until head passes. So there is no misconfig that fails loudly today; a wrong deployBlock is a silent, visible-only-in-output mistake. Should anything guard it?\n\n➡️ Recommended: A — document-only. Zero mechanics, and (b) is a 10-line add if you want the operator signal.",
+    options: [
+      {
+        label: "Document-only",
+        description:
+          "➡️ Recommended. Zero mechanics; the Slice-13 gate + docs cover operator responsibility.",
+      },
+      {
+        label: "One-shot warning log",
+        description:
+          "Engine logs a one-shot warning on first tick if getCode(deployBlock-1) is non-empty ('history starts mid-token-life'). One RPC per token, no boot-time network.",
+      },
+      { label: "Fail boot" },
+    ],
+  });
+
+  it("emits no line wider than the terminal", () => {
+    const questions = normalizeQuestions(
+      decodeParams({ questions: [q7CrashPayload()] }),
+    );
+    const scene = buildScene(initialMachineState(questions), 110);
+    for (const l of plainLines(scene)) {
+      expect(terminalColumns(l)).toBeLessThanOrEqual(110);
+    }
+  });
+
+  it("renders the prompt continuation and option description without the model's leading emoji", () => {
+    const questions = normalizeQuestions(
+      decodeParams({ questions: [q7CrashPayload()] }),
+    );
+    const scene = buildScene(initialMachineState(questions), 110);
+    const text = plainLines(scene).join("\n");
+    expect(text).toContain("Recommended: A — document-only.");
+    expect(text).toContain("Recommended. Zero mechanics; the Slice-13 gate");
+    expect(text).not.toContain("➡️");
+    expect(text).toContain("Q7 — deployBlock guard:");
+    expect(text).not.toContain("❓");
+  });
+});
+
+describe("clampLine", () => {
+  it("is a no-op when the line fits", () => {
+    const l: SceneLine = [span("abc")];
+    expect(clampLine(l, 5)).toEqual(l);
+  });
+
+  it("truncates the last kept span at the width", () => {
+    expect(plain(clampLine([span("abcdef")], 3))).toBe("abc");
+  });
+
+  it("truncates the span that overflows", () => {
+    const out = clampLine([span("ab"), span("cd", "muted")], 3);
+    expect(plain(out)).toBe("abc");
+    expect(out[1]).toEqual({ text: "c", style: "muted" });
+  });
+
+  it("clips on grapheme boundaries", () => {
+    expect(plain(clampLine([span("➡️ x")], 2))).toBe("➡️");
   });
 });
 

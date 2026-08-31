@@ -3,7 +3,47 @@
  *
  * The core never deals with ANSI codes or terminal themes, only plain strings
  * and their visible widths. Styling is applied later by the fringe painter.
+ *
+ * Widths must match `@earendil-works/pi-tui`'s `visibleWidth` exactly: pi
+ * treats any rendered custom-UI line wider than the terminal as a hard crash
+ * ("Rendered line exceeds terminal width"), so under-measuring by a column
+ * kills the whole agent. Emoji are therefore measured per grapheme with the
+ * same RGI_Emoji rule pi-tui uses, not per code point.
  */
+
+/** Grapheme segmenter shared by the width and emoji-strip helpers. */
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+// --- Emoji classification, mirrored from pi-tui's utils (the measure pi's
+// own crash guard uses).
+const rgiEmojiRegex = /^\p{RGI_Emoji}$/v;
+const couldBeEmoji = (segment: string): boolean => {
+  const cp = segment.codePointAt(0) ?? 0;
+  return (
+    (cp >= 0x1f000 && cp <= 0x1fbff) || // Emoji and pictographs
+    (cp >= 0x2300 && cp <= 0x23ff) || // Misc technical
+    (cp >= 0x2600 && cp <= 0x27bf) || // Misc symbols, dingbats, arrows
+    (cp >= 0x2b50 && cp <= 0x2b55) || // Stars/circles
+    segment.includes("\uFE0F") || // Emoji presentation selector (VS16)
+    segment.length > 2 // Multi-codepoint sequences (ZWJ, skin tones, flags)
+  );
+};
+
+/** Width in terminal columns of a single grapheme, matching pi-tui. */
+const graphemeWidth = (segment: string): number => {
+  if (segment === "\t") return 3;
+  if (couldBeEmoji(segment) && rgiEmojiRegex.test(segment)) return 2;
+  const cp = segment.codePointAt(0) ?? 0;
+  // Regional indicators (flags) render full-width even when isolated.
+  if (cp >= 0x1f1e6 && cp <= 0x1f1ff) return 2;
+  let width = 0;
+  for (const ch of segment) width += charWidth(ch);
+  return width;
+};
+
+/** True when `segment` is an emoji as pi-tui defines it (`➡️`, `⚠️`, `👨‍👩‍👧`). */
+const isEmoji = (segment: string): boolean =>
+  couldBeEmoji(segment) && rgiEmojiRegex.test(segment);
 
 /** Width in terminal columns of a single character (code point). */
 export const charWidth = (ch: string): number => {
@@ -17,28 +57,73 @@ export const charWidth = (ch: string): number => {
   return 1;
 };
 
-/** Visible width of a string in terminal columns. */
+/** Visible width of a string in terminal columns (grapheme-aware). */
 export const visibleWidth = (text: string): number => {
   let width = 0;
-  for (const ch of text) {
-    width += charWidth(ch);
+  for (const { segment } of graphemeSegmenter.segment(text)) {
+    width += graphemeWidth(segment);
   }
   return width;
 };
 
-/** Truncate `text` to at most `width` visible columns, cutting whole characters. */
+/** Truncate `text` to at most `width` visible columns, cutting whole graphemes. */
 export const truncateToWidth = (text: string, width: number): string => {
   if (width <= 0) return "";
   if (visibleWidth(text) <= width) return text;
   let out = "";
   let used = 0;
-  for (const ch of text) {
-    const w = charWidth(ch);
+  for (const { segment } of graphemeSegmenter.segment(text)) {
+    const w = graphemeWidth(segment);
     if (used + w > width) break;
-    out += ch;
+    out += segment;
     used += w;
   }
   return out;
+};
+
+/**
+ * Strip a leading run of emoji from the start of each line of `text`.
+ *
+ * Models prefix prompts and option text with marker emoji (`❓ Q7 — …`,
+ * `➡️ Recommended: …`). The UI already renders selection affordances, so
+ * those markers are pure noise; a leading pointer such as `→ ` or `• ` is
+ * left alone. The whitespace after the stripped run is removed. Literal
+ * newlines are preserved (each line is stripped independently).
+ */
+export const stripLeadingEmoji = (text: string): string => {
+  if (text === "") return "";
+  return text
+    .split(/\r\n|\r|\n/)
+    .map((line) => {
+      const segments = [...graphemeSegmenter.segment(line)];
+      // Walk the leading run: whitespace is consumed along with the emoji it
+      // separates ("➡️ ➡️ text"), but the run stops at the first
+      // non-whitespace, non-emoji grapheme.
+      let sawEmoji = false;
+      let lastEmoji = -1;
+      let i = 0;
+      while (i < segments.length) {
+        const seg = segments[i]!.segment;
+        if (seg.trim() === "") {
+          i++;
+          continue;
+        }
+        if (isEmoji(seg)) {
+          sawEmoji = true;
+          lastEmoji = i;
+          i++;
+          continue;
+        }
+        break;
+      }
+      if (!sawEmoji) return line;
+      return segments
+        .slice(lastEmoji + 1)
+        .map((s) => s.segment)
+        .join("")
+        .replace(/^\s+/, "");
+    })
+    .join("\n");
 };
 
 /**

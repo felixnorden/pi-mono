@@ -348,18 +348,47 @@ export const buildScene = (state: MachineState, width: number): Scene => {
 
   // Frame the interior: accent border with rails, body padded to the content
   // width so the rails stay flush (the same layout the BorderedBox component
-  // produces around ANSI children).
+  // produces around ANSI children). Body rows are pre-wrapped, so a row that
+  // still exceeds the content width indicates a measurement mismatch; clamp it
+  // rather than letting it push the rail past the terminal (pi hard-crashes on
+  // any custom-UI line wider than the terminal).
   const border = (text: string): Span => span(text, "accent");
   const framed: SceneLine[] = [
     [border(frame.top.left), border(frame.top.fill), border(frame.top.right)],
   ];
   for (const content of lines) {
     const pad = contentWidth - visibleWidth(plain(content));
-    const body = pad > 0 ? [...content, span(" ".repeat(pad))] : content;
+    const body =
+      pad > 0 ? [...content, span(" ".repeat(pad))] : pad < 0 ? clampLine(content, contentWidth) : content;
     framed.push([border(frame.railLeft), ...body, border(frame.railRight)]);
   }
   framed.push([border(frame.bottom.left), border(frame.bottom.fill), border(frame.bottom.right)]);
   return { lines: framed };
+};
+
+/**
+ * Clip a scene line to at most `width` visible columns, dropping whole spans
+ * and truncating the last kept span (the same clipping BorderedBox applies to
+ * body rows via truncateToWidth). Defensive only: scene content is
+ * pre-wrapped, so this should never truncate once widths are accurate.
+ */
+export const clampLine = (content: SceneLine, width: number): SceneLine => {
+  const out: SceneLine = [];
+  let used = 0;
+  for (const s of content) {
+    const w = visibleWidth(s.text);
+    const room = width - used;
+    if (room <= 0) break;
+    if (w <= room) {
+      out.push(s);
+      used += w;
+    } else {
+      const kept = truncateToWidth(s.text, room);
+      if (kept !== "" || out.length === 0) out.push({ ...s, text: kept });
+      break;
+    }
+  }
+  return out;
 };
 
 /**
