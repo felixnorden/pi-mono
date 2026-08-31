@@ -175,33 +175,67 @@ export function renderRuntimeSegment(
 }
 
 /**
- * The working/done timer footer segment, or `""` when neither timer
- * state is set. The working read calls `Date.now()` only while a timer
- * is active; pass `now` to freeze the clock in deterministic tests.
+ * The timer segment's two packable parts: the atomic total (priority 2 in
+ * the footer packing) and the inference/tool split (priority 1, so it
+ * yields before the total on narrow widths). `split` is `""` while
+ * waiting or when both buckets are zero.
+ */
+export interface TimerSegmentParts {
+  total: string;
+  split: string;
+}
+
+/** `~ 2s > 1s`-style split from the two non-zero buckets, or `""`. */
+function renderSplit(theme: Theme, glyphs: IconGlyphs, inference: number, tool: number): string {
+  const buckets: string[] = [];
+  if (inference > 0) {
+    buckets.push(`${theme.fg("dim", glyphs.inference)} ${theme.fg("accent", formatDuration(inference))}`);
+  }
+  if (tool > 0) {
+    buckets.push(`${theme.fg("dim", glyphs.tool)} ${theme.fg("accent", formatDuration(tool))}`);
+  }
+  return buckets.join(" ");
+}
+
+/**
+ * The working/done timer footer segment, or `undefined` when neither
+ * timer state is set. The working read calls `Date.now()` only while a
+ * timer is active; pass `now` to freeze the clock in deterministic tests.
  *
  * The segment reads the ActivityTracker, which charges every instant of
  * the open run to one of four exclusive buckets. While a blocking
- * `ctx.ui` prompt is open it reports `waiting` instead of counting
- * toward `working`, and a finished run's `lastDoneIn` is the active
- * work time only (total minus waits).
+ * `ctx.ui` prompt is open it reports `waiting` (no split) instead of
+ * counting toward `working`. A finished run's `lastDoneIn` is the active
+ * work time (total minus waits) and its frozen inference/tool split is
+ * rendered next to it until the next run starts.
  */
 export function renderTimerSegment(
   theme: Theme,
   state: FooterState,
   glyphs: IconGlyphs,
   now: number = Date.now(),
-): string {
+): TimerSegmentParts | undefined {
   if (state.tracker.isRunOpen()) {
     if (state.tracker.isWaiting()) {
-      return `${theme.fg("warning", glyphs.working)} ${theme.fg("warning", "waiting")} ${theme.fg("warning", formatDuration(state.tracker.waitingMs(now)))}`;
+      return {
+        total: `${theme.fg("warning", glyphs.working)} ${theme.fg("warning", "waiting")} ${theme.fg("warning", formatDuration(state.tracker.waitingMs(now)))}`,
+        split: "",
+      };
     }
     const active = state.tracker.breakdown(now);
-    return `${theme.fg("accent", glyphs.working)} ${theme.fg("dim", "working")} ${theme.fg("accent", formatDuration(active.total - active.wait))}`;
+    return {
+      total: `${theme.fg("accent", glyphs.working)} ${theme.fg("dim", "working")} ${theme.fg("accent", formatDuration(active.total - active.wait))}`,
+      split: renderSplit(theme, glyphs, active.inference, active.tool),
+    };
   }
   if (state.lastDoneIn !== undefined) {
-    return `${theme.fg("success", glyphs.done)} ${theme.fg("success", "done")} ${theme.fg("text", formatDuration(state.lastDoneIn))}`;
+    const done = state.tracker.breakdown(now);
+    return {
+      total: `${theme.fg("success", glyphs.done)} ${theme.fg("success", "done")} ${theme.fg("text", formatDuration(state.lastDoneIn))}`,
+      split: renderSplit(theme, glyphs, done.inference, done.tool),
+    };
   }
-  return "";
+  return undefined;
 }
 
 /**

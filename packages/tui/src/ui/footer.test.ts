@@ -364,7 +364,7 @@ const timerTheme = {
   bold: (text: string) => `*${text}*`,
 } as unknown as Theme;
 
-const TIMER_GLYPHS = { working: "o", done: "+" } as IconGlyphs;
+const TIMER_GLYPHS = { working: "o", done: "+", inference: "~", tool: ">" } as IconGlyphs;
 
 const timerState = (overrides: Partial<FooterState> = {}): FooterState => ({
   ...state,
@@ -382,7 +382,7 @@ const scriptedState = (
 };
 
 it("renderTimerSegment renders nothing without an active or finished timer", () => {
-  assert.strictEqual(renderTimerSegment(timerTheme, timerState(), TIMER_GLYPHS, 5000), "");
+  assert.strictEqual(renderTimerSegment(timerTheme, timerState(), TIMER_GLYPHS, 5000), undefined);
 });
 
 it("renderTimerSegment counts working time excluding completed user waits", () => {
@@ -391,11 +391,11 @@ it("renderTimerSegment counts working time excluding completed user waits", () =
     { type: "wait_start", now: 2000 },
     { type: "wait_end", now: 4000 },
   ]);
-  // Elapsed 4s minus a completed 2s wait = 2s of active work.
-  assert.strictEqual(
-    renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000),
-    "accent:o dim:working accent:2s",
-  );
+  // Elapsed 4s minus a completed 2s wait = 2s of active work; no inference
+  // or tool spans in this script, so there is no split.
+  const seg = renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000);
+  assert.strictEqual(seg?.total, "accent:o dim:working accent:2s");
+  assert.strictEqual(seg?.split, "");
 });
 
 it("renderTimerSegment reports waiting while a user prompt is open", () => {
@@ -405,17 +405,115 @@ it("renderTimerSegment reports waiting while a user prompt is open", () => {
     { type: "wait_end", now: 4000 },
     { type: "wait_start", now: 4000 },
   ]);
-  // The open wait spans 1s (t=4s..5s); working time stops counting.
-  assert.strictEqual(
-    renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000),
-    "warning:o warning:waiting warning:1s",
-  );
+  // The open wait spans 1s (t=4s..5s); working time stops counting and the
+  // label is exactly the previous waiting string.
+  const seg = renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000);
+  assert.strictEqual(seg?.total, "warning:o warning:waiting warning:1s");
+  assert.strictEqual(seg?.split, "");
 });
 
 it("renderTimerSegment reports the finished run's wait-free duration", () => {
   const s = timerState({ lastDoneIn: 90_000 });
-  assert.strictEqual(
-    renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000),
-    "success:+ success:done text:1m 30s",
+  const seg = renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000);
+  assert.strictEqual(seg?.total, "success:+ success:done text:1m 30s");
+  // A tracker that never ran has no frozen split.
+  assert.strictEqual(seg?.split, "");
+});
+
+it("renderTimerSegment shows the live total and split while working", () => {
+  const s = scriptedState([
+    { type: "run_start", now: 1000 },
+    { type: "message_start", role: "assistant", now: 1000 },
+    { type: "tool_start", callId: "a", now: 2000 },
+    { type: "tool_end", callId: "a", now: 4000 },
+    { type: "message_end", role: "assistant", now: 5000 },
+  ]);
+  // At t=6s: inference 1000..2000 + 4000..5000 = 2s (tool subsumes the
+  // open message while it runs); tool 2000..4000 = 2s; total 1000..6000.
+  const seg = renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 6000);
+  assert.strictEqual(seg?.total, "accent:o dim:working accent:5s");
+  assert.strictEqual(seg?.split, "dim:~ accent:2s dim:> accent:2s");
+});
+
+it("renderTimerSegment shows the frozen total and split after the run", () => {
+  const tracker = new ActivityTracker();
+  for (const event of [
+    { type: "run_start", now: 1000 },
+    { type: "message_start", role: "assistant", now: 1000 },
+    { type: "tool_start", callId: "a", now: 2000 },
+    { type: "tool_end", callId: "a", now: 4000 },
+    { type: "message_end", role: "assistant", now: 5000 },
+  ] as ActivityEvent[]) {
+    tracker.handle(event);
+  }
+  // The wiring stores lastDoneIn = frozen total - frozen wait.
+  const frozen = tracker.closeRun(6000);
+  const s = timerState({ tracker, lastDoneIn: frozen.total - frozen.wait });
+
+  // Frozen: the same pixels at any later instant — no live ticking.
+  const at = (now: number) => renderTimerSegment(timerTheme, s, TIMER_GLYPHS, now);
+  for (const now of [7000, 60_000]) {
+    const seg = at(now);
+    assert.strictEqual(seg?.total, "success:+ success:done text:5s");
+    assert.strictEqual(seg?.split, "dim:~ accent:2s dim:> accent:2s");
+  }
+});
+
+it("the split yields before the total on narrow widths", () => {
+  // A live run whose buckets are non-zero: a complete 10s run ending in the
+  // past, so the real-clock render (Date.now(), few ms later) always sees
+  // total >= buckets. Assertions are glyph-presence based, never duration.
+  const base = Date.now();
+  const tracker = new ActivityTracker();
+  for (const event of [
+    { type: "run_start", now: base - 10_000 },
+    { type: "message_start", role: "assistant", now: base - 10_000 },
+    { type: "tool_start", callId: "a", now: base - 9000 },
+    { type: "tool_end", callId: "a", now: base - 7000 },
+    { type: "message_end", role: "assistant", now: base - 6000 },
+  ] as ActivityEvent[]) {
+    tracker.handle(event);
+  }
+  const liveState = timerState({ tracker });
+
+  // Line 1 carries only the timer: every other segment is disabled.
+  const bareConfig: TuiConfig = {
+    ...config,
+    footerSegments: {
+      ...config.footerSegments,
+      cwd: false,
+      gitBranch: false,
+      gitStatus: false,
+      gitCommit: false,
+      runtime: false,
+      context: false,
+    },
+  };
+  const packSvc = Effect.runSync(
+    Effect.gen(function* () {
+      return yield* FooterRenderService;
+    }).pipe(
+      Effect.provide(
+        FooterRenderService.make(
+          svcCtx as never,
+          () => liveState,
+          () => bareConfig,
+          getModelMeta,
+          footerData(),
+        ),
+      ),
+    ),
   );
+
+  const narrow = Effect.runSync(packSvc.render(14))[0]!;
+  const wide = Effect.runSync(packSvc.render(30))[0]!;
+
+  // Narrow: the split (priority 1) drops, the total (priority 2) survives.
+  assert.ok(narrow.includes("working"));
+  assert.ok(!narrow.includes("~"));
+  assert.ok(!narrow.includes(">"));
+  // Wide: both parts render.
+  assert.ok(wide.includes("working"));
+  assert.ok(wide.includes("~"));
+  assert.ok(wide.includes(">"));
 });

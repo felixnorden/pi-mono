@@ -8,6 +8,10 @@ export interface IconGlyphs {
   context: string;
   model: string;
   thinking: string;
+  /** Live split: model-inference bucket glyph. */
+  inference: string;
+  /** Live split: tool-execution bucket glyph. */
+  tool: string;
   input: string;
   output: string;
   cacheHit: string;
@@ -36,6 +40,8 @@ const NERD_GLYPHS: IconGlyphs = {
   context: "",
   model: "",
   thinking: "",
+  inference: "\uF0EB", // same glyph as thinking: the model is generating
+  tool: "\u2699", // ⚙ gear: tool execution
   // client network view: input = upload to API, output = download from API
   input: "",
   output: "",
@@ -67,6 +73,8 @@ const ASCII_GLYPHS: IconGlyphs = {
   context: "%",
   model: "M",
   thinking: "~",
+  inference: "~", // same glyph as thinking: the model is generating
+  tool: ">", // outside the git-status collision set {= S ! A ? r x ^ v}
   input: "↑",
   output: "↓",
   cacheHit: "c",

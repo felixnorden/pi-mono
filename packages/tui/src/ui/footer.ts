@@ -83,8 +83,13 @@ export class FooterRenderService extends Context.Service<
               const runtimeSeg = renderRuntimeSegment(theme, state.runtime, config.icons.mode);
               if (runtimeSeg) leftParts.push({ text: runtimeSeg, priority: 1 });
             }
-            const timerSeg = renderTimerSegment(theme, state, glyphs);
-            if (timerSeg) leftParts.push({ text: timerSeg, priority: 2 });
+            const timerParts = renderTimerSegment(theme, state, glyphs);
+            if (timerParts) {
+              leftParts.push({ text: timerParts.total, priority: 2 });
+              // The split yields before the total on narrow widths: it packs
+              // at priority 1, below the total's priority 2.
+              if (timerParts.split) leftParts.push({ text: timerParts.split, priority: 1 });
+            }
 
             let rightBlock = "";
             if (segments.context) {
