@@ -201,6 +201,8 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
         state.sessionStartEpoch = Date.now();
         state.workingSince = undefined;
         state.lastDoneIn = undefined;
+        state.waitingSince = undefined;
+        state.waitingAccum = 0;
         invalidateUsageCache();
 
         config = yield* conf.load.pipe(Effect.mapError((e) => ctx.ui.notify(e.message, "error")));
@@ -230,6 +232,8 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
     if (!sessionLifecycle.isCurrent()) return;
     state.workingSince = Date.now();
     state.lastDoneIn = undefined;
+    state.waitingSince = undefined;
+    state.waitingAccum = 0;
     startWorkingTimer();
   });
 
@@ -237,8 +241,38 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
     if (!sessionLifecycle.isCurrent()) return;
     stopWorkingTimer();
     if (state.workingSince !== undefined) {
-      state.lastDoneIn = Date.now() - state.workingSince;
+      // Fold a wait still open at run end (a prompt can outlive the run)
+      // into the accumulator before measuring active work, so `lastDoneIn`
+      // never includes user-decision time.
+      const now = Date.now();
+      if (state.waitingSince !== undefined) {
+        state.waitingAccum += now - state.waitingSince;
+        state.waitingSince = undefined;
+      }
+      state.lastDoneIn = Math.max(0, now - state.workingSince - state.waitingAccum);
       state.workingSince = undefined;
+      state.waitingAccum = 0;
+    }
+    requestFooterRender?.();
+  });
+
+  // pi 0.84.4+ ui_prompt_* events: blocking ctx.ui prompts (select/confirm/
+  // input/editor/custom) pause the agent, so their wall-clock spans must not
+  // count toward the footer's working/done time. Nested spans are coalesced
+  // by pi; the waitingSince guard is defensive.
+  pi.on("ui_prompt_start", (_event, _ctx) => {
+    if (!sessionLifecycle.isCurrent()) return;
+    if (state.waitingSince !== undefined) return;
+    state.waitingSince = Date.now();
+    if (state.workingSince !== undefined) requestFooterRender?.();
+  });
+
+  pi.on("ui_prompt_end", (_event, _ctx) => {
+    if (!sessionLifecycle.isCurrent()) return;
+    const now = Date.now();
+    if (state.waitingSince !== undefined) {
+      state.waitingAccum += now - state.waitingSince;
+      state.waitingSince = undefined;
     }
     requestFooterRender?.();
   });

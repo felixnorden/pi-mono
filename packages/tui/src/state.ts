@@ -10,6 +10,29 @@ export interface FooterState {
   sessionStartEpoch: number;
   workingSince: number | undefined;
   lastDoneIn: number | undefined;
+  /** ui_prompt_start timestamp for the open user-facing prompt, if any. */
+  waitingSince: number | undefined;
+  /** Completed user-wait milliseconds within the current agent run. */
+  waitingAccum: number;
+}
+
+/**
+ * Milliseconds of actual agent work at `now`: elapsed time since
+ * `workingSince` minus completed waits (`waitingAccum`) and the in-flight
+ * wait (`waitingSince`), clamped to zero. This excludes time the agent
+ * spent blocked on a user-facing `ctx.ui` prompt.
+ */
+export function activeWorkingMs(state: FooterState, now: number): number {
+  if (state.workingSince === undefined) return 0;
+  const elapsed = now - state.workingSince;
+  const inFlight = state.waitingSince !== undefined ? now - state.waitingSince : 0;
+  return Math.max(0, elapsed - state.waitingAccum - inFlight);
+}
+
+/** Milliseconds of the open user-wait at `now`, or 0 when no prompt is open. */
+export function waitingMs(state: FooterState, now: number): number {
+  if (state.waitingSince === undefined) return 0;
+  return Math.max(0, now - state.waitingSince);
 }
 
 export interface UsageTotals {
@@ -72,6 +95,8 @@ export function createInitialState(): FooterState {
     sessionStartEpoch: Date.now(),
     workingSince: undefined,
     lastDoneIn: undefined,
+    waitingSince: undefined,
+    waitingAccum: 0,
   };
 }
 

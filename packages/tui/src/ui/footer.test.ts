@@ -3,8 +3,10 @@ import { Effect } from "effect";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { GitStatus } from "../commands/git-status.ts";
 import type { TuiConfig } from "../config.ts";
+import type { IconGlyphs } from "../icons.ts";
 import type { FooterState } from "../state.ts";
 import { FooterRenderService, installFooter, type FooterHooks } from "./footer.ts";
+import { renderTimerSegment } from "./render-helpers.ts";
 
 // ---------------------------------------------------------------------------
 // Deterministic fixture — the footer's current pixels are frozen here BEFORE
@@ -44,6 +46,8 @@ const state: FooterState = {
   sessionStartEpoch: 1_700_000_000_000,
   workingSince: undefined,
   lastDoneIn: undefined,
+  waitingSince: undefined,
+  waitingAccum: 0,
 };
 
 const getState = () => state;
@@ -347,4 +351,53 @@ it("FooterRenderService.render re-invokes the live getters on every run", () => 
   const withoutContext = Effect.runSync(svc.render(80));
   assert.ok(!withoutContext[0]!.includes("%"));
   assert.ok(withoutContext[0]!.includes("feature/refactor"));
+});
+
+// ---------------------------------------------------------------------------
+// Wait-aware timer segment (ui_prompt_* refinement, pi 0.84.4+) — the `now`
+// argument keeps these deterministic; the golden fixtures above still freeze
+// the no-timer pixels byte-for-byte.
+// ---------------------------------------------------------------------------
+
+const timerTheme = {
+  fg: (color: string, text: string) => `${color}:${text}`,
+  bg: (_color: string, text: string) => text,
+  bold: (text: string) => `*${text}*`,
+} as unknown as Theme;
+
+const TIMER_GLYPHS = { working: "o", done: "+" } as IconGlyphs;
+
+const timerState = (overrides: Partial<FooterState> = {}): FooterState => ({
+  ...state,
+  ...overrides,
+});
+
+it("renderTimerSegment renders nothing without an active or finished timer", () => {
+  assert.strictEqual(renderTimerSegment(timerTheme, timerState(), TIMER_GLYPHS, 5000), "");
+});
+
+it("renderTimerSegment counts working time excluding completed user waits", () => {
+  const s = timerState({ workingSince: 1000, waitingAccum: 2000, waitingSince: undefined });
+  // Elapsed 4s minus a completed 2s wait = 2s of active work.
+  assert.strictEqual(
+    renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000),
+    "accent:o dim:working accent:2s",
+  );
+});
+
+it("renderTimerSegment reports waiting while a user prompt is open", () => {
+  const s = timerState({ workingSince: 1000, waitingAccum: 2000, waitingSince: 4000 });
+  // The open wait spans 1s (t=4s..5s); working time stops counting.
+  assert.strictEqual(
+    renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000),
+    "warning:o warning:waiting warning:1s",
+  );
+});
+
+it("renderTimerSegment reports the finished run's wait-free duration", () => {
+  const s = timerState({ workingSince: undefined, lastDoneIn: 90_000 });
+  assert.strictEqual(
+    renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000),
+    "success:+ success:done text:1m 30s",
+  );
 });

@@ -23,6 +23,7 @@ import {
   truncatePath,
 } from "../utils.ts";
 import type { FooterState, UsageTotals } from "../state.ts";
+import { activeWorkingMs, waitingMs } from "../state.ts";
 
 // ---------------------------------------------------------------------------
 // Header leaves (relocated verbatim from header.ts, Slice 1)
@@ -177,11 +178,23 @@ export function renderRuntimeSegment(
 /**
  * The working/done timer footer segment, or `""` when neither timer
  * field is set. The working read calls `Date.now()` only while a timer
- * is active.
+ * is active; pass `now` to freeze the clock in deterministic tests.
+ *
+ * Times exclude user-wait: while a blocking `ctx.ui` prompt is open the
+ * segment reports `waiting` instead of counting toward `working`, and a
+ * finished run's `lastDoneIn` is the active work time only.
  */
-export function renderTimerSegment(theme: Theme, state: FooterState, glyphs: IconGlyphs): string {
+export function renderTimerSegment(
+  theme: Theme,
+  state: FooterState,
+  glyphs: IconGlyphs,
+  now: number = Date.now(),
+): string {
   if (state.workingSince !== undefined) {
-    return `${theme.fg("accent", glyphs.working)} ${theme.fg("dim", "working")} ${theme.fg("accent", formatDuration(Date.now() - state.workingSince))}`;
+    if (state.waitingSince !== undefined) {
+      return `${theme.fg("warning", glyphs.working)} ${theme.fg("warning", "waiting")} ${theme.fg("warning", formatDuration(waitingMs(state, now)))}`;
+    }
+    return `${theme.fg("accent", glyphs.working)} ${theme.fg("dim", "working")} ${theme.fg("accent", formatDuration(activeWorkingMs(state, now)))}`;
   }
   if (state.lastDoneIn !== undefined) {
     return `${theme.fg("success", glyphs.done)} ${theme.fg("success", "done")} ${theme.fg("text", formatDuration(state.lastDoneIn))}`;
