@@ -4,6 +4,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { GitStatus } from "../commands/git-status.ts";
 import type { TuiConfig } from "../config.ts";
 import type { IconGlyphs } from "../icons.ts";
+import { ActivityTracker, type ActivityEvent } from "../activity.ts";
 import type { FooterState } from "../state.ts";
 import { FooterRenderService, installFooter, type FooterHooks } from "./footer.ts";
 import { renderTimerSegment } from "./render-helpers.ts";
@@ -44,10 +45,8 @@ const state: FooterState = {
   }),
   runtime: null,
   sessionStartEpoch: 1_700_000_000_000,
-  workingSince: undefined,
   lastDoneIn: undefined,
-  waitingSince: undefined,
-  waitingAccum: 0,
+  tracker: new ActivityTracker(),
 };
 
 const getState = () => state;
@@ -372,12 +371,26 @@ const timerState = (overrides: Partial<FooterState> = {}): FooterState => ({
   ...overrides,
 });
 
+/** A FooterState whose tracker has consumed a scripted event sequence. */
+const scriptedState = (
+  events: ActivityEvent[],
+  overrides: Partial<FooterState> = {},
+): FooterState => {
+  const tracker = new ActivityTracker();
+  for (const event of events) tracker.handle(event);
+  return timerState({ tracker, ...overrides });
+};
+
 it("renderTimerSegment renders nothing without an active or finished timer", () => {
   assert.strictEqual(renderTimerSegment(timerTheme, timerState(), TIMER_GLYPHS, 5000), "");
 });
 
 it("renderTimerSegment counts working time excluding completed user waits", () => {
-  const s = timerState({ workingSince: 1000, waitingAccum: 2000, waitingSince: undefined });
+  const s = scriptedState([
+    { type: "run_start", now: 1000 },
+    { type: "wait_start", now: 2000 },
+    { type: "wait_end", now: 4000 },
+  ]);
   // Elapsed 4s minus a completed 2s wait = 2s of active work.
   assert.strictEqual(
     renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000),
@@ -386,7 +399,12 @@ it("renderTimerSegment counts working time excluding completed user waits", () =
 });
 
 it("renderTimerSegment reports waiting while a user prompt is open", () => {
-  const s = timerState({ workingSince: 1000, waitingAccum: 2000, waitingSince: 4000 });
+  const s = scriptedState([
+    { type: "run_start", now: 1000 },
+    { type: "wait_start", now: 2000 },
+    { type: "wait_end", now: 4000 },
+    { type: "wait_start", now: 4000 },
+  ]);
   // The open wait spans 1s (t=4s..5s); working time stops counting.
   assert.strictEqual(
     renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000),
@@ -395,7 +413,7 @@ it("renderTimerSegment reports waiting while a user prompt is open", () => {
 });
 
 it("renderTimerSegment reports the finished run's wait-free duration", () => {
-  const s = timerState({ workingSince: undefined, lastDoneIn: 90_000 });
+  const s = timerState({ lastDoneIn: 90_000 });
   assert.strictEqual(
     renderTimerSegment(timerTheme, s, TIMER_GLYPHS, 5000),
     "success:+ success:done text:1m 30s",

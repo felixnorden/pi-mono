@@ -11,6 +11,7 @@ import { SessionLifecycle } from "./session-lifecycle.ts";
 import { PreviewService, registerPreview } from "./ui/preview.ts";
 import { registerSettingsCommand } from "./ui/settings-command.ts";
 import { formatTurnTelemetry, TurnTelemetryTracker } from "./telemetry.ts";
+import { ActivityTracker } from "./activity.ts";
 import {
   createInitialState,
   getModelMeta,
@@ -199,10 +200,8 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
         sessionLifecycle.start();
         lastCtx = ctx;
         state.sessionStartEpoch = Date.now();
-        state.workingSince = undefined;
         state.lastDoneIn = undefined;
-        state.waitingSince = undefined;
-        state.waitingAccum = 0;
+        state.tracker = new ActivityTracker();
         invalidateUsageCache();
 
         config = yield* conf.load.pipe(Effect.mapError((e) => ctx.ui.notify(e.message, "error")));
@@ -230,50 +229,37 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
   pi.on("agent_start", (event, _ctx) => {
     turnTelemetry.handle(event);
     if (!sessionLifecycle.isCurrent()) return;
-    state.workingSince = Date.now();
+    state.tracker.handle({ type: "run_start", now: Date.now() });
     state.lastDoneIn = undefined;
-    state.waitingSince = undefined;
-    state.waitingAccum = 0;
     startWorkingTimer();
   });
 
   pi.on("agent_end", (_event, _ctx) => {
     if (!sessionLifecycle.isCurrent()) return;
     stopWorkingTimer();
-    if (state.workingSince !== undefined) {
-      // Fold a wait still open at run end (a prompt can outlive the run)
-      // into the accumulator before measuring active work, so `lastDoneIn`
-      // never includes user-decision time.
-      const now = Date.now();
-      if (state.waitingSince !== undefined) {
-        state.waitingAccum += now - state.waitingSince;
-        state.waitingSince = undefined;
-      }
-      state.lastDoneIn = Math.max(0, now - state.workingSince - state.waitingAccum);
-      state.workingSince = undefined;
-      state.waitingAccum = 0;
-    }
+    // closeRun folds any span still open at run end (a prompt can outlive
+    // the run, like the previous waitingAccum fold), so the frozen
+    // breakdown never includes user-decision time. lastDoneIn keeps its
+    // active-work semantics: total minus waits.
+    const wasOpen = state.tracker.isRunOpen();
+    const frozen = state.tracker.closeRun(Date.now());
+    if (wasOpen) state.lastDoneIn = frozen.total - frozen.wait;
     requestFooterRender?.();
   });
 
   // pi 0.84.4+ ui_prompt_* events: blocking ctx.ui prompts (select/confirm/
   // input/editor/custom) pause the agent, so their wall-clock spans must not
   // count toward the footer's working/done time. Nested spans are coalesced
-  // by pi; the waitingSince guard is defensive.
+  // by pi; the tracker ignores a wait_start that is already open defensively.
   pi.on("ui_prompt_start", (_event, _ctx) => {
     if (!sessionLifecycle.isCurrent()) return;
-    if (state.waitingSince !== undefined) return;
-    state.waitingSince = Date.now();
-    if (state.workingSince !== undefined) requestFooterRender?.();
+    state.tracker.handle({ type: "wait_start", now: Date.now() });
+    if (state.tracker.isRunOpen()) requestFooterRender?.();
   });
 
   pi.on("ui_prompt_end", (_event, _ctx) => {
     if (!sessionLifecycle.isCurrent()) return;
-    const now = Date.now();
-    if (state.waitingSince !== undefined) {
-      state.waitingAccum += now - state.waitingSince;
-      state.waitingSince = undefined;
-    }
+    state.tracker.handle({ type: "wait_end", now: Date.now() });
     requestFooterRender?.();
   });
 
