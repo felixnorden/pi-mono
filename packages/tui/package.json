@@ -55,6 +55,7 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:effect",
+    "@effect/platform-node-shared": "catalog:effect",
     "effect": "catalog:effect"
   },
   "devDependencies": {

@@ -390,6 +390,7 @@ export default function (pi: ExtensionAPI) {
   );
   const gitExecLayer = GitExecutionService.layer.pipe(Layer.provide(nodeLayer));
   const gitLayer = Layer.provide(GitStatusService.layer, gitExecLayer);
+  // TODO: remove Node homedir dep
   const previewLayer = PreviewService.make(homedir).pipe(
     Layer.provide(Layer.merge(NodePath.layer, NodeFileSystem.layer)),
   );

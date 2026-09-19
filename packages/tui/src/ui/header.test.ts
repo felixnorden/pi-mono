@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { Effect, Random } from "effect";
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { VERSION, type Theme } from "@earendil-works/pi-coding-agent";
 import { HeaderRenderService, installHeader } from "./header.ts";
 
 // Pixel parity: the header must render byte-identically through makeBorderedBox
@@ -133,6 +133,12 @@ const EXPECTED: Record<string, string[]> = {
     "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
   ],
 };
+
+// The header prints the installed pi version. Rewrite the frozen tables so a pi
+// dependency bump does not break pixel parity.
+for (const [width, lines] of Object.entries(EXPECTED)) {
+  EXPECTED[width] = lines.map((line) => line.replaceAll("v0.84.4", `v${VERSION}`));
+}
 
 // Render one width through the service layer entry under the fixed seed.
 const renderHeader = (width: number) =>

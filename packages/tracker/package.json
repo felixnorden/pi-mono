@@ -45,6 +45,7 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:effect",
+    "@effect/platform-node-shared": "catalog:effect",
     "@ftrdotdev/pi-tui": "^0.5.0",
     "effect": "catalog:effect"
   },
