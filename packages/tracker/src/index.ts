@@ -93,9 +93,12 @@ export default function (pi: ExtensionAPI): void {
             : {}),
           ...(params.done !== undefined ? { done: params.done } : {}),
         };
+        // Both update_item forms return an affected-items array, so the
+        // result contract matches add_item and the renderer/reminder can
+        // treat every result the same way.
         return withStore((store) =>
           store.updateItem(requireParam(params.item_id, "item_id"), patch),
-        );
+        ).pipe(Effect.map((item) => [item]));
       }
       case "remove_item":
         return withStore((store) => store.removeItem(requireParam(params.item_id, "item_id")));

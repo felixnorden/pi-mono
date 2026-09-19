@@ -4,9 +4,11 @@ import { TodoItem, TodoList, TrackerState } from "./domain.ts";
 import {
   makeTrackerOverlay,
   makeTrackerWidget,
+  planWidgetItems,
   renderTrackerWidget,
   type TrackerOverlayHandle,
   type TrackerUiAction,
+  type WidgetRow,
 } from "./ui.ts";
 
 /**
@@ -201,4 +203,121 @@ it("widget survives the setWidget bridge wrapper (render/invalidate handed off b
   wrapper.invalidate();
   assert.match(wrapper.render(40).join("\n"), /Work \(1\/2\)/);
   assert.deepStrictEqual(wrapper.render(40), lines);
+});
+
+// --------------------------------------------------------------------------
+// Widget collapse planning (lists larger than the row budget)
+// --------------------------------------------------------------------------
+
+/** A list of `count` items; the first `done` items are done. */
+const listOfCount = (count: number, done: number): TodoList =>
+  new TodoList({
+    id: 1,
+    name: "Work",
+    items: Array.from(
+      { length: count },
+      (_, index) => new TodoItem({ text: `item ${index + 1}`, done: index < done }),
+    ),
+  });
+
+const stateWith = (list: TodoList): TrackerState =>
+  new TrackerState({ lists: [list], activeListId: list.id, nextListId: 2 });
+
+const shownIndexes = (rows: readonly WidgetRow[]): number[] =>
+  rows.flatMap((row) => (row.kind === "item" ? [row.index] : []));
+
+const ellipsisCount = (rows: readonly WidgetRow[]): number =>
+  rows.filter((row) => row.kind === "ellipsis").length;
+
+it("planner returns every item with no ellipsis when the list fits", () => {
+  const plan = planWidgetItems(listOfCount(3, 1).items, 12);
+  assert.deepStrictEqual(shownIndexes(plan), [0, 1, 2]);
+  assert.strictEqual(ellipsisCount(plan), 0);
+});
+
+it("planner keeps the first item, the current item, and the last item inside the budget", () => {
+  // The first 12 items are done, so item 13 (index 12) is current.
+  const plan = planWidgetItems(listOfCount(30, 12).items, 12);
+  const shown = shownIndexes(plan);
+
+  assert.isAtMost(plan.length, 12);
+  assert.include(shown, 0);
+  assert.include(shown, 12);
+  assert.include(shown, 29);
+  // The window leaves a hidden gap on each side of itself.
+  assert.strictEqual(ellipsisCount(plan), 2);
+});
+
+it("planner omits the leading ellipsis when the window touches the first item", () => {
+  // Nothing is done, so item 1 (index 0) is current and the window starts there.
+  const plan = planWidgetItems(listOfCount(30, 0).items, 12);
+  const shown = shownIndexes(plan);
+
+  assert.deepStrictEqual(shown.slice(0, 2), [0, 1]);
+  assert.include(shown, 29);
+  assert.strictEqual(ellipsisCount(plan), 1);
+});
+
+it("planner follows the current item as work progresses", () => {
+  const early = planWidgetItems(listOfCount(40, 3).items, 12);
+  const late = planWidgetItems(listOfCount(40, 35).items, 12);
+
+  assert.include(shownIndexes(early), 3);
+  assert.include(shownIndexes(late), 35);
+  // The window moves with the current item, so each plan hides the other's
+  // current position.
+  assert.equal(shownIndexes(early).includes(35), false);
+  assert.equal(shownIndexes(late).includes(3), false);
+});
+
+it("planner anchors the last item when every item is done", () => {
+  const plan = planWidgetItems(listOfCount(30, 30).items, 12);
+  assert.include(shownIndexes(plan), 0);
+  assert.include(shownIndexes(plan), 29);
+  assert.isAtMost(plan.length, 12);
+});
+
+it("planner emits an ellipsis between rendered items only when items are hidden", () => {
+  // Property: each gap between consecutive rendered items is at least two
+  // indexes wide, and every such gap has exactly one ellipsis row.
+  for (const done of [0, 5, 17, 29]) {
+    const plan = planWidgetItems(listOfCount(30, done).items, 12);
+    const shown = shownIndexes(plan);
+    let expectedEllipses = 0;
+    for (let i = 1; i < shown.length; i += 1) {
+      if (shown[i]! > shown[i - 1]! + 1) expectedEllipses += 1;
+    }
+    assert.strictEqual(ellipsisCount(plan), expectedEllipses, `done=${done}`);
+  }
+});
+
+it("widget renders a vertical ellipsis and hides collapsed items", () => {
+  const list = listOfCount(30, 5);
+  const text = renderTrackerWidget(stateWith(list), identityTheme, 60).join("\n");
+
+  assert.match(text, /⋮/);
+  // The rendered item rows stay within the budget instead of printing all 30.
+  const itemLines = text.split("\n").filter((line) => /item \d+/.test(line));
+  assert.isAtMost(itemLines.length, 12);
+});
+
+// --------------------------------------------------------------------------
+// Current item marker
+// --------------------------------------------------------------------------
+
+it("marks the current item (first not-done) with a filled circle", () => {
+  // Item 1 is done, so item 2 is the current item.
+  const text = renderTrackerWidget(stateWith(listOfCount(4, 1)), identityTheme, 40).join("\n");
+
+  assert.match(text, /● item 2/);
+  assert.match(text, /○ item 3/);
+  assert.match(text, /✓ item 1/);
+  // Only the current item carries the filled circle.
+  assert.equal(text.includes("● item 1"), false);
+  assert.equal(text.includes("● item 3"), false);
+});
+
+it("marks no item as current when every item is done", () => {
+  const text = renderTrackerWidget(stateWith(listOfCount(3, 3)), identityTheme, 40).join("\n");
+  assert.equal(text.includes("●"), false);
 });

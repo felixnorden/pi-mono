@@ -29,18 +29,120 @@ const widgetLabel =
     );
   };
 
+/** One planned widget row: an item (by 0-based index) or a collapse marker. */
+export type WidgetRow =
+  | { readonly kind: "item"; readonly index: number }
+  | { readonly kind: "ellipsis" };
+
+/**
+ * Index of the current item: the first not-done item, or undefined when all
+ * items are done. Callers use the undefined case to tell "nothing left to
+ * work on" apart from "the last item happens to be current".
+ */
+const currentItemIndex = (items: readonly { readonly done: boolean }[]): number | undefined => {
+  const index = items.findIndex((item) => !item.done);
+  return index === -1 ? undefined : index;
+};
+
+/** Emit visible indices in order, inserting one `⋮` row per gap. */
+const emitWidgetRows = (visible: ReadonlySet<number>): WidgetRow[] => {
+  const sorted = [...visible].sort((a, b) => a - b);
+  const rows: WidgetRow[] = [];
+  let previous: number | undefined;
+  for (const index of sorted) {
+    // A gap means rendered items are not adjacent in the list, so at least
+    // one item is hidden between them and the ellipsis is warranted.
+    if (previous !== undefined && index > previous + 1) rows.push({ kind: "ellipsis" });
+    rows.push({ kind: "item", index });
+    previous = index;
+  }
+  return rows;
+};
+
+/** Total planned rows: one per item, plus one ellipsis row per hidden gap. */
+const plannedRowCount = (visible: ReadonlySet<number>): number => {
+  const sorted = [...visible].sort((a, b) => a - b);
+  let rows = sorted.length;
+  for (let i = 1; i < sorted.length; i += 1) {
+    if (sorted[i]! > sorted[i - 1]! + 1) rows += 1;
+  }
+  return rows;
+};
+
+/**
+ * Plan the widget's item rows when the list has more items than fit.
+ *
+ * The plan keeps three anchors visible: the first item, the last item, and
+ * the current one (the first not-done item, or the last item when all are
+ * done). It then grows a window outward from the current item until the row
+ * budget runs out. Items outside the window collapse into a `⋮` row. A gap
+ * produces an ellipsis row only when the items on either side are not
+ * adjacent, so `⋮` never appears where nothing is hidden. When every item
+ * fits, the plan returns all of them in order.
+ *
+ * `maxRows` counts item rows and ellipsis rows together. Tight budgets drop
+ * the anchors before the current item. Adding an index never lowers the row
+ * count, so a candidate that overflows stays out, but a later candidate can
+ * still fill a gap at no cost.
+ */
+export const planWidgetItems = (
+  items: readonly { readonly done: boolean }[],
+  maxRows: number,
+): WidgetRow[] => {
+  const total = items.length;
+  if (total === 0 || maxRows <= 0) return [];
+  if (total <= maxRows) return items.map((_, index) => ({ kind: "item", index }));
+
+  const firstOpen = currentItemIndex(items);
+  // The window needs a center even when every item is done, so fall back to
+  // the last item.
+  const current = firstOpen ?? total - 1;
+
+  // The current item always shows; the anchors join it when the budget
+  // allows. At total > maxRows the current item alone never overflows.
+  const visible = new Set<number>([current]);
+  for (const anchor of [0, total - 1]) {
+    if (visible.has(anchor)) continue;
+    visible.add(anchor);
+    if (plannedRowCount(visible) > maxRows) visible.delete(anchor);
+  }
+
+  // Grow outward from the current item, right before left at each distance,
+  // so the window follows remaining work first. Skip candidates that do not
+  // fit: a later one may still fill a gap between visible items at no cost.
+  const maxDistance = Math.max(current, total - 1 - current);
+  for (let distance = 1; distance <= maxDistance; distance += 1) {
+    for (const index of [current + distance, current - distance]) {
+      if (index < 0 || index >= total || visible.has(index)) continue;
+      visible.add(index);
+      if (plannedRowCount(visible) > maxRows) visible.delete(index);
+    }
+  }
+  return emitWidgetRows(visible);
+};
+
 /** The item lines inside the widget frame, rendered per width so they stay flush. */
 const widgetRows =
   (list: TodoList, theme: Theme) =>
   (_width: number): string[] => {
     const rows: string[] = [];
-    for (const item of list.items.slice(0, MAX_ITEMS)) {
-      const check = item.done ? theme.fg("success", "✓ ") : theme.fg("dim", "○ ");
+    const current = currentItemIndex(list.items);
+    for (const row of planWidgetItems(list.items, MAX_ITEMS)) {
+      if (row.kind === "ellipsis") {
+        rows.push(theme.fg("dim", "  ⋮"));
+        continue;
+      }
+      const item = list.items[row.index]!;
+      // Done items get `✓`, the current item a filled `●` in the accent
+      // color (the question tool marks its active tab the same way), and the
+      // rest an outline `○`.
+      const check = item.done
+        ? theme.fg("success", "✓ ")
+        : row.index === current
+          ? theme.fg("accent", "● ")
+          : theme.fg("dim", "○ ");
       const text = item.done ? theme.fg("muted", theme.strikethrough(item.text)) : item.text;
       rows.push(`  ${check}${text}`);
-    }
-    if (list.items.length > MAX_ITEMS) {
-      rows.push(theme.fg("dim", `  ... ${list.items.length - MAX_ITEMS} more`));
     }
     return rows;
   };

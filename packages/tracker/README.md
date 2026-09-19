@@ -110,6 +110,16 @@ active. It hides when no list is active.
 
 The widget has a rounded border. The border uses the theme's `border` color.
 
+When the list holds more items than the widget can show, the widget keeps the
+first item, the current item (the first item still open), and the last item
+visible, then fills the remaining rows around the current item. Items outside
+that window collapse into a `⋮` row. The `⋮` row appears only when items are
+hidden between the visible rows. The border label still shows the done and
+total counts.
+
+The current item (the first item still open) is marked with a filled `●` in
+the accent color. Done items use `✓`, and the other open items use `○`.
+
 ## Persistence
 
 The state lives in the session file. Pi writes a snapshot after every change.
