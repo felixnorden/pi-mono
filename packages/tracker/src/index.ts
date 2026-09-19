@@ -2,18 +2,26 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Text } from "@earendil-works/pi-tui";
 import { makeBorderedBox } from "@ftrdotdev/pi-tui";
 import { Effect, Layer, ManagedRuntime, Option, Result } from "effect";
+import { formatItemRef, type DependencyItem, type DependencyListView } from "./deps.ts";
 import { TodoItem, TodoList, TrackerState, emptyState, encodeState } from "./domain.ts";
 import { TrackerPersistence } from "./persistence.ts";
-import { TrackerError, TrackerStore, type UpdateItemPatch } from "./store.ts";
+import { TrackerError, TrackerStore, type ItemSpec, type UpdateItemPatch } from "./store.ts";
 import {
   TRACKER_TOOL_METADATA,
   doneMarkReminder,
+  reopenNote,
   validateTrackerCall,
   type TrackerToolAction,
   type TrackerToolDetails,
   type TrackerToolParams,
 } from "./tool-metadata.ts";
-import { makeTrackerOverlay, makeTrackerWidget, type TrackerUiAction } from "./ui.ts";
+import {
+  displayList,
+  blockedSuffix,
+  makeTrackerOverlay,
+  makeTrackerWidget,
+  type TrackerUiAction,
+} from "./ui.ts";
 
 /** Custom-entry type used to persist the tracker state in the session. */
 const CUSTOM_TYPE = "tracker/state";
@@ -38,6 +46,19 @@ const withPersistence = <A, E>(
 const requireParam = <T>(value: T | undefined, name: string): T => {
   if (value === undefined) throw new Error(`${name} is required for this tracker action`);
   return value;
+};
+
+/**
+ * Normalize the tool's item shapes (a text string, an item object, or an array
+ * of either) into the store's item specs.
+ */
+const toItemSpecs = (raw: NonNullable<TrackerToolParams["text"]>): ItemSpec[] => {
+  const entries = Array.isArray(raw) ? raw : [raw];
+  return entries.map((entry) =>
+    typeof entry === "string"
+      ? entry
+      : { text: entry.text, ...(entry.deps === undefined ? {} : { deps: entry.deps }) },
+  );
 };
 
 // --------------------------------------------------------------------------
@@ -66,7 +87,9 @@ export default function (pi: ExtensionAPI): void {
         return withStore((store) =>
           store.createList(requireParam(params.name, "name"), {
             activate: params.activate ?? true,
-            ...(params.initial_items !== undefined ? { initialItems: params.initial_items } : {}),
+            ...(params.initial_items !== undefined
+              ? { initialItems: toItemSpecs(params.initial_items) }
+              : {}),
           }),
         );
       case "delete_list":
@@ -74,24 +97,27 @@ export default function (pi: ExtensionAPI): void {
       case "set_active":
         return withStore((store) => store.setActiveList(params.list_id ?? null));
       case "add_item": {
-        const raw = requireParam(params.text, "text");
-        const texts = Array.isArray(raw) ? raw : [raw];
-        return withStore((store) => store.addItems(requireParam(params.list_id, "list_id"), texts));
+        const specs = toItemSpecs(requireParam(params.text, "text"));
+        return withStore((store) => store.addItems(requireParam(params.list_id, "list_id"), specs));
       }
       case "update_item": {
         if (params.items !== undefined) {
-          // Batch form: list_id + index-based patches within one list (mirrors
-          // add_item's list_id + text[]). The store resolves each index against
-          // that single list.
+          // Batch form: list_id + item-id patches within one list (mirrors
+          // add_item's list_id + text[]). The store resolves each id against
+          // that single list, so the reference's list name must match it.
           const listId = requireParam(params.list_id, "list_id");
-          const batch = params.items;
+          const batch = params.items.map((patch) => ({
+            itemId: patch.item_id,
+            ...(patch.text !== undefined ? { text: patch.text } : {}),
+            ...(patch.done !== undefined ? { done: patch.done } : {}),
+            ...(patch.deps !== undefined ? { deps: patch.deps } : {}),
+          }));
           return withStore((store) => store.updateItems(listId, batch));
         }
         const patch: UpdateItemPatch = {
-          ...(params.text !== undefined && !Array.isArray(params.text)
-            ? { text: params.text }
-            : {}),
+          ...(typeof params.text === "string" ? { text: params.text } : {}),
           ...(params.done !== undefined ? { done: params.done } : {}),
+          ...(params.deps !== undefined ? { deps: params.deps } : {}),
         };
         // Both update_item forms return an affected-items array, so the
         // result contract matches add_item and the renderer/reminder can
@@ -208,21 +234,54 @@ export default function (pi: ExtensionAPI): void {
 
   // --- Tool ---------------------------------------------------------------
 
+  /**
+   * Derived view of a list for the two `list` surfaces: the items in derived
+   * order, each item's blocker annotation by index, the refs that are ready
+   * now, and whether the list has any dependency at all. A dependency-free
+   * list renders exactly as before. Returning the ordered array keeps the
+   * annotations and the rendered rows in step.
+   */
+  const listAnnotations = <T extends DependencyItem>(
+    list: DependencyListView<T>,
+  ): {
+    readonly items: readonly T[];
+    readonly blockedByIndex: readonly string[];
+    readonly readyRefs: readonly string[];
+    readonly hasDependencies: boolean;
+  } => {
+    const view = displayList(list);
+    return {
+      items: view.list.items,
+      blockedByIndex: view.ready.map((entry) => blockedSuffix(entry.blockers)),
+      readyRefs: view.ready
+        .filter((entry) => entry.ready)
+        .map((entry) => formatItemRef(list.name, entry.id)),
+      hasDependencies: view.list.items.some((item) => (item.deps ?? []).length > 0),
+    };
+  };
+
+  const readyLine = (refs: readonly string[]): string =>
+    `  Ready now: ${refs.length === 0 ? "(none)" : refs.map((ref) => `#${ref}`).join(", ")}`;
+
   const listSummary = (current: TrackerState): string => {
     if (current.lists.length === 0) return "No lists";
     return current.lists
       .map((list) => {
         const done = list.items.filter((item) => item.done).length;
         const active = list.id === current.activeListId ? " (active)" : "";
-        const items =
-          list.items.length === 0
+        const annotations = listAnnotations(list);
+        const body =
+          annotations.items.length === 0
             ? "  (no items)"
-            : list.items
+            : annotations.items
                 .map(
-                  (item, i) => `  [${item.done ? "x" : " "}] #${list.name}:${i + 1}: ${item.text}`,
+                  (item, index) =>
+                    `  [${item.done ? "x" : " "}] #${list.name}:${item.id}: ${item.text}` +
+                    `${annotations.blockedByIndex[index]}`,
                 )
                 .join("\n");
-        return `[${list.id}] ${list.name} — ${done}/${list.items.length}${active}\n${items}`;
+        const ready = annotations.hasDependencies ? `\n${readyLine(annotations.readyRefs)}` : "";
+        return `[${list.id}] ${list.name} — ${done}/${list.items.length}${active}\n${body}${ready}`;
       })
       .join("\n");
   };
@@ -269,10 +328,8 @@ export default function (pi: ExtensionAPI): void {
         details.list = list;
         details.items = items;
         const listName = list ? list.name : `#${params.list_id}`;
-        // The new items are the last ones in the list, so their ids follow
-        // directly from the position they now occupy.
-        const firstId = list ? list.items.length - items.length + 1 : 1;
-        const ids = items.map((_, i) => `${listName}:${firstId + i}`);
+        // The store assigned each new item its id; report those.
+        const ids = items.map((item) => `${listName}:${item.id}`);
         text =
           items.length === 1
             ? `Added item #${ids[0]} to ${listName}: ${items[0]!.text}`
@@ -285,20 +342,25 @@ export default function (pi: ExtensionAPI): void {
         // Normalize both forms into patch records the renderer and reminder
         // share: each has a display id plus optional text/done.
         const batch = params.items;
-        const list =
-          batch !== undefined ? current.lists.find((l) => l.id === params.list_id) : undefined;
-        const listName = list ? list.name : `#${params.list_id}`;
-        const patches: Array<{ id: string; text?: string; done?: boolean }> =
+        const patches: Array<{
+          id: string;
+          text?: string;
+          done?: boolean;
+          deps?: readonly string[];
+        }> =
           batch !== undefined
-            ? batch.map((p) => ({ id: `${listName}:${p.index}`, text: p.text, done: p.done }))
+            ? batch.map((p) => ({
+                id: p.item_id,
+                text: p.text,
+                done: p.done,
+                deps: p.deps,
+              }))
             : [
                 {
                   id: params.item_id ?? "?",
-                  text:
-                    params.text !== undefined && !Array.isArray(params.text)
-                      ? params.text
-                      : undefined,
+                  text: typeof params.text === "string" ? params.text : undefined,
                   done: params.done,
+                  deps: params.deps,
                 },
               ];
         const parts = items.map((item, i) => {
@@ -306,6 +368,11 @@ export default function (pi: ExtensionAPI): void {
           const changes: string[] = [];
           if (patch.done !== undefined) changes.push(item.done ? "completed" : "uncompleted");
           if (patch.text !== undefined) changes.push(`text: ${item.text}`);
+          if (patch.deps !== undefined) {
+            changes.push(
+              patch.deps.length === 0 ? "deps cleared" : `deps: ${patch.deps.join(", ")}`,
+            );
+          }
           return `${patch.id}${changes.length === 0 ? " (no change)" : ` (${changes.join(", ")})`}`;
         });
         text = `Updated ${items.length} item${items.length === 1 ? "" : "s"}: ${parts.join(", ")}`;
@@ -320,11 +387,15 @@ export default function (pi: ExtensionAPI): void {
         );
         const reminder = doneMarkReminder(patches, openRemaining);
         if (reminder !== null) text += `\n${reminder}`;
+        // Reopening an item can block work that is already done. The tracker
+        // does not cascade, so say it out loud instead of silently re-planning.
+        const reopen = reopenNote(patches, current);
+        if (reopen !== null) text += `\n${reopen}`;
         break;
       }
       case "remove_item":
         details.itemId = params.item_id;
-        text = `Removed item ${params.item_id} (items after it renumbered)`;
+        text = `Removed item ${params.item_id}`;
         break;
     }
     return { content: [{ type: "text", text }], details };
@@ -412,14 +483,21 @@ export default function (pi: ExtensionAPI): void {
             theme.fg("accent", `[${list.id}] ${list.name}`) +
               theme.fg("muted", ` (${done}/${list.items.length})${active}`),
           );
-          const display = expanded ? list.items : list.items.slice(0, 5);
-          for (const [idx, item] of display.entries()) {
+          const annotations = listAnnotations(list);
+          const display = expanded ? annotations.items : annotations.items.slice(0, 5);
+          for (const [index, item] of display.entries()) {
             const check = item.done ? theme.fg("success", "✓") : theme.fg("dim", "○");
             const itemText = item.done ? theme.fg("dim", item.text) : item.text;
-            parts.push(`  ${check} ${theme.fg("accent", `#${list.name}:${idx + 1}`)} ${itemText}`);
+            const blocked = theme.fg("dim", annotations.blockedByIndex[index] ?? "");
+            parts.push(
+              `  ${check} ${theme.fg("accent", `#${list.name}:${item.id}`)} ${itemText}${blocked}`,
+            );
           }
-          if (!expanded && list.items.length > 5) {
-            parts.push(theme.fg("dim", `  ... ${list.items.length - 5} more`));
+          if (!expanded && annotations.items.length > 5) {
+            parts.push(theme.fg("dim", `  ... ${annotations.items.length - 5} more`));
+          }
+          if (annotations.hasDependencies) {
+            parts.push(theme.fg("muted", readyLine(annotations.readyRefs)));
           }
         }
         return new Text(parts.join("\n"), 0, 0);

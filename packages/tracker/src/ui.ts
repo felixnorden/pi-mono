@@ -1,12 +1,23 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
-import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { makeBorderedBox } from "@ftrdotdev/pi-tui";
-import type { TodoList, TrackerState } from "./domain.ts";
+import {
+  firstReadyIndex,
+  orderedItems,
+  readiness,
+  type DependencyItem,
+  type DependencyList,
+  type DependencyListView,
+} from "./deps.ts";
+import type { TodoItem, TodoList, TrackerState } from "./domain.ts";
 import type { UpdateItemPatch } from "./store.ts";
 
 const MAX_LISTS = 8;
 const MAX_ITEMS = 12;
+
+/** Marker field width in columns. Every glyph is padded to it, so text is flush. */
+const MARKER_WIDTH = 2;
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(Math.max(value, min), max);
@@ -35,14 +46,39 @@ export type WidgetRow =
   | { readonly kind: "ellipsis" };
 
 /**
- * Index of the current item: the first not-done item, or undefined when all
- * items are done. Callers use the undefined case to tell "nothing left to
- * work on" apart from "the last item happens to be current".
+ * A list's items in derived display order, plus the readiness of each. All
+ * three rendering surfaces (widget, `list` output, overlay) iterate the array
+ * returned here, so the order and the annotations always agree.
  */
-const currentItemIndex = (items: readonly { readonly done: boolean }[]): number | undefined => {
-  const index = items.findIndex((item) => !item.done);
-  return index === -1 ? undefined : index;
+export const displayList = <T extends DependencyItem>(
+  list: DependencyListView<T>,
+): { readonly list: DependencyListView<T>; readonly ready: ReturnType<typeof readiness> } => {
+  const ordered = { name: list.name, items: orderedItems(list) };
+  return { list: ordered, ready: readiness(ordered) };
 };
+
+/**
+ * A marker field of a fixed width: `✓` for a done item, `●` for the current
+ * (first ready) item, `⏳` for a blocked one, `○` for any other open item.
+ * `visibleWidth` supplies the padding, because `⏳` is two columns wide where
+ * the others are one.
+ */
+const itemMarker = (item: TodoItem, blocked: boolean, isCurrent: boolean, theme: Theme): string => {
+  const [glyph, color] = item.done
+    ? (["✓", "success"] as const)
+    : isCurrent
+      ? (["●", "accent"] as const)
+      : blocked
+        ? (["⏳", "dim"] as const)
+        : (["○", "dim"] as const);
+  return theme.fg(color, glyph + " ".repeat(Math.max(0, MARKER_WIDTH - visibleWidth(glyph))));
+};
+
+/** The blocked annotation both the overlay and the `list` output share. */
+export const blockedSuffix = (blockers: readonly string[]): string =>
+  blockers.length === 0
+    ? ""
+    : ` (blocked by ${blockers.map((ref) => (ref === "?" ? "?" : `#${ref}`)).join(", ")})`;
 
 /** Emit visible indices in order, inserting one `⋮` row per gap. */
 const emitWidgetRows = (visible: ReadonlySet<number>): WidgetRow[] => {
@@ -72,31 +108,33 @@ const plannedRowCount = (visible: ReadonlySet<number>): number => {
 /**
  * Plan the widget's item rows when the list has more items than fit.
  *
- * The plan keeps three anchors visible: the first item, the last item, and
- * the current one (the first not-done item, or the last item when all are
- * done). It then grows a window outward from the current item until the row
- * budget runs out. Items outside the window collapse into a `⋮` row. A gap
- * produces an ellipsis row only when the items on either side are not
- * adjacent, so `⋮` never appears where nothing is hidden. When every item
- * fits, the plan returns all of them in order.
+ * The plan keeps three anchors visible: the first item, the last item, and the
+ * current one (the first ready item, or the last item when nothing is ready).
+ * It then grows a window outward from the current item until the row budget
+ * runs out. Items outside the window collapse into a `⋮` row. A gap produces
+ * an ellipsis row only when the items on either side are not adjacent, so `⋮`
+ * never appears where nothing is hidden. When every item fits, the plan returns
+ * all of them in order.
+ *
+ * Rows index `list.items` as given, so pass the display order (see
+ * `orderedItems`).
  *
  * `maxRows` counts item rows and ellipsis rows together. Tight budgets drop
  * the anchors before the current item. Adding an index never lowers the row
  * count, so a candidate that overflows stays out, but a later candidate can
  * still fill a gap at no cost.
  */
-export const planWidgetItems = (
-  items: readonly { readonly done: boolean }[],
-  maxRows: number,
-): WidgetRow[] => {
+export const planWidgetItems = (list: DependencyList, maxRows: number): WidgetRow[] => {
+  const items = list.items;
   const total = items.length;
   if (total === 0 || maxRows <= 0) return [];
   if (total <= maxRows) return items.map((_, index) => ({ kind: "item", index }));
 
-  const firstOpen = currentItemIndex(items);
-  // The window needs a center even when every item is done, so fall back to
-  // the last item.
-  const current = firstOpen ?? total - 1;
+  // The window needs a center even when nothing can be picked up, so fall back
+  // to the first open item (a fully blocked list should show its blocked work,
+  // not its tail) and then to the last item when every item is done.
+  const firstOpen = items.findIndex((item) => !item.done);
+  const current = firstReadyIndex(list) ?? (firstOpen === -1 ? total - 1 : firstOpen);
 
   // The current item always shows; the anchors join it when the budget
   // allows. At total > maxRows the current item alone never overflows.
@@ -126,23 +164,18 @@ const widgetRows =
   (list: TodoList, theme: Theme) =>
   (_width: number): string[] => {
     const rows: string[] = [];
-    const current = currentItemIndex(list.items);
-    for (const row of planWidgetItems(list.items, MAX_ITEMS)) {
+    const view = displayList(list);
+    const current = firstReadyIndex(view.list);
+    for (const row of planWidgetItems(view.list, MAX_ITEMS)) {
       if (row.kind === "ellipsis") {
         rows.push(theme.fg("dim", "  ⋮"));
         continue;
       }
-      const item = list.items[row.index]!;
-      // Done items get `✓`, the current item a filled `●` in the accent
-      // color (the question tool marks its active tab the same way), and the
-      // rest an outline `○`.
-      const check = item.done
-        ? theme.fg("success", "✓ ")
-        : row.index === current
-          ? theme.fg("accent", "● ")
-          : theme.fg("dim", "○ ");
+      const item = view.list.items[row.index]!;
+      const blocked = (view.ready[row.index]?.blockers.length ?? 0) > 0;
+      const marker = itemMarker(item, blocked, row.index === current, theme);
       const text = item.done ? theme.fg("muted", theme.strikethrough(item.text)) : item.text;
-      rows.push(`  ${check}${text}`);
+      rows.push(`  ${marker}${text}`);
     }
     return rows;
   };
@@ -342,12 +375,14 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
     } else if (activeListFor.items.length === 0) {
       lines.push(truncateToWidth(`  ${theme.fg("dim", "No items — press a to add")}`, width));
     } else {
-      for (const [index, item] of activeListFor.items.slice(0, MAX_ITEMS).entries()) {
+      const view = displayList(activeListFor);
+      for (const [index, item] of view.list.items.slice(0, MAX_ITEMS).entries()) {
         const selected = mode === "items" && index === itemIndex;
         const prefix = selected ? theme.fg("accent", "→ ") : "  ";
-        const check = item.done ? theme.fg("success", "✓") : theme.fg("dim", "○");
+        const blocker = blockedSuffix(view.ready[index]?.blockers ?? []);
+        const check = itemMarker(item, blocker !== "", false, theme);
         const text = item.done ? theme.fg("muted", theme.strikethrough(item.text)) : item.text;
-        lines.push(truncateToWidth(`${prefix}${check} ${text}`, width));
+        lines.push(truncateToWidth(`${prefix}${check}${text}${blocker}`, width));
       }
       if (activeListFor.items.length > MAX_ITEMS) {
         lines.push(
@@ -471,7 +506,9 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
       }
       return false;
     }
-    const items = list.items;
+    // The items pane renders in derived order, so the cursor indexes that
+    // array and every action reads the item's own id.
+    const items = orderedItems(list);
     if (matchesKey(data, Key.up)) {
       if (items.length > 0) itemIndex = (itemIndex - 1 + items.length) % items.length;
       return true;
@@ -485,7 +522,7 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
       if (!item) return true;
       void runAction({
         type: "updateItem",
-        itemId: `${list.name}:${itemIndex + 1}`,
+        itemId: `${list.name}:${item.id}`,
         patch: { done: !item.done },
       });
       return true;
@@ -499,7 +536,7 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
       if (!item) return true;
       input = {
         kind: "editItem",
-        itemId: `${list.name}:${itemIndex + 1}`,
+        itemId: `${list.name}:${item.id}`,
         buffer: item.text,
       };
       return true;
@@ -507,7 +544,7 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
     if (data === "r") {
       const item = items[itemIndex];
       if (!item) return true;
-      void runAction({ type: "removeItem", itemId: `${list.name}:${itemIndex + 1}` });
+      void runAction({ type: "removeItem", itemId: `${list.name}:${item.id}` });
       return true;
     }
     if (data === "n") {

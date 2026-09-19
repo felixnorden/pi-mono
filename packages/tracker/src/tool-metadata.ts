@@ -6,7 +6,8 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import type { TodoItem, TodoList } from "./domain.ts";
+import { dependentsOf, formatItemRef, parseItemRef } from "./deps.ts";
+import type { TodoItem, TodoList, TrackerState } from "./domain.ts";
 import type { EncodedState } from "./persistence.ts";
 
 /** Tracker tool actions, in the same order as the store operations. */
@@ -24,6 +25,27 @@ export type TrackerToolAction = (typeof TOOL_ACTIONS)[number];
 
 export const TRACKER_TOOL_NAME = "tracker";
 export const TRACKER_TOOL_LABEL = "Tracker";
+
+/**
+ * How an item is declared when it is created: bare text, or an object that
+ * also carries the same-list items it must wait for.
+ */
+const depsSchema = Type.Array(
+  Type.String({ description: 'A dependency as listName:id, e.g. "Work:1".' }),
+  { description: "Same-list items that must be done before this one." },
+);
+
+const ItemSpecSchema = Type.Union([
+  Type.String({ description: "Item text." }),
+  Type.Object(
+    {
+      text: Type.String({ description: "Item text." }),
+      deps: Type.Optional(depsSchema),
+    },
+    // Item objects are strict: a typo inside one fails here.
+    { additionalProperties: false },
+  ),
+]);
 
 /**
  * Parameter schema for the tracker tool.
@@ -45,15 +67,16 @@ export const TrackerToolParams = Type.Object({
   item_id: Type.Optional(
     Type.String({
       description:
-        'Item id, as shown by the list action: listName:index (1-based position in the list, e.g. "Work:2"). Required for update_item (scalar form) and remove_item.',
+        'Item id, as shown by the list action: listName:id (e.g. "Work:2"). Ids are permanent: removing an item does not change the other ids. Required for update_item (scalar form) and remove_item.',
     }),
   ),
   name: Type.Optional(
     Type.String({ description: "Name for the new list. Required for create_list." }),
   ),
   initial_items: Type.Optional(
-    Type.Array(Type.String({ description: "Item text." }), {
-      description: "For create_list: initial items, added when the list is created.",
+    Type.Array(ItemSpecSchema, {
+      description:
+        "For create_list: initial items (text, or {text, deps}), added when the list is created.",
       minItems: 1,
     }),
   ),
@@ -66,32 +89,47 @@ export const TrackerToolParams = Type.Object({
   text: Type.Optional(
     Type.Union(
       [
-        Type.String({
-          description:
-            "Item text. For add_item: the text of a new item. For update_item: the replacement text.",
-        }),
-        Type.Array(Type.String({ description: "Item text." }), {
-          description: "For add_item: several item texts to add in one call.",
+        ItemSpecSchema,
+        Type.Array(ItemSpecSchema, {
+          description: "For add_item: several items to add in one call.",
           minItems: 1,
         }),
       ],
-      { description: "Item text: a single string, or (add_item only) an array of strings." },
+      {
+        description:
+          "Item text: a string, an item object {text, deps?}, or (add_item only) an array of either.",
+      },
     ),
   ),
   done: Type.Optional(
     Type.Boolean({ description: "For update_item: true marks the item done, false reopens it." }),
   ),
+  deps: Type.Optional(
+    Type.Array(Type.String({ description: 'A dependency as listName:id, e.g. "Work:1".' }), {
+      description:
+        "For update_item: the replacement dependency set (same-list items that must be done first). Pass [] to clear. Must not form a cycle.",
+    }),
+  ),
   items: Type.Optional(
     Type.Array(
       Type.Object(
         {
-          index: Type.Number({
+          item_id: Type.String({
             description:
-              '1-based position of the item within list_id (e.g. 2 for the second item).',
+              'The id of the item within list_id, as shown by the list action (e.g. "Work:2").',
           }),
           text: Type.Optional(Type.String({ description: "Replacement text for the item." })),
           done: Type.Optional(
             Type.Boolean({ description: "true marks the item done, false reopens it." }),
+          ),
+          deps: Type.Optional(
+            Type.Array(
+              Type.String({ description: 'A dependency as listName:id, e.g. "Work:1".' }),
+              {
+                description:
+                  "Replacement dependency set for this item. Pass [] to clear. Must not form a cycle.",
+              },
+            ),
           ),
         },
         // Patch objects are strict: a typo inside an item update fails here.
@@ -99,7 +137,7 @@ export const TrackerToolParams = Type.Object({
       ),
       {
         description:
-          "For update_item: one or more item updates within a single list_id (mirrors add_item's list_id + text[]). Alternative to item_id/text/done.",
+          "For update_item: one or more item updates within a single list_id (mirrors add_item's list_id + text[]). Alternative to item_id/text/done/deps.",
         minItems: 1,
       },
     ),
@@ -115,7 +153,7 @@ const ACTION_PARAMS: Readonly<Record<TrackerToolAction, readonly string[]>> = {
   delete_list: ["list_id"],
   set_active: ["list_id"],
   add_item: ["list_id", "text"],
-  update_item: ["list_id", "item_id", "text", "done", "items"],
+  update_item: ["list_id", "item_id", "text", "done", "deps", "items"],
   remove_item: ["item_id"],
 };
 
@@ -187,16 +225,17 @@ export function validateTrackerCall(args: unknown): TrackerCallValidation {
       break;
     case "update_item":
       if (record.items !== undefined) {
-        // Batch form: list_id + items (index-based, one list).
+        // Batch form: list_id + items (id-based, one list).
         if (
           record.item_id !== undefined ||
           record.text !== undefined ||
-          record.done !== undefined
+          record.done !== undefined ||
+          record.deps !== undefined
         ) {
           return {
             ok: false,
             message:
-              "update_item: pass either item_id/text/done (one item) or list_id + items (several items in one list), not both.",
+              "update_item: pass either item_id/text/done/deps (one item) or list_id + items (several items in one list), not both.",
           };
         }
         if (record.list_id === undefined) {
@@ -212,7 +251,7 @@ export function validateTrackerCall(args: unknown): TrackerCallValidation {
           message:
             "update_item requires 'item_id' (one item) or 'list_id' + 'items' (several items in one list).",
         };
-      } else if (Array.isArray(record.text)) {
+      } else if (record.text !== undefined && typeof record.text !== "string") {
         return {
           ok: false,
           message:
@@ -238,7 +277,7 @@ export interface TrackerToolDetails {
   action: TrackerToolAction;
   error?: string;
   listId?: number;
-  /** `listName:index`, as shown by the list action. */
+  /** `listName:id`, as shown by the list action. */
   itemId?: string;
   list?: TodoList;
   /** Items affected by an add_item/update_item call, in creation/patch order. */
@@ -246,6 +285,54 @@ export interface TrackerToolDetails {
   /** Full state snapshot, only for the `list` action (for rendering). */
   snapshot?: EncodedState;
 }
+
+/**
+ * One applied `update_item` patch, as the advisory helpers need it: the display
+ * id plus whatever fields the caller changed.
+ */
+export interface AppliedUpdatePatch {
+  readonly id: string;
+  readonly text?: string;
+  readonly done?: boolean;
+  readonly deps?: readonly string[];
+}
+
+/**
+ * Advisory note for a call that reopens an item whose dependents are already
+ * done: the reopen does not cascade, so those dependents stay done and are now
+ * blocked. Returns null when nothing was reopened, when nothing depends on the
+ * reopened item, or when no dependent is done. Advisory text, never a
+ * rejection.
+ *
+ * @param patches the update_item patches that were applied, in call order.
+ * @param state the state after the call. A reopen only changes the reopened
+ *   item, so the dependents' done flags are the same before and after.
+ */
+export const reopenNote = (
+  patches: readonly AppliedUpdatePatch[],
+  state: TrackerState,
+): string | null => {
+  const notes: string[] = [];
+  for (const patch of patches) {
+    if (patch.done !== false) continue;
+    const parsed = parseItemRef(patch.id);
+    if (parsed === null) continue;
+    const list = state.lists.find((candidate) => candidate.name === parsed.name);
+    if (list === undefined) continue;
+    const index = list.items.findIndex((item) => item.id === parsed.id);
+    if (index === -1) continue;
+    const blocked = dependentsOf(list, index)
+      .filter((dependent) => list.items[dependent]!.done)
+      .map((dependent) => formatItemRef(list.name, list.items[dependent]!.id));
+    if (blocked.length === 0) continue;
+    const one = blocked.length === 1;
+    notes.push(
+      `Note: ${patch.id} is open again, so ${blocked.join(", ")} ` +
+        `${one ? "is" : "are"} done but blocked. Reopen or re-plan ${one ? "it" : "them"}.`,
+    );
+  }
+  return notes.length === 0 ? null : notes.join("\n");
+};
 
 /**
  * Anti-pattern guard: the tracker guideline says to mark each item done in
@@ -282,25 +369,32 @@ const TRACKER_TOOL_DESCRIPTION =
   "Manage todolists and track progress. Use for task lists, checklists, milestones, and step-by-step " +
   "work; keep track of tasks with tracker instead of in chat or files. Work through items one at a " +
   "time, marking each done as it completes, so the list always shows current progress.\n" +
-  'Item ids are listName:index — the 1-based position of the item in its list, e.g. "Work:2" (copy ' +
-  "them from the list action output). Removing an item renumbers the items after it, so list again " +
-  "before referencing items after a removal.\n" +
+  'Item ids are listName:id, e.g. "Work:2" (copy them from the list action output). Ids are ' +
+  "permanent: removing an item does not change the other ids, so a reference you already hold " +
+  "stays valid.\n" +
+  "An item takes an optional deps list of same-list ids that must be done before it. Dependencies " +
+  "must form a DAG: a dependency that would close a cycle is rejected and the error names the " +
+  "cycle. The list action marks blocked items and ends each list that has dependencies with a " +
+  "Ready now line.\n" +
+  "Completing a blocked item is refused, so an item can only be picked up once its dependencies " +
+  "are done. An item that other items depend on cannot be removed until those dependencies change. " +
+  "Reopening an item does not cascade: the result notes any done dependents that are now blocked.\n" +
   "The tracker tool is strict: each action accepts only its own parameters — any other argument is " +
   "rejected. Parameter contract per action:\n" +
   "- list: no parameters\n" +
-  "- create_list: name (required), initial_items (optional array of item texts, added when the " +
-  "list is created), activate (optional, defaults to true: the new list becomes active; pass false " +
-  "to keep the current active list)\n" +
+  "- create_list: name (required), initial_items (optional array of items, each a text string or " +
+  "{text, deps?}, added when the list is created), activate (optional, defaults to true: the new " +
+  "list becomes active; pass false to keep the current active list)\n" +
   "- delete_list: list_id (required)\n" +
   "- set_active: list_id (omit the field to deselect)\n" +
-  "- add_item: list_id (required), text (required: a string, or an array of strings to add several " +
-  "items in one call)\n" +
-  "- update_item: update several items in one list with list_id (required) + items=[{index, " +
-  "text?, done?}, ...] — just like add_item's list_id + text[] (index is the item's 1-based " +
-  "position in that list), or one item with item_id + optional text/done. Never mix the two " +
-  "forms. Example: update_item list_id=2 items=[{index: 2, done: true}, {index: 3, text: \"Ship " +
-  "the fix\"}]\n" +
-  "- remove_item: item_id (required, listName:index)";
+  "- add_item: list_id (required), text (required: a string, an item object {text, deps?}, or an " +
+  "array of either to add several items in one call)\n" +
+  "- update_item: update several items in one list with list_id (required) + items=[{item_id, " +
+  "text?, done?, deps?}, ...] — just like add_item's list_id + text[] (item_id is the item's id, " +
+  'e.g. "Work:2"), or one item with item_id + optional text/done/deps. deps replaces the ' +
+  "dependency set (pass [] to clear it). Never mix the two forms. Example: update_item list_id=2 " +
+  'items=[{item_id: "Work:2", done: true}, {item_id: "Work:3", deps: ["Work:1"]}]\n' +
+  "- remove_item: item_id (required, listName:id)";
 
 const TRACKER_TOOL_PROMPT_SNIPPET =
   "Manage todolists and track progress: create lists with initial items, add/update/remove items. " +
@@ -310,7 +404,9 @@ const TRACKER_TOOL_PROMPT_GUIDELINES = [
   "Use tracker for todo lists, checklists, and multi-step work. Put progress in tracker, not in prose.",
   "Break work into tracker items up front. One item per deliverable. Mark an item done in the same turn it completes. Never batch the marking at the end. Batch related adds and updates in one call — use update_item's list_id + items=[...] form to update several entries in one list at once.",
   "Before starting work, call tracker with action list. Work from the list, not from memory. Re-check it when the task drifts.",
-  "Copy tracker item ids (listName:index, e.g. Work:2) from the list action output; removing an item renumbers the items after it.",
+  "Copy tracker item ids (listName:id, e.g. Work:2) from the list action output. Ids are permanent, so a reference stays valid after a removal.",
+  "Declare tracker dependencies when one item must wait for another: pass deps (listName:id) on the item, or use the {text, deps} form when creating items. Dependencies live in the same list and must not form a cycle.",
+  "Pick up an unblocked tracker item: the list output marks blocked items and ends each list that has dependencies with a Ready now line. Completing a blocked item fails, so finish its dependencies first.",
   "When a tracker call fails, read the error. It tells you what to fix. Not-found errors name the available ids. Retry with corrected parameters in the same turn. Never repeat the same failing call.",
   "The tracker widget shows the active list. create_list makes the new list active by default; pass activate: false to keep the current one. Use set_active to show or hide a list.",
 ];

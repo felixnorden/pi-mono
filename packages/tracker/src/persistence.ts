@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Schema } from "effect";
-import { TrackerState, decodeStateEffect, encodeStateEffect } from "./domain.ts";
+import { TrackerState, decodeStateEffect, encodeStateEffect, migrateState } from "./domain.ts";
 
 /** The plain JSON shape of a `TrackerState` (what goes into the session). */
 export type EncodedState = Schema.Codec.Encoded<typeof TrackerState>;
@@ -14,7 +14,9 @@ export type EncodedState = Schema.Codec.Encoded<typeof TrackerState>;
  *
  * `restore` decodes an untrusted snapshot (e.g. `data` from a session custom
  * entry) back into a validated `TrackerState`, failing with a `SchemaError`
- * on malformed input.
+ * on malformed input. A decoded snapshot is then migrated, so every state that
+ * reaches the store has a real id on every item and an item counter above each
+ * list's ids.
  *
  * The service has no Pi dependency: `append` is injected, which keeps the
  * whole persistence path testable with an in-memory capture.
@@ -39,7 +41,7 @@ export class TrackerPersistence extends Context.Service<
       });
 
       const restore = Effect.fn("TrackerPersistence.restore")(function* (snapshot: unknown) {
-        return yield* decodeStateEffect(snapshot);
+        return migrateState(yield* decodeStateEffect(snapshot));
       });
 
       return TrackerPersistence.of({ save, restore });

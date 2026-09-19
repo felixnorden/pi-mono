@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { orderedItems } from "./deps.ts";
 import { TodoItem, TodoList, TrackerState } from "./domain.ts";
 import {
   makeTrackerOverlay,
@@ -214,9 +216,33 @@ const listOfCount = (count: number, done: number): TodoList =>
   new TodoList({
     id: 1,
     name: "Work",
+    nextItemId: count + 1,
     items: Array.from(
       { length: count },
-      (_, index) => new TodoItem({ text: `item ${index + 1}`, done: index < done }),
+      (_, index) => new TodoItem({ id: index + 1, text: `item ${index + 1}`, done: index < done }),
+    ),
+  });
+
+/**
+ * A list whose item `i + 1` has ids `1..n`, dependency set `deps[i]`, and is
+ * done when `i` is in `done`.
+ */
+const listWithDeps = (
+  deps: ReadonlyArray<readonly string[]>,
+  done: readonly number[] = [],
+): TodoList =>
+  new TodoList({
+    id: 1,
+    name: "Work",
+    nextItemId: deps.length + 1,
+    items: deps.map(
+      (itemDeps, index) =>
+        new TodoItem({
+          id: index + 1,
+          text: `item ${index + 1}`,
+          done: done.includes(index),
+          deps: itemDeps,
+        }),
     ),
   });
 
@@ -230,14 +256,14 @@ const ellipsisCount = (rows: readonly WidgetRow[]): number =>
   rows.filter((row) => row.kind === "ellipsis").length;
 
 it("planner returns every item with no ellipsis when the list fits", () => {
-  const plan = planWidgetItems(listOfCount(3, 1).items, 12);
+  const plan = planWidgetItems(listOfCount(3, 1), 12);
   assert.deepStrictEqual(shownIndexes(plan), [0, 1, 2]);
   assert.strictEqual(ellipsisCount(plan), 0);
 });
 
 it("planner keeps the first item, the current item, and the last item inside the budget", () => {
   // The first 12 items are done, so item 13 (index 12) is current.
-  const plan = planWidgetItems(listOfCount(30, 12).items, 12);
+  const plan = planWidgetItems(listOfCount(30, 12), 12);
   const shown = shownIndexes(plan);
 
   assert.isAtMost(plan.length, 12);
@@ -250,7 +276,7 @@ it("planner keeps the first item, the current item, and the last item inside the
 
 it("planner omits the leading ellipsis when the window touches the first item", () => {
   // Nothing is done, so item 1 (index 0) is current and the window starts there.
-  const plan = planWidgetItems(listOfCount(30, 0).items, 12);
+  const plan = planWidgetItems(listOfCount(30, 0), 12);
   const shown = shownIndexes(plan);
 
   assert.deepStrictEqual(shown.slice(0, 2), [0, 1]);
@@ -259,8 +285,8 @@ it("planner omits the leading ellipsis when the window touches the first item", 
 });
 
 it("planner follows the current item as work progresses", () => {
-  const early = planWidgetItems(listOfCount(40, 3).items, 12);
-  const late = planWidgetItems(listOfCount(40, 35).items, 12);
+  const early = planWidgetItems(listOfCount(40, 3), 12);
+  const late = planWidgetItems(listOfCount(40, 35), 12);
 
   assert.include(shownIndexes(early), 3);
   assert.include(shownIndexes(late), 35);
@@ -271,7 +297,7 @@ it("planner follows the current item as work progresses", () => {
 });
 
 it("planner anchors the last item when every item is done", () => {
-  const plan = planWidgetItems(listOfCount(30, 30).items, 12);
+  const plan = planWidgetItems(listOfCount(30, 30), 12);
   assert.include(shownIndexes(plan), 0);
   assert.include(shownIndexes(plan), 29);
   assert.isAtMost(plan.length, 12);
@@ -281,7 +307,7 @@ it("planner emits an ellipsis between rendered items only when items are hidden"
   // Property: each gap between consecutive rendered items is at least two
   // indexes wide, and every such gap has exactly one ellipsis row.
   for (const done of [0, 5, 17, 29]) {
-    const plan = planWidgetItems(listOfCount(30, done).items, 12);
+    const plan = planWidgetItems(listOfCount(30, done), 12);
     const shown = shownIndexes(plan);
     let expectedEllipses = 0;
     for (let i = 1; i < shown.length; i += 1) {
@@ -320,4 +346,108 @@ it("marks the current item (first not-done) with a filled circle", () => {
 it("marks no item as current when every item is done", () => {
   const text = renderTrackerWidget(stateWith(listOfCount(3, 3)), identityTheme, 40).join("\n");
   assert.equal(text.includes("●"), false);
+});
+
+// --------------------------------------------------------------------------
+// Readiness markers and derived order
+// --------------------------------------------------------------------------
+
+it("marks the first ready item as current, not the first open item", () => {
+  // Item 1 is done; item 2 waits for item 3, so item 2 is blocked and item 3
+  // is the first ready item.
+  const text = renderTrackerWidget(
+    stateWith(listWithDeps([[], ["Work:3"], []], [0])),
+    identityTheme,
+    40,
+  ).join("\n");
+
+  assert.match(text, /● item 3/);
+  assert.match(text, /⏳item 2/);
+  assert.match(text, /✓ item 1/);
+});
+
+it("renders a blocked item with the waiting glyph", () => {
+  const text = renderTrackerWidget(
+    stateWith(listWithDeps([[], ["Work:1"]])),
+    identityTheme,
+    40,
+  ).join("\n");
+
+  assert.match(text, /⏳item 2/);
+});
+
+it("starts every item text at the same column, whatever the marker", () => {
+  // Item 1 is done, item 2 waits for item 4 (blocked), items 3 and 4 are ready.
+  const text = renderTrackerWidget(
+    stateWith(listWithDeps([[], ["Work:4"], [], []], [0])),
+    identityTheme,
+    40,
+  ).join("\n");
+
+  const lines = text.split("\n").filter((line) => /item \d+/.test(line));
+  const columns = lines.map((line) => visibleWidth(line.slice(0, line.indexOf("item"))));
+
+  // Every marker state is on screen: done, current ready, other ready, blocked.
+  assert.isAtLeast(lines.length, 4);
+  assert.match(text, /✓ item 1/);
+  assert.match(text, /● item 3/);
+  assert.match(text, /○ item 4/);
+  assert.match(text, /⏳item 2/);
+  // A `⏳` marker is two columns wide, like `✓ `, so the text column is flush.
+  assert.strictEqual(new Set(columns).size, 1);
+});
+
+it("renders items in dependency order, not stored order", () => {
+  // Item 1 waits for item 2, so item 2 renders first.
+  const text = renderTrackerWidget(
+    stateWith(listWithDeps([["Work:2"], []])),
+    identityTheme,
+    40,
+  ).join("\n");
+
+  assert.isBelow(text.indexOf("item 2"), text.indexOf("item 1"));
+});
+
+it("a dependency-free list renders exactly as before", () => {
+  const text = renderTrackerWidget(stateWith(listOfCount(3, 1)), identityTheme, 40).join("\n");
+
+  assert.match(text, /✓ item 1/);
+  assert.match(text, /● item 2/);
+  assert.match(text, /○ item 3/);
+  notContain(text, "⏳");
+});
+
+it("planner anchors on the first ready item, not the first open item", () => {
+  // Item 1 is done; item 2 waits for item 30. The first open item is item 2
+  // and the first ready item is item 3.
+  const list = new TodoList({
+    id: 1,
+    name: "Work",
+    nextItemId: 31,
+    items: Array.from(
+      { length: 30 },
+      (_, index) =>
+        new TodoItem({
+          id: index + 1,
+          text: `item ${index + 1}`,
+          done: index === 0,
+          deps: index === 1 ? ["Work:30"] : [],
+        }),
+    ),
+  });
+  // Item 2 sits last in the derived order, after everything it waits for.
+  const ordered = { name: list.name, items: orderedItems(list) };
+
+  // A one-row budget shows the anchor alone, so the shown index is the window
+  // centre: position 1 is item 3, the first ready item.
+  assert.deepStrictEqual(shownIndexes(planWidgetItems(ordered, 1)), [1]);
+});
+
+it("annotates a blocked item in the overlay items pane", () => {
+  const h = makeOverlay(stateWith(listWithDeps([[], ["Work:1"]])));
+
+  const text = h.overlay.render(80).join("\n");
+
+  assert.match(text, /item 2/);
+  assert.match(text, /\(blocked by #Work:1\)/);
 });

@@ -92,16 +92,44 @@ describe("tracker tool bridge", () => {
       action: "update_item",
       list_id: 1,
       items: [
-        { index: 1, done: true },
-        { index: 3, text: "cee" },
+        { item_id: "Work:1", done: true },
+        { item_id: "Work:3", text: "cee" },
       ],
     });
 
     expect(result.details?.items).toHaveLength(2);
     expect(textOf(result)).toContain("Updated 2 items");
+    expect(textOf(result)).toContain("Work:3 (text: cee)");
   });
 
-  it("returns an error result for a missing item instead of throwing", async () => {
+  it("shows id-based references in the list output", async () => {
+    const harness = makeHarness();
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: ["write plan", "ship it"],
+    });
+
+    await run(harness, { action: "update_item", item_id: "Work:2", done: true });
+    const result = await run(harness, { action: "list" });
+
+    expect(textOf(result)).toContain("[x] #Work:2: ship it");
+  });
+
+  it("shows stable ids after a removal", async () => {
+    const harness = makeHarness();
+    await run(harness, { action: "create_list", name: "Work", initial_items: ["a", "b", "c"] });
+
+    await run(harness, { action: "remove_item", item_id: "Work:1" });
+    const result = await run(harness, { action: "list" });
+
+    // The remaining items keep their ids instead of shifting down.
+    expect(textOf(result)).toContain("#Work:2: b");
+    expect(textOf(result)).toContain("#Work:3: c");
+    expect(textOf(result)).not.toContain("#Work:1");
+  });
+
+  it("reports an error result for a missing item instead of throwing", async () => {
     const harness = makeHarness();
     await run(harness, { action: "create_list", name: "Work", initial_items: ["only"] });
 
@@ -109,5 +137,145 @@ describe("tracker tool bridge", () => {
 
     expect(result.details?.error).toContain("Work:9");
     expect(result.content[0]).toMatchObject({ type: "text" });
+  });
+
+  it("accepts dependencies in the object item form", async () => {
+    const harness = makeHarness();
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+    });
+
+    const added = await run(harness, {
+      action: "add_item",
+      list_id: 1,
+      text: { text: "c", deps: ["Work:2"] },
+    });
+
+    expect(added.details?.error).toBeUndefined();
+    expect(added.details?.items?.[0]?.deps).toEqual(["Work:2"]);
+    expect(textOf(added)).toContain("Work:3");
+  });
+
+  it("rejects a malformed dependency reference with an actionable message", async () => {
+    const harness = makeHarness();
+    await run(harness, { action: "create_list", name: "Work", initial_items: ["a"] });
+
+    const result = await run(harness, {
+      action: "add_item",
+      list_id: 1,
+      text: { text: "b", deps: ["nonsense"] },
+    });
+
+    expect(result.details?.error).toContain("listName:id");
+  });
+
+  it("names the cycle when a dependency would close one", async () => {
+    const harness = makeHarness();
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+    });
+
+    const result = await run(harness, {
+      action: "update_item",
+      item_id: "Work:1",
+      deps: ["Work:2"],
+    });
+
+    expect(result.details?.error).toContain("Work:1");
+    expect(result.details?.error).toContain("Work:2");
+  });
+
+  it("annotates blocked items and names what is ready", async () => {
+    const harness = makeHarness();
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: ["a", { text: "b", deps: ["Work:1"] }, { text: "c", deps: ["Work:2"] }],
+    });
+
+    const text = textOf(await run(harness, { action: "list" }));
+
+    expect(text).toContain("blocked by #Work:1");
+    expect(text).toContain("blocked by #Work:2");
+    expect(text).toContain("Ready now: #Work:1");
+  });
+
+  it("leaves the list output untouched for a dependency-free list", async () => {
+    const harness = makeHarness();
+    await run(harness, { action: "create_list", name: "Work", initial_items: ["a", "b"] });
+
+    const text = textOf(await run(harness, { action: "list" }));
+
+    expect(text).not.toContain("blocked by");
+    expect(text).not.toContain("Ready now");
+    expect(text).toBe("[1] Work — 0/2 (active)\n  [ ] #Work:1: a\n  [ ] #Work:2: b");
+  });
+
+  it("names the blockers when a completion is refused", async () => {
+    const harness = makeHarness();
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+    });
+
+    const result = await run(harness, { action: "update_item", item_id: "Work:2", done: true });
+
+    expect(result.details?.error).toContain("Work:1");
+    expect(result.details?.error).toContain("blocked");
+  });
+
+  it("notes the done dependents when a dependency is reopened", async () => {
+    const harness = makeHarness();
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+    });
+    await run(harness, { action: "update_item", item_id: "Work:1", done: true });
+    await run(harness, { action: "update_item", item_id: "Work:2", done: true });
+
+    const text = textOf(
+      await run(harness, { action: "update_item", item_id: "Work:1", done: false }),
+    );
+
+    expect(text).toContain("Note:");
+    expect(text).toContain("Work:2");
+  });
+
+  it("adds no reopen note when no dependent is done", async () => {
+    const harness = makeHarness();
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+    });
+    await run(harness, { action: "update_item", item_id: "Work:1", done: true });
+
+    const text = textOf(
+      await run(harness, { action: "update_item", item_id: "Work:1", done: false }),
+    );
+
+    expect(text).not.toContain("Note:");
+  });
+
+  it("shows items in dependency order, not stored order", async () => {
+    const harness = makeHarness();
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: [{ text: "ship", deps: ["Work:2"] }, "write plan"],
+    });
+
+    const text = textOf(await run(harness, { action: "list" }));
+
+    // "write plan" is the dependency, so it is listed before "ship" even
+    // though "ship" was created first.
+    expect(text.indexOf("write plan")).toBeLessThan(text.indexOf("ship"));
+    expect(text).toContain("#Work:2: write plan");
   });
 });

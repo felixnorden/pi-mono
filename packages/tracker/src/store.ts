@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Ref, Result, Schema } from "effect";
+import { blockersOf, cyclePath, dependentsOf, formatItemRef, parseItemRef } from "./deps.ts";
 import { TodoItem, TodoList, TrackerState, emptyState } from "./domain.ts";
 
 // --------------------------------------------------------------------------
@@ -10,6 +11,11 @@ const Reason = Schema.Union([
   Schema.Literal("ItemNotFound"),
   Schema.Literal("EmptyText"),
   Schema.Literal("DuplicateListName"),
+  Schema.Literal("DependencyNotFound"),
+  Schema.Literal("CrossListDependency"),
+  Schema.Literal("DependencyCycle"),
+  Schema.Literal("ItemBlocked"),
+  Schema.Literal("ItemDependedOn"),
 ]);
 
 export type TrackerErrorReason = Schema.Schema.Type<typeof Reason>;
@@ -33,21 +39,6 @@ const listNotFoundMessage = (s: TrackerState, listId: number): string => {
     : `List #${listId} not found — available: ${available}`;
 };
 
-/**
- * Parse a `listName:index` item id (e.g. `Work:2`). Splits on the *last*
- * colon so list names may contain colons; the index must be a positive
- * integer. Returns null for anything that is not a well-formed id.
- */
-const parseItemId = (
-  itemId: string,
-): { readonly listName: string; readonly index: number } | null => {
-  const colon = itemId.lastIndexOf(":");
-  if (colon <= 0 || colon === itemId.length - 1) return null;
-  const indexText = itemId.slice(colon + 1);
-  if (!/^[1-9]\d*$/.test(indexText)) return null;
-  return { listName: itemId.slice(0, colon), index: Number(indexText) };
-};
-
 /** Outcome of resolving an item id against a state. */
 type ResolvedItem =
   | { readonly kind: "malformed" }
@@ -57,18 +48,23 @@ type ResolvedItem =
       readonly kind: "ok";
       readonly list: TodoList;
       readonly item: TodoItem;
+      /** 0-based position of the item within its list. */
       readonly index: number;
     };
 
-/** Resolve `listName:index` against the current state (index is 1-based). */
+/**
+ * Resolve `listName:id` against the current state. The id is permanent, so a
+ * reference keeps pointing at the same item after other items are removed.
+ */
 const resolveItem = (s: TrackerState, itemId: string): ResolvedItem => {
-  const parsed = parseItemId(itemId);
+  const parsed = parseItemRef(itemId);
   if (!parsed) return { kind: "malformed" };
-  const list = s.lists.find((l) => l.name === parsed.listName);
-  if (!list) return { kind: "noList", listName: parsed.listName };
-  const item = list.items[parsed.index - 1];
+  const list = s.lists.find((l) => l.name === parsed.name);
+  if (!list) return { kind: "noList", listName: parsed.name };
+  const index = list.items.findIndex((item) => item.id === parsed.id);
+  const item = index === -1 ? undefined : list.items[index];
   if (!item) return { kind: "noItem", list };
-  return { kind: "ok", list, item, index: parsed.index };
+  return { kind: "ok", list, item, index };
 };
 
 /**
@@ -89,7 +85,7 @@ const resolveItemOrError = (
         ok: false,
         error: new TrackerError({
           reason: "ItemNotFound",
-          message: `Item "${itemId}" must look like "listName:index" (e.g. "Work:2")`,
+          message: `Item "${itemId}" must look like "listName:id" (e.g. "Work:2")`,
           itemId,
         }),
       };
@@ -107,53 +103,185 @@ const resolveItemOrError = (
         }),
       };
     }
-    case "noItem": {
-      const available = resolved.list.items
-        .map((_, i) => `${resolved.list.name}:${i + 1}`)
-        .join(", ");
+    case "noItem":
       return {
         ok: false,
         error: new TrackerError({
           reason: "ItemNotFound",
-          message:
-            available === ""
-              ? `Item "${itemId}" not found in list "${resolved.list.name}" (no items)`
-              : `Item "${itemId}" not found in list "${resolved.list.name}" — available: ${available}`,
+          message: itemNotFoundMessage(resolved.list, itemId),
           listId: resolved.list.id,
           itemId,
         }),
       };
-    }
     case "ok":
       return { ok: true, list: resolved.list, item: resolved.item, index: resolved.index };
   }
 };
 
+/** Ids the caller can use instead, formatted as `listName:id`. */
+const availableItemIds = (list: TodoList): string =>
+  list.items.map((item) => `${list.name}:${item.id}`).join(", ");
+
+/**
+ * `Item "Work:9" not found in list "Work" — available: Work:1, Work:3`.
+ * Shared by the item, batch, and dependency paths so each names usable ids.
+ */
+const notFoundMessage = (subject: string, label: string, list: TodoList): string => {
+  const available = availableItemIds(list);
+  return available === ""
+    ? `${label} "${subject}" not found in list "${list.name}" (no items)`
+    : `${label} "${subject}" not found in list "${list.name}" — available: ${available}`;
+};
+
+const itemNotFoundMessage = (list: TodoList, itemId: string): string =>
+  notFoundMessage(itemId, "Item", list);
+
+/**
+ * The next item id to hand out: the stored counter, raised past the highest id
+ * in the list. Never below 1, so a list with an unset counter still hands out
+ * a usable id, and a removed id is never reused.
+ */
+const nextItemIdFor = (items: readonly TodoItem[], counter: number): number =>
+  items.reduce((max, item) => Math.max(max, item.id + 1), Math.max(counter, 1));
+
+/** A copy of `list` with a replaced item array and a counter above its ids. */
+const withItems = (list: TodoList, items: readonly TodoItem[]): TodoList =>
+  new TodoList({
+    id: list.id,
+    name: list.name,
+    items: [...items],
+    nextItemId: nextItemIdFor(items, list.nextItemId),
+  });
+
 // --------------------------------------------------------------------------
 // Store
 // --------------------------------------------------------------------------
 
+/**
+ * How a caller declares an item to create: the bare text, or an object that
+ * also carries the ids of the same-list items this one waits for.
+ */
+export type ItemSpec = string | { readonly text: string; readonly deps?: readonly string[] };
+
+/** Trim a spec's text and settle its dependency refs. */
+const normalizeSpec = (
+  spec: ItemSpec,
+): { readonly text: string; readonly deps: readonly string[] } => {
+  if (typeof spec === "string") return { text: spec.trim(), deps: [] };
+  return { text: spec.text.trim(), deps: spec.deps ?? [] };
+};
+
+/**
+ * The first problem with `deps` for the item at `targetIndex`, or null when
+ * every dependency is valid. `list` must already contain the item and its
+ * siblings, so a reference to an item created by the same call resolves.
+ *
+ * Checks run in order: reference shape, same-list rule, existence, a self
+ * reference, then whether the resulting graph stays acyclic.
+ */
+const firstDependencyError = (
+  list: TodoList,
+  targetIndex: number,
+  deps: readonly string[],
+): TrackerError | null => {
+  const target = list.items[targetIndex];
+  for (const ref of deps) {
+    const parsed = parseItemRef(ref);
+    if (parsed === null) {
+      return new TrackerError({
+        reason: "DependencyNotFound",
+        message: `Dependency "${ref}" must look like "listName:id" (e.g. "Work:2")`,
+      });
+    }
+    if (parsed.name !== list.name) {
+      return new TrackerError({
+        reason: "CrossListDependency",
+        message:
+          `Dependency "${ref}" is in another list. Dependencies must be in "${list.name}" ` +
+          `(e.g. "${list.name}:${parsed.id}")`,
+      });
+    }
+    if (!list.items.some((item) => item.id === parsed.id)) {
+      return new TrackerError({
+        reason: "DependencyNotFound",
+        message: notFoundMessage(ref, "Dependency", list),
+      });
+    }
+    if (target !== undefined && target.id === parsed.id) {
+      return new TrackerError({
+        reason: "DependencyCycle",
+        message: `Item "${ref}" cannot depend on itself`,
+      });
+    }
+  }
+  const cycle = cyclePath(list, targetIndex, deps);
+  if (cycle === null) return null;
+  const where =
+    cycle.length === 0
+      ? `involving "${list.name}:${target?.id ?? targetIndex + 1}"`
+      : `: ${cycle.join(" → ")}`;
+  return new TrackerError({
+    reason: "DependencyCycle",
+    message: `Dependency cycle${where}. Change or clear one of these dependencies`,
+  });
+};
+
+/**
+ * The refusal for completing a blocked item, or null when the item is already
+ * done or every dependency is done. Completion is gated; reopening is not, so
+ * a dependency that is reopened can always be re-closed or dropped.
+ */
+const blockedError = (list: TodoList, index: number): TrackerError | null => {
+  const blockers = blockersOf(list, index);
+  if (blockers.length === 0) return null;
+  const subject = formatItemRef(list.name, list.items[index]!.id);
+  return new TrackerError({
+    reason: "ItemBlocked",
+    message:
+      `Item "${subject}" is blocked by ${blockers.join(", ")}. ` +
+      "Complete those items first, or clear this item's dependencies",
+    itemId: subject,
+  });
+};
+
+/** The refusal for removing an item that other items depend on, or null. */
+const dependedOnError = (list: TodoList, index: number, itemId: string): TrackerError | null => {
+  const dependents = dependentsOf(list, index);
+  if (dependents.length === 0) return null;
+  const names = dependents
+    .map((dependent) => formatItemRef(list.name, list.items[dependent]!.id))
+    .join(", ");
+  return new TrackerError({
+    reason: "ItemDependedOn",
+    message:
+      `Item "${itemId}" has dependents: ${names}. ` + "Remove or change those dependencies first",
+    itemId,
+  });
+};
+
 export interface UpdateItemPatch {
   readonly text?: string;
   readonly done?: boolean;
+  /** Replacement dependency set (same-list `listName:id` refs); `[]` clears it. */
+  readonly deps?: readonly string[];
 }
 
 /**
- * An `UpdateItemPatch` that targets an item by its 1-based position within a
- * single list (mirrors `add_item`'s `list_id + text[]` shape: the list is
- * factored out, the patches are positional).
+ * An `UpdateItemPatch` that targets an item by id within a single list
+ * (mirrors `add_item`'s `list_id + text[]` shape: the list is factored out,
+ * the patches name their item).
  */
 export interface UpdateItemInListPatch extends UpdateItemPatch {
-  /** 1-based position of the item within its list (e.g. 2 for the second item). */
-  readonly index: number;
+  /** The item's `listName:id` reference, e.g. "Work:2". */
+  readonly itemId: string;
 }
 
 /** Options for `createList`: activation behavior and initial items. */
 export interface CreateListOptions {
   /** Make the new list the active list (defaults to true). */
   readonly activate?: boolean;
-  /** Initial item texts, added when the list is created (atomic with the list). */
-  readonly initialItems?: readonly string[];
+  /** Initial items, added when the list is created (atomic with the list). */
+  readonly initialItems?: readonly ItemSpec[];
 }
 
 export class TrackerStore extends Context.Service<
@@ -167,10 +295,14 @@ export class TrackerStore extends Context.Service<
     ) => Effect.Effect<TodoList, TrackerError>;
     readonly deleteList: (listId: number) => Effect.Effect<void, TrackerError>;
     readonly setActiveList: (listId: number | null) => Effect.Effect<void, TrackerError>;
-    readonly addItem: (listId: number, text: string) => Effect.Effect<TodoItem, TrackerError>;
+    readonly addItem: (
+      listId: number,
+      text: string,
+      deps?: readonly string[],
+    ) => Effect.Effect<TodoItem, TrackerError>;
     readonly addItems: (
       listId: number,
-      texts: readonly string[],
+      specs: readonly ItemSpec[],
     ) => Effect.Effect<TodoItem[], TrackerError>;
     readonly updateItem: (
       itemId: string,
@@ -215,8 +347,8 @@ export class TrackerStore extends Context.Service<
             message: "List name must not be empty",
           });
         }
-        const initialItems = (options.initialItems ?? []).map((text) => text.trim());
-        if (initialItems.some((text) => text === "")) {
+        const initialSpecs = (options.initialItems ?? []).map(normalizeSpec);
+        if (initialSpecs.some((spec) => spec.text === "")) {
           return yield* new TrackerError({
             reason: "EmptyText",
             message: "Item text must not be empty",
@@ -236,8 +368,22 @@ export class TrackerStore extends Context.Service<
                 s,
               ];
             }
-            const items = initialItems.map((text) => new TodoItem({ text, done: false }));
-            const list = new TodoList({ id: s.nextListId, name: trimmed, items });
+            const items = initialSpecs.map(
+              (spec, index) =>
+                new TodoItem({ id: index + 1, text: spec.text, done: false, deps: [...spec.deps] }),
+            );
+            const list = new TodoList({
+              id: s.nextListId,
+              name: trimmed,
+              items,
+              nextItemId: items.length + 1,
+            });
+            // Dependencies are checked against the new list itself, so an
+            // initial item may depend on a sibling from the same call.
+            for (const [index, item] of items.entries()) {
+              const error = firstDependencyError(list, index, item.deps);
+              if (error !== null) return [Result.fail(error), s];
+            }
             return [
               Result.succeed(list),
               new TrackerState({
@@ -297,46 +443,17 @@ export class TrackerStore extends Context.Service<
         });
       });
 
-      const addItem = Effect.fn("TrackerStore.addItem")(function* (listId: number, text: string) {
-        const trimmed = text.trim();
-        if (trimmed === "") {
-          return yield* new TrackerError({
-            reason: "EmptyText",
-            message: "Item text must not be empty",
-          });
-        }
-        return yield* mutate(
-          (s): readonly [Result.Result<TodoItem, TrackerError>, TrackerState] => {
-            const list = s.lists.find((l) => l.id === listId);
-            if (!list) {
-              return [
-                Result.fail(
-                  new TrackerError({
-                    reason: "ListNotFound",
-                    message: listNotFoundMessage(s, listId),
-                    listId,
-                  }),
-                ),
-                s,
-              ];
-            }
-            const item = new TodoItem({ text: trimmed, done: false });
-            const lists = s.lists.map((l) =>
-              l.id === listId
-                ? new TodoList({ id: l.id, name: l.name, items: [...l.items, item] })
-                : l,
-            );
-            return [Result.succeed(item), new TrackerState({ ...s, lists })];
-          },
-        );
-      });
-
+      /**
+       * Append items to a list, assigning ids from the list counter. Accepts
+       * bare text or `{ text, deps }` objects; a dependency may name an item
+       * created by this same call.
+       */
       const addItems = Effect.fn("TrackerStore.addItems")(function* (
         listId: number,
-        texts: readonly string[],
+        items: readonly ItemSpec[],
       ) {
-        const trimmed = texts.map((text) => text.trim());
-        if (trimmed.some((text) => text === "")) {
+        const specs = items.map(normalizeSpec);
+        if (specs.some((spec) => spec.text === "")) {
           return yield* new TrackerError({
             reason: "EmptyText",
             message: "Item text must not be empty",
@@ -357,15 +474,37 @@ export class TrackerStore extends Context.Service<
                 s,
               ];
             }
-            const items = trimmed.map((text) => new TodoItem({ text, done: false }));
-            const lists = s.lists.map((l) =>
-              l.id === listId
-                ? new TodoList({ id: l.id, name: l.name, items: [...l.items, ...items] })
-                : l,
-            );
-            return [Result.succeed(items), new TrackerState({ ...s, lists })];
+            let nextId = nextItemIdFor(list.items, list.nextItemId);
+            const added = specs.map((spec) => {
+              const item = new TodoItem({
+                id: nextId,
+                text: spec.text,
+                done: false,
+                deps: [...spec.deps],
+              });
+              nextId += 1;
+              return item;
+            });
+            const nextList = withItems(list, [...list.items, ...added]);
+            // Validate against the post-insertion list, so a dependency may
+            // name a sibling created by this same call.
+            for (const [offset, item] of added.entries()) {
+              const error = firstDependencyError(nextList, list.items.length + offset, item.deps);
+              if (error !== null) return [Result.fail(error), s];
+            }
+            const lists = s.lists.map((l) => (l.id === listId ? nextList : l));
+            return [Result.succeed(added), new TrackerState({ ...s, lists })];
           },
         );
+      });
+
+      const addItem = Effect.fn("TrackerStore.addItem")(function* (
+        listId: number,
+        text: string,
+        deps: readonly string[] = [],
+      ) {
+        const [item] = yield* addItems(listId, [{ text, deps }]);
+        return item!;
       });
 
       const updateItem = Effect.fn("TrackerStore.updateItem")(function* (
@@ -386,23 +525,33 @@ export class TrackerStore extends Context.Service<
               return [Result.fail(resolved.error), s];
             }
             const { list, item } = resolved;
-            if (patch.text === undefined && patch.done === undefined) {
+            // Completion is gated on the list as it stands: an item may only be
+            // completed once its dependencies are done. Reopening and text or
+            // dependency edits stay open, so a blocked item can be repaired.
+            if (patch.done === true) {
+              const blocked = blockedError(list, resolved.index);
+              if (blocked !== null) return [Result.fail(blocked), s];
+            }
+            if (patch.text === undefined && patch.done === undefined && patch.deps === undefined) {
               // No-op patch: return the current item, leave state untouched.
               return [Result.succeed(item), s];
             }
             const next = new TodoItem({
+              id: item.id,
               text: trimmed ?? item.text,
               done: patch.done ?? item.done,
+              deps: patch.deps === undefined ? item.deps : [...patch.deps],
             });
-            const lists = s.lists.map((l) =>
-              l.id === list.id
-                ? new TodoList({
-                    id: l.id,
-                    name: l.name,
-                    items: l.items.map((i, idx) => (idx === resolved.index - 1 ? next : i)),
-                  })
-                : l,
+            const nextList = withItems(
+              list,
+              list.items.map((i) => (i.id === item.id ? next : i)),
             );
+            // The replacement set is validated against the list the change
+            // produces, so dependencies are checked exactly as they will be
+            // stored. The item keeps its position, so the index still holds.
+            const error = firstDependencyError(nextList, resolved.index, next.deps);
+            if (error !== null) return [Result.fail(error), s];
+            const lists = s.lists.map((l) => (l.id === list.id ? nextList : l));
             return [Result.succeed(next), new TrackerState({ ...s, lists })];
           },
         );
@@ -410,9 +559,9 @@ export class TrackerStore extends Context.Service<
 
       /**
        * Per-list batched updates, mirroring `addItems(listId, texts)`: the
-       * list is named once and each patch targets an item by its 1-based
-       * position (`index`) within that list. The whole batch fails atomically
-       * if the list is missing or any index is out of range.
+       * list is named once and each patch targets an item by id within that
+       * list. The whole batch fails atomically if the list is missing or any
+       * id does not resolve.
        */
       const updateItems = Effect.fn("TrackerStore.updateItems")(function* (
         listId: number,
@@ -443,41 +592,78 @@ export class TrackerStore extends Context.Service<
                 s,
               ];
             }
-            // Resolve every target position; the batch fails atomically if any
-            // index is out of range.
-            const positions: number[] = [];
+            // Resolve every target id within this single list; the batch fails
+            // atomically if any of them does not resolve. A reference naming
+            // another list does not resolve here either.
+            const targets: number[] = [];
             for (const patch of patches) {
-              if (patch.index < 1 || patch.index > list.items.length) {
+              const parsed = parseItemRef(patch.itemId);
+              if (parsed === null) {
                 return [
                   Result.fail(
                     new TrackerError({
                       reason: "ItemNotFound",
-                      message:
-                        `Item ${list.name}:${patch.index} not found — list "${list.name}" has ` +
-                        `${list.items.length} item${list.items.length === 1 ? "" : "s"}`,
+                      message: `Item "${patch.itemId}" must look like "listName:id" (e.g. "Work:2")`,
+                      listId,
+                      itemId: patch.itemId,
                     }),
                   ),
                   s,
                 ];
               }
-              positions.push(patch.index);
+              const index =
+                parsed.name === list.name
+                  ? list.items.findIndex((item) => item.id === parsed.id)
+                  : -1;
+              if (index === -1) {
+                return [
+                  Result.fail(
+                    new TrackerError({
+                      reason: "ItemNotFound",
+                      message: itemNotFoundMessage(list, patch.itemId),
+                      listId,
+                      itemId: patch.itemId,
+                    }),
+                  ),
+                  s,
+                ];
+              }
+              targets.push(index);
             }
-            // Later patches win for duplicate positions.
+            // Later patches win for duplicate ids.
             const byIndex = new Map<number, UpdateItemPatch>();
-            patches.forEach((patch, i) => byIndex.set(positions[i]!, patch));
-            const nextItems = list.items.map((item, idx) => {
-              const patch = byIndex.get(idx + 1);
+            patches.forEach((patch, index) => byIndex.set(targets[index]!, patch));
+            // Every completion in the batch is gated on the list as it stands,
+            // so one call cannot complete an item that is still blocked. Mark
+            // the blocker done first, then complete the dependent.
+            for (const [index, patch] of patches.entries()) {
+              if (patch.done !== true) continue;
+              const blocked = blockedError(list, targets[index]!);
+              if (blocked !== null) return [Result.fail(blocked), s];
+            }
+            const nextItems = list.items.map((item, index) => {
+              const patch = byIndex.get(index);
               if (!patch) return item;
-              const text = patch.text === undefined ? item.text : patch.text.trim();
-              const done = patch.done ?? item.done;
-              return new TodoItem({ text, done });
+              return new TodoItem({
+                id: item.id,
+                text: patch.text === undefined ? item.text : patch.text.trim(),
+                done: patch.done ?? item.done,
+                deps: patch.deps === undefined ? item.deps : [...patch.deps],
+              });
             });
-            const lists = s.lists.map((l) =>
-              l.id === listId ? new TodoList({ id: l.id, name: l.name, items: nextItems }) : l,
-            );
+            const nextList = withItems(list, nextItems);
+            // Validate every dependency change against the batch's result, so
+            // two patches that would only close a cycle together are refused.
+            for (const [index, patch] of patches.entries()) {
+              if (patch.deps === undefined) continue;
+              const target = targets[index]!;
+              const error = firstDependencyError(nextList, target, nextItems[target]!.deps);
+              if (error !== null) return [Result.fail(error), s];
+            }
+            const lists = s.lists.map((l) => (l.id === listId ? nextList : l));
             return [
               // Results in patch order so the caller can map them 1:1.
-              Result.succeed(positions.map((index) => nextItems[index - 1]!)),
+              Result.succeed(targets.map((index) => nextItems[index]!)),
               new TrackerState({ ...s, lists }),
             ];
           },
@@ -485,9 +671,11 @@ export class TrackerStore extends Context.Service<
       });
 
       /**
-       * Remove an item. Positions shift implicitly: the item that followed
-       * the removed one takes its index, so `Work:3` becomes `Work:2`. The
-       * error message lists the fresh ids for a stale reference.
+       * Remove an item. Its id is never reused and the ids of the items after it
+       * do not change, so a reference the caller already holds keeps pointing at
+       * the same item. A stale reference still lists every id that does resolve.
+       * An item that other items depend on cannot be removed: the dependents
+       * would be left dangling.
        */
       const removeItem = Effect.fn("TrackerStore.removeItem")(function* (itemId: string) {
         return yield* mutate((s): readonly [Result.Result<void, TrackerError>, TrackerState] => {
@@ -495,14 +683,15 @@ export class TrackerStore extends Context.Service<
           if (!resolved.ok) {
             return [Result.fail(resolved.error), s];
           }
-          const { list, index } = resolved;
+          const { list, item } = resolved;
+          const dependedOn = dependedOnError(list, resolved.index, itemId);
+          if (dependedOn !== null) return [Result.fail(dependedOn), s];
           const lists = s.lists.map((l) =>
             l.id === list.id
-              ? new TodoList({
-                  id: l.id,
-                  name: l.name,
-                  items: l.items.filter((_, idx) => idx !== index - 1),
-                })
+              ? withItems(
+                  l,
+                  l.items.filter((i) => i.id !== item.id),
+                )
               : l,
           );
           return [Result.succeed(undefined), new TrackerState({ ...s, lists })];

@@ -8,6 +8,7 @@ pi-tracker is an extension for Pi. It manages todolists in your session.
 - Add, update, and remove items in a todolist.
 - Mark an item as complete or incomplete.
 - Change the task text of an item.
+- Declare dependencies between items, so work happens in order.
 - Persist todolists with the session.
 - Show the active todolist in a widget above the editor.
 
@@ -25,33 +26,32 @@ The snapshot does not enter the LLM context.
 Ask Pi to manage your todolists. Pi calls the `tracker` tool. The tool
 supports these actions:
 
-| Action        | Purpose                                   | Parameters                                     |
-| ------------- | ----------------------------------------- | ---------------------------------------------- |
-| `list`        | Show all lists and items                  | —                                              |
-| `create_list` | Create a list (becomes active by default) | `name`, `initial_items?`, `activate?`          |
-| `delete_list` | Delete a list                             | `list_id`                                      |
-| `set_active`  | Set or clear the active list              | `list_id` (optional)                           |
-| `add_item`    | Add one or more items                     | `list_id`, `text` (string or array of strings) |
-| `update_item` | Update one or more items                  | `item_id`/`text?`/`done?` or `list_id` + `items` |
-| `remove_item` | Remove an item                            | `item_id`                                      |
+| Action        | Purpose                                   | Parameters                                              |
+| ------------- | ----------------------------------------- | ------------------------------------------------------- |
+| `list`        | Show all lists and items                  | —                                                       |
+| `create_list` | Create a list (becomes active by default) | `name`, `initial_items?`, `activate?`                   |
+| `delete_list` | Delete a list                             | `list_id`                                               |
+| `set_active`  | Set or clear the active list              | `list_id` (optional)                                    |
+| `add_item`    | Add one or more items                     | `list_id`, `text` (string, item object, or array)       |
+| `update_item` | Update one or more items                  | `item_id` + `text?`/`done?`/`deps?`, or `list_id` + `items` |
+| `remove_item` | Remove an item                            | `item_id`                                               |
 
-`create_list` accepts `initial_items` (an array of item texts) to create the
-list with its first items in one call — list and items are created atomically.
-`add_item` accepts a single `text` or an array of texts — several items are
-added in one call.
+`create_list` accepts `initial_items` to create the list with its first
+items in one call, so the list and its items are created atomically. Each
+item is either a text string or an object `{text, deps?}`. `add_item`
+accepts the same shapes, plus an array of them, to add several items in one
+call.
 
-Item ids are `listName:index` — the 1-based position of the item in its
-list, as shown by the `list` action (e.g. `Work:2`). They are not stored on
-items: an id is just the list name plus the array position, so ids are
-unique across lists because list names are unique, and ids shift when items
-are removed (`Work:3` becomes `Work:2`) — re-list before referencing items
-after a removal. `update_item` accepts the scalar form (`item_id` with
-optional `text`/`done`) or a per-list batched form: `list_id` plus an
-`items` array (`[{index, text?, done?}, ...]`) where `index` is the item's
-1-based position in that list — mirroring `add_item`'s `list_id + text[]`
-shape, so one batch stays within a single list. Creating a list makes it the
-active list (the widget switches to it); pass `activate: false` to keep the
-current active list.
+Item ids are `listName:id`, as the `list` action shows them (e.g. `Work:2`).
+An id is permanent: it is stored on the item, it is unique within its list,
+and it is never reused. Removing an item leaves a gap in the numbering
+instead of shifting the items after it, so a reference you already hold stays
+valid. `update_item` accepts the scalar form (`item_id` with optional
+`text`/`done`/`deps`) or a per-list batched form: `list_id` plus an `items`
+array (`[{item_id, text?, done?, deps?}, ...]`), mirroring `add_item`'s
+`list_id + text[]` shape, so one batch stays within a single list. Creating a
+list makes it the active list (the widget switches to it); pass
+`activate: false` to keep the current active list.
 
 The tool validates every call and returns an error that names exactly what to
 fix: each action accepts only its own parameters, required fields are
@@ -68,6 +68,39 @@ Example prompt:
 
 Call `set_active` without `list_id` to deselect. The widget hides when no
 list is active.
+
+### Dependencies and readiness
+
+An item can wait for other items. Pass `deps` on the item object when you
+create it, or through `update_item`, as a list of `listName:id` references to
+items in the same list. `deps` replaces the whole dependency set, so pass `[]`
+to clear it.
+
+Dependencies must form a DAG. A dependency must exist, it must be in the same
+list, and it must not close a cycle. A call that would close one is rejected,
+and the error names the cycle path (e.g. `Work:1 → Work:2 → Work:1`).
+
+Two rules gate mutations:
+
+- You can only complete an item after every dependency is done. Completing a
+  blocked item fails, and the error names the blockers. Reopening is never
+  blocked, so you can always repair a mistake.
+- You cannot remove an item that other items depend on. The error names the
+  dependents.
+
+Reopening does not cascade. If you reopen a dependency whose dependents are
+already done, those dependents stay done and the result adds a note that they
+are now done but blocked.
+
+Readiness is derived on every read, never stored. The `list` action marks each
+blocked item, and it ends every list that has dependencies with a `Ready now`
+line. A dependency reference that does not resolve counts as a blocker, so a
+hand-edited snapshot cannot silently unblock work.
+
+Items render in a stable dependency order: a dependency comes before the items
+that wait for it. A list with no dependencies keeps its stored order. The
+stored order itself never changes; only the display order does. The `list`
+action, the widget, and the `/tracker` items pane all use that order.
 
 ### Working through a list
 
@@ -111,19 +144,32 @@ active. It hides when no list is active.
 The widget has a rounded border. The border uses the theme's `border` color.
 
 When the list holds more items than the widget can show, the widget keeps the
-first item, the current item (the first item still open), and the last item
+first item, the current item (the first ready item), and the last item
 visible, then fills the remaining rows around the current item. Items outside
 that window collapse into a `⋮` row. The `⋮` row appears only when items are
 hidden between the visible rows. The border label still shows the done and
 total counts.
 
-The current item (the first item still open) is marked with a filled `●` in
-the accent color. Done items use `✓`, and the other open items use `○`.
+Each item line starts with one marker:
+
+| Marker | Meaning                                                                |
+| ------ | ---------------------------------------------------------------------- |
+| `✓`    | Done.                                                                  |
+| `●`    | The current item: the first ready item, in the accent color.           |
+| `○`    | Another open item that is ready.                                       |
+| `⏳`   | An open item that waits for an unfinished dependency.                  |
+
+The marker field is two columns wide for every marker, so the text stays
+flush. The widget and the `list` action show the same derived order and the
+same readiness, so the two surfaces never disagree.
 
 ## Persistence
 
 The state lives in the session file. Pi writes a snapshot after every change.
 The state restores on resume, fork, and tree navigation.
+
+A snapshot saved before item ids existed loads with each item id equal to its
+position, so references in that format still resolve.
 
 ## Installation
 
@@ -169,6 +215,7 @@ Registration lives in `package.json` under the `pi` field:
 | File                 | Purpose                                                      |
 | -------------------- | ------------------------------------------------------------ |
 | `src/domain.ts`      | Schema domain model (`TodoItem`, `TodoList`, `TrackerState`) |
+| `src/deps.ts`        | Dependency references, cycle detection, readiness, derived order |
 | `src/store.ts`       | `TrackerStore` service with `Effect.Ref` state               |
 | `src/persistence.ts` | `TrackerPersistence` service (save and restore snapshots)    |
 | `src/ui.ts`          | Widget pane and interactive `/tracker` component             |

@@ -27,15 +27,17 @@ const sampleState = (): TrackerState =>
       new TodoList({
         id: 1,
         name: "Work",
+        nextItemId: 3,
         items: [
-          new TodoItem({ text: "write plan", done: true }),
-          new TodoItem({ text: "implement tracker", done: false }),
+          new TodoItem({ id: 1, text: "write plan", done: true }),
+          new TodoItem({ id: 2, text: "implement tracker", done: false }),
         ],
       }),
       new TodoList({
         id: 2,
         name: "Home",
-        items: [new TodoItem({ text: "water plants", done: false })],
+        nextItemId: 2,
+        items: [new TodoItem({ id: 1, text: "water plants", done: false })],
       }),
     ],
     activeListId: 1,
@@ -61,6 +63,48 @@ it("a realistic state round-trips, preserving order", () => {
   assert.deepStrictEqual(decoded.lists, state.lists);
   assert.strictEqual(decoded.activeListId, 1);
   assert.strictEqual(decoded.nextListId, 3);
+});
+
+it("item ids and deps round-trip", () => {
+  const state = new TrackerState({
+    lists: [
+      new TodoList({
+        id: 1,
+        name: "Work",
+        nextItemId: 4,
+        items: [
+          new TodoItem({ id: 1, text: "a", done: true }),
+          new TodoItem({ id: 3, text: "b", done: false, deps: ["Work:1"] }),
+        ],
+      }),
+    ],
+    activeListId: 1,
+    nextListId: 2,
+  });
+
+  roundTripsTo(state, encodeState(state));
+
+  const decoded = decodeOrThrow(encodeState(state));
+  assert.deepStrictEqual(
+    decoded.lists[0]?.items.map((i) => [i.id, i.deps]),
+    [
+      [1, []],
+      [3, ["Work:1"]],
+    ],
+  );
+  assert.strictEqual(decoded.lists[0]?.nextItemId, 4);
+});
+
+it("encoded snapshots carry item ids, deps, and the list counter", () => {
+  const encoded = encodeState(sampleState());
+  assert.deepStrictEqual(
+    encoded.lists[0]?.items.map((i) => [i.id, i.deps]),
+    [
+      [1, []],
+      [2, []],
+    ],
+  );
+  assert.strictEqual(encoded.lists[0]?.nextItemId, 3);
 });
 
 it("decoded values are real class instances", () => {
@@ -121,9 +165,10 @@ it("rejects a snapshot with an invalid item field", () => {
   assert(Result.isFailure(result));
 });
 
-it("ignores legacy item id fields (ids are positions, not stored)", () => {
-  // Snapshots from both previous formats (numeric ids and listName:index
-  // strings) decode cleanly; the stored id is ignored.
+it("drops a legacy string item id so old sessions stay loadable", () => {
+  // An older format stored the item id as a "listName:index" string. The
+  // schema now stores an integer id, so a string id is dropped before decode:
+  // the item decodes as unassigned and migrateState gives it its position.
   const legacy = {
     lists: [{ id: 1, name: "Work", items: [{ id: "Work:1", text: "x", done: false }] }],
     activeListId: null,

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
+import { TodoItem, TodoList, TrackerState, emptyState } from "./domain.ts";
 import {
   TOOL_ACTIONS,
   TRACKER_TOOL_METADATA,
   TRACKER_TOOL_NAME,
   TrackerToolParams,
   doneMarkReminder,
+  reopenNote,
   validateTrackerCall,
 } from "./tool-metadata.ts";
 
@@ -29,8 +31,8 @@ describe("tracker tool parameter schema", () => {
         action: "update_item",
         list_id: 1,
         items: [
-          { index: 1, done: true },
-          { index: 2, text: "New text" },
+          { item_id: "Work:1", done: true },
+          { item_id: "Work:2", text: "New text" },
         ],
       },
       { action: "remove_item", item_id: "Work:2" },
@@ -59,15 +61,15 @@ describe("tracker tool parameter schema", () => {
       Value.Check(TrackerToolParams, {
         action: "update_item",
         list_id: 1,
-        items: [{ index: "one", done: "yes" }],
+        items: [{ item_id: 1, done: "yes" }],
       }),
     ).toBe(false);
     expect(
       Value.Check(TrackerToolParams, {
-        // item_id inside the batch is a typo now; patch objects are strict.
+        // index inside the batch is the old positional field; patch objects are strict.
         action: "update_item",
         list_id: 1,
-        items: [{ item_id: "Work:1", done: true }],
+        items: [{ index: 1, done: true }],
       }),
     ).toBe(false);
     expect(Value.Check(TrackerToolParams, { action: "update_item", item_id: 2 })).toBe(false); // ids are strings
@@ -101,7 +103,7 @@ describe("validateTrackerCall (error-nudging layer)", () => {
       { action: "add_item", list_id: 1, text: ["a", "b"] },
       { action: "update_item", item_id: "Work:2" },
       { action: "update_item", item_id: "Work:2", text: "x", done: true },
-      { action: "update_item", list_id: 1, items: [{ index: 2, done: true }] },
+      { action: "update_item", list_id: 1, items: [{ item_id: "Work:2", done: true }] },
       { action: "remove_item", item_id: "Work:2" },
     ];
     for (const call of valid) {
@@ -130,7 +132,7 @@ describe("validateTrackerCall (error-nudging layer)", () => {
     const batch = validateTrackerCall({
       action: "update_item",
       list_id: 1,
-      items: [{ index: 2, done: true }],
+      items: [{ item_id: "Work:2", done: true }],
     });
     expect(batch.ok).toBe(true);
   });
@@ -155,14 +157,14 @@ describe("validateTrackerCall (error-nudging layer)", () => {
     const mixed = validateTrackerCall({
       action: "update_item",
       item_id: "Work:2",
-      items: [{ index: 3 }],
+      items: [{ item_id: "Work:3" }],
     });
     expect(mixed.ok).toBe(false);
     if (!mixed.ok) expect(mixed.message).toContain("not both");
 
     const missingList = validateTrackerCall({
       action: "update_item",
-      items: [{ index: 1, done: true }],
+      items: [{ item_id: "Work:1", done: true }],
     });
     expect(missingList.ok).toBe(false);
     if (!missingList.ok) expect(missingList.message).toContain("list_id");
@@ -186,6 +188,57 @@ describe("validateTrackerCall (error-nudging layer)", () => {
     expect(validateTrackerCall("nope").ok).toBe(false);
     expect(validateTrackerCall(undefined).ok).toBe(false);
     expect(validateTrackerCall([1]).ok).toBe(false);
+  });
+
+  it("accepts dependency declarations in every shape that supports them", () => {
+    const valid: Array<Record<string, unknown>> = [
+      { action: "create_list", name: "Work", initial_items: [{ text: "a", deps: ["Work:1"] }] },
+      {
+        action: "create_list",
+        name: "Work",
+        initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+      },
+      { action: "add_item", list_id: 1, text: { text: "b", deps: ["Work:1"] } },
+      { action: "add_item", list_id: 1, text: ["a", { text: "b", deps: ["Work:1"] }] },
+      { action: "update_item", item_id: "Work:2", deps: ["Work:1"] },
+      { action: "update_item", item_id: "Work:2", deps: [] },
+      { action: "update_item", list_id: 1, items: [{ item_id: "Work:2", deps: ["Work:1"] }] },
+    ];
+    for (const call of valid) {
+      expect(Value.Check(TrackerToolParams, call), JSON.stringify(call)).toBe(true);
+      const result = validateTrackerCall(call);
+      expect(result.ok, JSON.stringify(call)).toBe(true);
+    }
+  });
+
+  it("rejects a deps list on an action that does not accept one", () => {
+    const result = validateTrackerCall({ action: "remove_item", item_id: "Work:1", deps: [] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain("deps");
+      expect(result.message).toContain("item_id");
+    }
+  });
+
+  it("rejects a deps list on add_item, which takes deps inside the item object", () => {
+    const result = validateTrackerCall({
+      action: "add_item",
+      list_id: 1,
+      text: "a",
+      deps: ["Work:1"],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain("deps");
+  });
+
+  it("rejects a batch entry that carries both an item_id and a stray index", () => {
+    expect(
+      Value.Check(TrackerToolParams, {
+        action: "update_item",
+        list_id: 1,
+        items: [{ item_id: "Work:1", index: 1, deps: [] }],
+      }),
+    ).toBe(false);
   });
 });
 
@@ -216,6 +269,65 @@ describe("doneMarkReminder (terminal batch done-mark guard)", () => {
   });
 });
 
+describe("reopenNote (advisory reopen guard)", () => {
+  /** A one-list state: `deps[i]` are the refs of item i, ids 1..n. */
+  const stateWith = (
+    deps: ReadonlyArray<readonly string[]>,
+    done: readonly number[],
+  ): TrackerState =>
+    new TrackerState({
+      ...emptyState(),
+      lists: [
+        new TodoList({
+          id: 1,
+          name: "Work",
+          nextItemId: deps.length + 1,
+          items: deps.map(
+            (itemDeps, index) =>
+              new TodoItem({
+                id: index + 1,
+                text: `item ${index + 1}`,
+                done: done.includes(index),
+                deps: itemDeps,
+              }),
+          ),
+        }),
+      ],
+    });
+
+  it("notes the done dependents of a reopened item", () => {
+    const state = stateWith([[], ["Work:1"]], [1]);
+
+    const note = reopenNote([{ id: "Work:1", done: false }], state);
+
+    expect(note).not.toBeNull();
+    expect(note).toContain("Work:2");
+    expect(note).toContain("done but blocked");
+  });
+
+  it("is silent when the patch is not a reopen", () => {
+    const state = stateWith([[], ["Work:1"]], [1]);
+
+    expect(reopenNote([{ id: "Work:1", done: true }], state)).toBeNull();
+    expect(reopenNote([{ id: "Work:1", text: "new" }], state)).toBeNull();
+    expect(reopenNote([], state)).toBeNull();
+  });
+
+  it("is silent when no dependent is done", () => {
+    const state = stateWith([[], ["Work:1"]], []);
+
+    expect(reopenNote([{ id: "Work:1", done: false }], state)).toBeNull();
+  });
+
+  it("ignores a patch id that does not resolve", () => {
+    const state = stateWith([[], ["Work:1"]], [1]);
+
+    expect(reopenNote([{ id: "?", done: false }], state)).toBeNull();
+    expect(reopenNote([{ id: "Other:1", done: false }], state)).toBeNull();
+    expect(reopenNote([{ id: "Work:9", done: false }], state)).toBeNull();
+  });
+});
+
 describe("tracker tool prompt metadata", () => {
   it("every guideline names the tracker tool", () => {
     for (const guideline of TRACKER_TOOL_METADATA.promptGuidelines) {
@@ -231,6 +343,12 @@ describe("tracker tool prompt metadata", () => {
         action,
       );
     }
+  });
+
+  it("states the dependency rules in the description", () => {
+    expect(TRACKER_TOOL_METADATA.description).toContain("blocked");
+    expect(TRACKER_TOOL_METADATA.description).toContain("Ready now");
+    expect(TRACKER_TOOL_METADATA.description).toContain("cannot be removed");
   });
 
   it("runs tool calls sequentially to avoid mutation races", () => {
