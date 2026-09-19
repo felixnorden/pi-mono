@@ -6,7 +6,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { dependentsOf, formatItemRef, parseItemRef } from "./deps.ts";
+import { dependentsOf, formatItemRef, parseItemRef, unsatisfiedDeps } from "./deps.ts";
 import type { TodoItem, TodoList, TrackerState } from "./domain.ts";
 import type { EncodedState } from "./persistence.ts";
 
@@ -298,38 +298,62 @@ export interface AppliedUpdatePatch {
 }
 
 /**
- * Advisory note for a call that reopens an item whose dependents are already
- * done: the reopen does not cascade, so those dependents stay done and are now
- * blocked. Returns null when nothing was reopened, when nothing depends on the
- * reopened item, or when no dependent is done. Advisory text, never a
- * rejection.
+ * Advisory note for a call that leaves a done item unsatisfied, which the two
+ * edit paths can do:
+ *
+ * - A reopen (`done: false`): the reopen does not cascade, so its done
+ *   dependents stay done and are now blocked.
+ * - A dependency edit (`deps`): a done item can be given a dependency that is
+ *   still open, and nothing else would report it.
+ *
+ * Returns null when neither applies. Advisory text, never a rejection. Each
+ * affected item is named once, so a batch that hits both paths still produces
+ * one sentence about it.
  *
  * @param patches the update_item patches that were applied, in call order.
  * @param state the state after the call. A reopen only changes the reopened
- *   item, so the dependents' done flags are the same before and after.
+ *   item and a dependency edit only changes the patched item, so the other
+ *   items' done flags are the same before and after.
  */
-export const reopenNote = (
+export const blockedDoneNote = (
   patches: readonly AppliedUpdatePatch[],
   state: TrackerState,
 ): string | null => {
   const notes: string[] = [];
+  const reported = new Set<string>();
   for (const patch of patches) {
-    if (patch.done !== false) continue;
     const parsed = parseItemRef(patch.id);
     if (parsed === null) continue;
     const list = state.lists.find((candidate) => candidate.name === parsed.name);
     if (list === undefined) continue;
     const index = list.items.findIndex((item) => item.id === parsed.id);
     if (index === -1) continue;
-    const blocked = dependentsOf(list, index)
-      .filter((dependent) => list.items[dependent]!.done)
-      .map((dependent) => formatItemRef(list.name, list.items[dependent]!.id));
-    if (blocked.length === 0) continue;
-    const one = blocked.length === 1;
-    notes.push(
-      `Note: ${patch.id} is open again, so ${blocked.join(", ")} ` +
-        `${one ? "is" : "are"} done but blocked. Reopen or re-plan ${one ? "it" : "them"}.`,
-    );
+    if (patch.done === false) {
+      const blocked = dependentsOf(list, index)
+        .filter((dependent) => list.items[dependent]!.done)
+        .map((dependent) => formatItemRef(list.name, list.items[dependent]!.id))
+        .filter((ref) => !reported.has(ref));
+      if (blocked.length > 0) {
+        for (const ref of blocked) reported.add(ref);
+        const one = blocked.length === 1;
+        notes.push(
+          `Note: ${patch.id} is open again, so ${blocked.join(", ")} ` +
+            `${one ? "is" : "are"} done but blocked. Reopen or re-plan ${one ? "it" : "them"}.`,
+        );
+      }
+    }
+    if (patch.deps !== undefined && list.items[index]!.done && !reported.has(patch.id)) {
+      const open = unsatisfiedDeps(list, index);
+      if (open.length > 0) {
+        reported.add(patch.id);
+        const one = open.length === 1;
+        notes.push(
+          `Note: ${patch.id} is done but now waits on ${open.join(", ")}, ` +
+            `${one ? "which is" : "which are"} still open. Reopen it or clear ` +
+            `${one ? "that dependency" : "those dependencies"}.`,
+        );
+      }
+    }
   }
   return notes.length === 0 ? null : notes.join("\n");
 };
@@ -374,11 +398,14 @@ const TRACKER_TOOL_DESCRIPTION =
   "stays valid.\n" +
   "An item takes an optional deps list of same-list ids that must be done before it. Dependencies " +
   "must form a DAG: a dependency that would close a cycle is rejected and the error names the " +
-  "cycle. The list action marks blocked items and ends each list that has dependencies with a " +
-  "Ready now line.\n" +
+  "cycle. The list action marks an open item that waits with (blocked by ...), marks a done item " +
+  "whose dependency is open with (waiting on ...), and ends each list that has dependencies with " +
+  "a Ready now line. A list without a blocked-by marker has nothing blocked; the Ready now line " +
+  "appears once a list carries dependencies.\n" +
   "Completing a blocked item is refused, so an item can only be picked up once its dependencies " +
   "are done. An item that other items depend on cannot be removed until those dependencies change. " +
-  "Reopening an item does not cascade: the result notes any done dependents that are now blocked.\n" +
+  "Reopening an item does not cascade, and a deps edit can leave a done item waiting: the result " +
+  "notes any done item left unsatisfied.\n" +
   "The tracker tool is strict: each action accepts only its own parameters — any other argument is " +
   "rejected. Parameter contract per action:\n" +
   "- list: no parameters\n" +
@@ -392,7 +419,9 @@ const TRACKER_TOOL_DESCRIPTION =
   "- update_item: update several items in one list with list_id (required) + items=[{item_id, " +
   "text?, done?, deps?}, ...] — just like add_item's list_id + text[] (item_id is the item's id, " +
   'e.g. "Work:2"), or one item with item_id + optional text/done/deps. deps replaces the ' +
-  "dependency set (pass [] to clear it). Never mix the two forms. Example: update_item list_id=2 " +
+  "dependency set (pass [] to clear it) and the result names what was removed. Patches apply in " +
+  "order, so later patches win and a blocker can be completed in the same call, before the " +
+  "dependent. Never mix the two forms. Example: update_item list_id=2 " +
   'items=[{item_id: "Work:2", done: true}, {item_id: "Work:3", deps: ["Work:1"]}]\n' +
   "- remove_item: item_id (required, listName:id)";
 

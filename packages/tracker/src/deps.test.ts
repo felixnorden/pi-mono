@@ -1,12 +1,14 @@
 import { assert, it } from "@effect/vitest";
 import { TodoItem, TodoList } from "./domain.ts";
 import {
+  blockersOf,
   cyclePath,
   dependentsOf,
   firstReadyIndex,
   orderedItems,
   parseItemRef,
   readiness,
+  unsatisfiedDeps,
 } from "./deps.ts";
 
 /**
@@ -126,10 +128,31 @@ it("a dependency blocks its dependent until it is done", () => {
   assert.deepStrictEqual(entries[1]?.blockers, ["Work:1"]);
 });
 
-it("a done item is never blocked", () => {
-  const entries = readiness(listWith([[], ["Work:1"]], [0, 1]));
+it("a done item reports the dependencies that are still open", () => {
+  // The state a reopen creates: item 2 is done while its prerequisite is open.
+  // `ready` is false (the item is not actionable) and `blockers` names the open
+  // prerequisite, so the list can mark the row instead of showing a plain done
+  // row that hides the state.
+  const stale = readiness(listWith([[], ["Work:1"]], [1]));
+  assert.strictEqual(stale[1]?.ready, false);
+  assert.deepStrictEqual(stale[1]?.blockers, ["Work:1"]);
 
-  assert.deepStrictEqual(entries[1]?.blockers, []);
+  // A satisfied done item reports nothing.
+  const satisfied = readiness(listWith([[], ["Work:1"]], [0, 1]));
+  assert.strictEqual(satisfied[1]?.ready, false);
+  assert.deepStrictEqual(satisfied[1]?.blockers, []);
+});
+
+it("blockersOf reports nothing for a done item, so completion is not gated on it", () => {
+  // The completion gate reads `blockersOf`. A done item must not be refused a
+  // repeat done mark, so the gate view stays empty while the reading view
+  // (`unsatisfiedDeps`, which `readiness` uses) keeps the fact.
+  const list = listWith([[], ["Work:1"]], [1]);
+
+  assert.deepStrictEqual(blockersOf(list, 1), []);
+  assert.deepStrictEqual(unsatisfiedDeps(list, 1), ["Work:1"]);
+  assert.deepStrictEqual(unsatisfiedDeps(listWith([[], ["Work:1"]], []), 1), ["Work:1"]);
+  assert.deepStrictEqual(unsatisfiedDeps(listWith([[], ["Work:1"]], [0, 1]), 1), []);
 });
 
 it("readiness follows a chain", () => {

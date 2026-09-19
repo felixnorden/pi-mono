@@ -1021,7 +1021,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
     }),
   );
 
-  it.effect("a dependency added by a batch patch is validated against the whole batch", () =>
+  it.effect("a cycle closed by a later batch patch is refused", () =>
     Effect.gen(function* () {
       const store = yield* TrackerStore;
       yield* store.reset(emptyState());
@@ -1029,7 +1029,8 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const list = yield* store.createList("Work", { initialItems: ["a", "b"] });
       const before = yield* store.state;
 
-      // Both patches together would close a cycle, so neither is applied.
+      // Patches apply in order, so the first one is legal on its own and the
+      // second closes the cycle. The batch fails atomically.
       const result = yield* Effect.result(
         store.updateItems(list.id, [
           { itemId: "Work:1", deps: ["Work:2"] },
@@ -1185,27 +1186,74 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
     }),
   );
 
-  it.effect("the batch form refuses a batch that completes a blocked item", () =>
+  it.effect("a batch applies its patches in order, so one call can complete a chain", () =>
     Effect.gen(function* () {
       const store = yield* TrackerStore;
       yield* store.reset(emptyState());
 
       const list = yield* store.createList("Work", {
-        initialItems: ["a", { text: "b", deps: ["Work:1"] }, "c"],
+        initialItems: ["a", { text: "b", deps: ["Work:1"] }, { text: "c", deps: ["Work:2"] }],
+      });
+
+      // Each completion unblocks the next patch, exactly as three sequential
+      // calls would.
+      const updated = yield* store.updateItems(list.id, [
+        { itemId: "Work:1", done: true },
+        { itemId: "Work:2", done: true },
+        { itemId: "Work:3", done: true },
+      ]);
+
+      assert.deepStrictEqual(
+        updated.map((item) => item.done),
+        [true, true, true],
+      );
+    }),
+  );
+
+  it.effect("a batch still refuses a completion that is out of order", () =>
+    Effect.gen(function* () {
+      const store = yield* TrackerStore;
+      yield* store.reset(emptyState());
+
+      const list = yield* store.createList("Work", {
+        initialItems: ["a", { text: "b", deps: ["Work:1"] }],
       });
       const before = yield* store.state;
 
+      // The blocker is named, but later in the array. Order is what counts, so
+      // the whole batch fails atomically.
       const result = yield* Effect.result(
         store.updateItems(list.id, [
-          { itemId: "Work:3", done: true },
           { itemId: "Work:2", done: true },
+          { itemId: "Work:1", done: true },
         ]),
       );
 
       assert(Result.isFailure(result));
       assert.strictEqual(Option.getOrThrow(Result.getFailure(result)).reason, "ItemBlocked");
-      // The unblocked patch was not applied either.
       assert.deepStrictEqual(yield* store.state, before);
+    }),
+  );
+
+  it.effect("a batch keeps an earlier patch to the same item", () =>
+    Effect.gen(function* () {
+      const store = yield* TrackerStore;
+      yield* store.reset(emptyState());
+
+      const list = yield* store.createList("Work", {
+        initialItems: ["a", { text: "b", deps: ["Work:1"] }],
+      });
+
+      // Items are addressed by id and the patches are one per item in the
+      // documented form, but nothing stops a caller from sending two for the
+      // same item. Sequential calls would keep both changes.
+      const updated = yield* store.updateItems(list.id, [
+        { itemId: "Work:2", deps: [] },
+        { itemId: "Work:2", done: true },
+      ]);
+
+      assert.strictEqual(updated[0]?.done, true);
+      assert.deepStrictEqual(updated[0]?.deps, []);
     }),
   );
 

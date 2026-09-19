@@ -2,14 +2,19 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Text } from "@earendil-works/pi-tui";
 import { makeBorderedBox } from "@ftrdotdev/pi-tui";
 import { Effect, Layer, ManagedRuntime, Option, Result } from "effect";
-import { formatItemRef, type DependencyItem, type DependencyListView } from "./deps.ts";
+import {
+  formatItemRef,
+  parseItemRef,
+  type DependencyItem,
+  type DependencyListView,
+} from "./deps.ts";
 import { TodoItem, TodoList, TrackerState, emptyState, encodeState } from "./domain.ts";
 import { TrackerPersistence } from "./persistence.ts";
 import { TrackerError, TrackerStore, type ItemSpec, type UpdateItemPatch } from "./store.ts";
 import {
   TRACKER_TOOL_METADATA,
+  blockedDoneNote,
   doneMarkReminder,
-  reopenNote,
   validateTrackerCall,
   type TrackerToolAction,
   type TrackerToolDetails,
@@ -17,9 +22,9 @@ import {
 } from "./tool-metadata.ts";
 import {
   displayList,
-  blockedSuffix,
   makeTrackerOverlay,
   makeTrackerWidget,
+  readinessSuffix,
   type TrackerUiAction,
 } from "./ui.ts";
 
@@ -151,23 +156,46 @@ export default function (pi: ExtensionAPI): void {
   };
 
   /**
+   * Every state change runs through this chain, so the read and the session
+   * write of one change stay atomic and in order. Tool calls are sequential
+   * already (the tool declares `executionMode`), but a session event is not
+   * serialized with them: without this queue, a restore on `session_tree`
+   * could land between a change and its write and clobber it.
+   */
+  let mutationQueue: Promise<void> = Promise.resolve();
+
+  /** Serialize a state-changing step and keep the chain alive if it fails. */
+  const enqueue = <A>(step: () => Promise<A>): Promise<A> => {
+    const run = mutationQueue.then(step);
+    mutationQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+
+  /**
    * Persist the current store state and refresh the widget pane. Called after
    * every successful mutation, from both the tool and the /tracker UI, so the
-   * two entry points can never diverge.
+   * two entry points can never diverge. Returns the state it read, which the
+   * tool result is built from, so no surface reads a stale mirror.
    */
-  const applyMutation = async (ctx: ExtensionContext): Promise<void> => {
-    state = await runtime.runPromise(withStore((store) => store.state));
-    await runtime.runPromise(
-      withPersistence((p) => p.save(state)).pipe(
-        Effect.catch((err) =>
-          Effect.logWarning(
-            `tracker: persist failed: ${err instanceof Error ? err.message : String(err)}`,
+  const applyMutation = (ctx: ExtensionContext): Promise<TrackerState> =>
+    enqueue(async () => {
+      const next = await runtime.runPromise(withStore((store) => store.state));
+      state = next;
+      await runtime.runPromise(
+        withPersistence((p) => p.save(next)).pipe(
+          Effect.catch((err) =>
+            Effect.logWarning(
+              `tracker: persist failed: ${err instanceof Error ? err.message : String(err)}`,
+            ),
           ),
         ),
-      ),
-    );
-    refreshWidget(ctx);
-  };
+      );
+      refreshWidget(ctx);
+      return next;
+    });
 
   const refreshWidget = (ctx: ExtensionContext): void => {
     // The widget is the opt-in view of the *active* list: hidden when no list
@@ -192,31 +220,36 @@ export default function (pi: ExtensionAPI): void {
     });
   };
 
-  /** Rebuild state from the latest tracker custom entry on the current branch. */
-  const reconstructState = async (ctx: ExtensionContext): Promise<void> => {
-    let snapshot: unknown = null;
-    for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type === "custom" && entry.customType === CUSTOM_TYPE) {
-        snapshot = entry.data;
+  /**
+   * Rebuild state from the latest tracker custom entry on the current branch.
+   * Runs through the same queue as a mutation, so a restore cannot land in the
+   * middle of a change and clobber it.
+   */
+  const reconstructState = (ctx: ExtensionContext): Promise<void> =>
+    enqueue(async () => {
+      let snapshot: unknown = null;
+      for (const entry of ctx.sessionManager.getBranch()) {
+        if (entry.type === "custom" && entry.customType === CUSTOM_TYPE) {
+          snapshot = entry.data;
+        }
       }
-    }
 
-    if (snapshot === null) {
-      state = emptyState();
-    } else {
-      const result = await runtime.runPromise(
-        Effect.result(withPersistence((p) => p.restore(snapshot))),
-      );
-      if (Result.isFailure(result)) {
-        ctx.ui.notify("tracker: saved state could not be decoded — starting empty", "warning");
+      if (snapshot === null) {
         state = emptyState();
       } else {
-        state = Option.getOrThrow(Result.getSuccess(result));
+        const result = await runtime.runPromise(
+          Effect.result(withPersistence((p) => p.restore(snapshot))),
+        );
+        if (Result.isFailure(result)) {
+          ctx.ui.notify("tracker: saved state could not be decoded — starting empty", "warning");
+          state = emptyState();
+        } else {
+          state = Option.getOrThrow(Result.getSuccess(result));
+        }
       }
-    }
-    await runtime.runPromise(withStore((store) => store.reset(state)));
-    refreshWidget(ctx);
-  };
+      await runtime.runPromise(withStore((store) => store.reset(state)));
+      refreshWidget(ctx);
+    });
 
   // --- Session lifecycle -------------------------------------------------
 
@@ -245,14 +278,16 @@ export default function (pi: ExtensionAPI): void {
     list: DependencyListView<T>,
   ): {
     readonly items: readonly T[];
-    readonly blockedByIndex: readonly string[];
+    readonly suffixByIndex: readonly string[];
     readonly readyRefs: readonly string[];
     readonly hasDependencies: boolean;
   } => {
     const view = displayList(list);
     return {
       items: view.list.items,
-      blockedByIndex: view.ready.map((entry) => blockedSuffix(entry.blockers)),
+      suffixByIndex: view.ready.map((entry, index) =>
+        readinessSuffix(view.list.items[index]!.done, entry.blockers),
+      ),
       readyRefs: view.ready
         .filter((entry) => entry.ready)
         .map((entry) => formatItemRef(list.name, entry.id)),
@@ -277,7 +312,7 @@ export default function (pi: ExtensionAPI): void {
                 .map(
                   (item, index) =>
                     `  [${item.done ? "x" : " "}] #${list.name}:${item.id}: ${item.text}` +
-                    `${annotations.blockedByIndex[index]}`,
+                    `${annotations.suffixByIndex[index]}`,
                 )
                 .join("\n");
         const ready = annotations.hasDependencies ? `\n${readyLine(annotations.readyRefs)}` : "";
@@ -286,10 +321,37 @@ export default function (pi: ExtensionAPI): void {
       .join("\n");
   };
 
+  /**
+   * The dependency set an item carried before the call, or null when the
+   * reference does not resolve there.
+   */
+  const depsOf = (current: TrackerState, ref: string): readonly string[] | null => {
+    const parsed = parseItemRef(ref);
+    if (parsed === null) return null;
+    const list = current.lists.find((candidate) => candidate.name === parsed.name);
+    const item = list?.items.find((candidate) => candidate.id === parsed.id);
+    return item?.deps ?? null;
+  };
+
+  /**
+   * The `deps` change for one patch. `deps` replaces the whole set, so the
+   * result names the set before and after whenever they differ: a dependency
+   * that the call dropped must not disappear from the report.
+   */
+  const depsChange = (ref: string, next: readonly string[], before: TrackerState): string => {
+    const previous = depsOf(before, ref);
+    const after = next.length === 0 ? "deps cleared" : `deps: ${next.join(", ")}`;
+    if (previous === null || previous.join(",") === next.join(",")) return after;
+    return next.length === 0
+      ? `deps cleared (was ${previous.join(", ")})`
+      : `deps: ${previous.join(", ")} → ${next.join(", ")}`;
+  };
+
   const toolSuccess = (
     params: TrackerToolParams,
     value: unknown,
     current: TrackerState,
+    before: TrackerState,
   ): { content: Array<{ type: "text"; text: string }>; details: TrackerToolDetails } => {
     const details: TrackerToolDetails = { action: params.action };
     let text = "";
@@ -369,9 +431,7 @@ export default function (pi: ExtensionAPI): void {
           if (patch.done !== undefined) changes.push(item.done ? "completed" : "uncompleted");
           if (patch.text !== undefined) changes.push(`text: ${item.text}`);
           if (patch.deps !== undefined) {
-            changes.push(
-              patch.deps.length === 0 ? "deps cleared" : `deps: ${patch.deps.join(", ")}`,
-            );
+            changes.push(depsChange(patch.id, patch.deps, before));
           }
           return `${patch.id}${changes.length === 0 ? " (no change)" : ` (${changes.join(", ")})`}`;
         });
@@ -387,10 +447,11 @@ export default function (pi: ExtensionAPI): void {
         );
         const reminder = doneMarkReminder(patches, openRemaining);
         if (reminder !== null) text += `\n${reminder}`;
-        // Reopening an item can block work that is already done. The tracker
-        // does not cascade, so say it out loud instead of silently re-planning.
-        const reopen = reopenNote(patches, current);
-        if (reopen !== null) text += `\n${reopen}`;
+        // Reopening an item, or giving a done item an open dependency, can
+        // leave done work unsatisfied. The tracker does not cascade, so say it
+        // out loud instead of silently re-planning.
+        const blockedDone = blockedDoneNote(patches, current);
+        if (blockedDone !== null) text += `\n${blockedDone}`;
         break;
       }
       case "remove_item":
@@ -428,16 +489,24 @@ export default function (pi: ExtensionAPI): void {
         return toolError(action, err instanceof Error ? err.message : String(err));
       }
 
+      // The state as this call finds it, so a result can name what a change
+      // replaced. Only the actions that report a diff read it.
+      const before =
+        action === "update_item"
+          ? await runtime.runPromise(withStore((store) => store.state))
+          : state;
+
       const result = await runtime.runPromise(Effect.result(program));
       if (Result.isFailure(result)) {
         const failure = Option.getOrThrow(Result.getFailure(result));
         return toolError(action, failure.message);
       }
-
-      if (action !== "list") {
-        await applyMutation(ctx);
-      }
-      return toolSuccess(params, Option.getOrThrow(Result.getSuccess(result)), state);
+      const value = Option.getOrThrow(Result.getSuccess(result));
+      // `list` reports the store state it just read; a mutation reports the
+      // state it persisted. Both are authoritative, so no result depends on
+      // the widget mirror.
+      const current = action === "list" ? (value as TrackerState) : await applyMutation(ctx);
+      return toolSuccess(params, value, current, before);
     },
 
     renderCall(args, theme, _context) {
@@ -488,7 +557,7 @@ export default function (pi: ExtensionAPI): void {
           for (const [index, item] of display.entries()) {
             const check = item.done ? theme.fg("success", "✓") : theme.fg("dim", "○");
             const itemText = item.done ? theme.fg("dim", item.text) : item.text;
-            const blocked = theme.fg("dim", annotations.blockedByIndex[index] ?? "");
+            const blocked = theme.fg("dim", annotations.suffixByIndex[index] ?? "");
             parts.push(
               `  ${check} ${theme.fg("accent", `#${list.name}:${item.id}`)} ${itemText}${blocked}`,
             );

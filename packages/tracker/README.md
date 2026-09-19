@@ -74,7 +74,8 @@ list is active.
 An item can wait for other items. Pass `deps` on the item object when you
 create it, or through `update_item`, as a list of `listName:id` references to
 items in the same list. `deps` replaces the whole dependency set, so pass `[]`
-to clear it.
+to clear it. The result names the set before and after whenever the two
+differ, so a dependency the call dropped does not disappear silently.
 
 Dependencies must form a DAG. A dependency must exist, it must be in the same
 list, and it must not close a cycle. A call that would close one is rejected,
@@ -90,12 +91,22 @@ Two rules gate mutations:
 
 Reopening does not cascade. If you reopen a dependency whose dependents are
 already done, those dependents stay done and the result adds a note that they
-are now done but blocked.
+are now done but blocked. Giving a done item an open dependency produces the
+same state and the same note, because a dependency edit would otherwise leave
+the item silently unsatisfied. The `list` action marks such a row with
+`(waiting on #Work:1)`: the item is finished, so it is not called blocked.
 
 Readiness is derived on every read, never stored. The `list` action marks each
 blocked item, and it ends every list that has dependencies with a `Ready now`
-line. A dependency reference that does not resolve counts as a blocker, so a
-hand-edited snapshot cannot silently unblock work.
+line. A list without a `blocked by` marker has nothing blocked, so an edge-free
+list is not silent about readiness: it simply has nothing to report, and it
+keeps the output it had before dependencies existed. A dependency reference
+that does not resolve counts as a blocker, so a hand-edited snapshot cannot
+silently unblock work.
+
+An `update_item` batch applies its patches in order, so it behaves like the
+same calls in sequence: one call can complete a chain, and a completion that
+comes before its blocker in the array is refused.
 
 Items render in a stable dependency order: a dependency comes before the items
 that wait for it. A list with no dependencies keeps its stored order. The
@@ -161,12 +172,17 @@ Each item line starts with one marker:
 
 The marker field is two columns wide for every marker, so the text stays
 flush. The widget and the `list` action show the same derived order and the
-same readiness, so the two surfaces never disagree.
+same readiness, so the two surfaces never disagree. The marker is the widget's
+whole report of an item's state, so a done item whose dependency was reopened
+keeps the `✓` there; the `(waiting on ...)` annotation appears in the `list`
+output and the `/tracker` items pane, which have room for it.
 
 ## Persistence
 
 The state lives in the session file. Pi writes a snapshot after every change.
-The state restores on resume, fork, and tree navigation.
+The state restores on resume, fork, and tree navigation. Changes are applied
+and written in order, and each result reports the state its own call produced
+instead of a value another surface cached.
 
 A snapshot saved before item ids existed loads with each item id equal to its
 position, so references in that format still resolve.

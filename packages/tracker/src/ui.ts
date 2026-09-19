@@ -74,11 +74,29 @@ const itemMarker = (item: TodoItem, blocked: boolean, isCurrent: boolean, theme:
   return theme.fg(color, glyph + " ".repeat(Math.max(0, MARKER_WIDTH - visibleWidth(glyph))));
 };
 
+/** `#Work:1, #Work:2`, or `?` for a reference that does not resolve. */
+const blockerRefs = (blockers: readonly string[]): string =>
+  blockers.map((ref) => (ref === "?" ? "?" : `#${ref}`)).join(", ");
+
 /** The blocked annotation both the overlay and the `list` output share. */
 export const blockedSuffix = (blockers: readonly string[]): string =>
-  blockers.length === 0
-    ? ""
-    : ` (blocked by ${blockers.map((ref) => (ref === "?" ? "?" : `#${ref}`)).join(", ")})`;
+  blockers.length === 0 ? "" : ` (blocked by ${blockerRefs(blockers)})`;
+
+/**
+ * The annotation for a done item whose dependencies are not all done. A
+ * reopened prerequisite or a dependency edit can produce this state. The
+ * wording is not "blocked", because the item is finished: it names what is
+ * still open.
+ */
+export const waitingSuffix = (blockers: readonly string[]): string =>
+  blockers.length === 0 ? "" : ` (waiting on ${blockerRefs(blockers)})`;
+
+/**
+ * The annotation for one row: a done item waits, an open item is blocked. One
+ * helper, so every surface words the same state the same way.
+ */
+export const readinessSuffix = (done: boolean, blockers: readonly string[]): string =>
+  done ? waitingSuffix(blockers) : blockedSuffix(blockers);
 
 /** Emit visible indices in order, inserting one `⋮` row per gap. */
 const emitWidgetRows = (visible: ReadonlySet<number>): WidgetRow[] => {
@@ -379,7 +397,7 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
       for (const [index, item] of view.list.items.slice(0, MAX_ITEMS).entries()) {
         const selected = mode === "items" && index === itemIndex;
         const prefix = selected ? theme.fg("accent", "→ ") : "  ";
-        const blocker = blockedSuffix(view.ready[index]?.blockers ?? []);
+        const blocker = readinessSuffix(item.done, view.ready[index]?.blockers ?? []);
         const check = itemMarker(item, blocker !== "", false, theme);
         const text = item.done ? theme.fg("muted", theme.strikethrough(item.text)) : item.text;
         lines.push(truncateToWidth(`${prefix}${check}${text}${blocker}`, width));

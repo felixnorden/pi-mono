@@ -18,6 +18,8 @@ import type { TrackerToolDetails, TrackerToolParams } from "./tool-metadata.ts";
 interface Harness {
   readonly tool: ToolDefinition<any, unknown, any>;
   readonly ctx: ExtensionContext;
+  /** Every persisted snapshot, in the order the session received it. */
+  readonly appends: unknown[];
 }
 
 /**
@@ -27,20 +29,23 @@ interface Harness {
  */
 const makeHarness = (): Harness => {
   let registered: ToolDefinition<any, unknown, any> | undefined;
+  const appends: unknown[] = [];
   const api = {
     registerTool: (tool: ToolDefinition<any, unknown, any>) => {
       registered = tool;
     },
     registerCommand: () => {},
     on: () => {},
-    appendEntry: () => {},
+    appendEntry: (_type: string, data: unknown) => {
+      appends.push(data);
+    },
   } as unknown as ExtensionAPI;
   tracker(api);
   if (!registered) throw new Error("tracker did not register a tool");
   const ctx = {
     ui: { setWidget: () => {}, notify: () => {} },
   } as unknown as ExtensionContext;
-  return { tool: registered, ctx };
+  return { tool: registered, ctx, appends };
 };
 
 const run = (
@@ -261,6 +266,78 @@ describe("tracker tool bridge", () => {
     );
 
     expect(text).not.toContain("Note:");
+  });
+
+  it("marks a done item whose dependency is open again", async () => {
+    const harness = makeHarness();
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+    });
+    await run(harness, { action: "update_item", item_id: "Work:1", done: true });
+    await run(harness, { action: "update_item", item_id: "Work:2", done: true });
+    await run(harness, { action: "update_item", item_id: "Work:1", done: false });
+
+    const text = textOf(await run(harness, { action: "list" }));
+
+    // The row is done, so it is not "blocked": it says what it waits on.
+    expect(text).toContain("[x] #Work:2: b (waiting on #Work:1)");
+    expect(text).not.toContain("blocked by");
+    expect(text).toContain("Ready now: #Work:1");
+  });
+
+  it("notes a done item that a dependency edit left waiting", async () => {
+    const harness = makeHarness();
+    await run(harness, { action: "create_list", name: "Work", initial_items: ["a", "b"] });
+    await run(harness, { action: "update_item", item_id: "Work:2", done: true });
+
+    const text = textOf(
+      await run(harness, { action: "update_item", item_id: "Work:2", deps: ["Work:1"] }),
+    );
+
+    expect(text).toContain("Note: Work:2 is done but now waits on Work:1");
+  });
+
+  it("names the dependencies a deps edit removed", async () => {
+    const harness = makeHarness();
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: ["a", { text: "b", deps: ["Work:1"] }, "c"],
+    });
+
+    const cleared = await run(harness, { action: "update_item", item_id: "Work:2", deps: [] });
+    expect(textOf(cleared)).toContain("deps cleared (was Work:1)");
+
+    await run(harness, { action: "update_item", item_id: "Work:2", deps: ["Work:1"] });
+    const replaced = await run(harness, {
+      action: "update_item",
+      item_id: "Work:2",
+      deps: ["Work:3"],
+    });
+    expect(textOf(replaced)).toContain("deps: Work:1 → Work:3");
+  });
+
+  it("persists overlapping mutations in order", async () => {
+    const harness = makeHarness();
+    await run(harness, { action: "create_list", name: "Work", initial_items: ["a", "b"] });
+
+    // Two calls in flight at once. The last snapshot the session receives must
+    // be the state after both, or a later restore resurrects an older one.
+    await Promise.all([
+      run(harness, { action: "update_item", item_id: "Work:1", done: true }),
+      run(harness, { action: "update_item", item_id: "Work:2", done: true }),
+    ]);
+
+    const last = harness.appends.at(-1) as {
+      lists: Array<{ items: Array<{ done: boolean }> }>;
+    };
+    expect(last.lists[0]?.items.map((item) => item.done)).toEqual([true, true]);
+
+    const text = textOf(await run(harness, { action: "list" }));
+    expect(text).toContain("[x] #Work:1: a");
+    expect(text).toContain("[x] #Work:2: b");
   });
 
   it("shows items in dependency order, not stored order", async () => {

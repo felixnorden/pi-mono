@@ -7,7 +7,7 @@ import {
   TRACKER_TOOL_NAME,
   TrackerToolParams,
   doneMarkReminder,
-  reopenNote,
+  blockedDoneNote,
   validateTrackerCall,
 } from "./tool-metadata.ts";
 
@@ -269,7 +269,7 @@ describe("doneMarkReminder (terminal batch done-mark guard)", () => {
   });
 });
 
-describe("reopenNote (advisory reopen guard)", () => {
+describe("blockedDoneNote (advisory done-blocked guard)", () => {
   /** A one-list state: `deps[i]` are the refs of item i, ids 1..n. */
   const stateWith = (
     deps: ReadonlyArray<readonly string[]>,
@@ -298,33 +298,67 @@ describe("reopenNote (advisory reopen guard)", () => {
   it("notes the done dependents of a reopened item", () => {
     const state = stateWith([[], ["Work:1"]], [1]);
 
-    const note = reopenNote([{ id: "Work:1", done: false }], state);
+    const note = blockedDoneNote([{ id: "Work:1", done: false }], state);
 
     expect(note).not.toBeNull();
     expect(note).toContain("Work:2");
     expect(note).toContain("done but blocked");
   });
 
-  it("is silent when the patch is not a reopen", () => {
+  it("is silent when a patch leaves no done item unsatisfied", () => {
     const state = stateWith([[], ["Work:1"]], [1]);
 
-    expect(reopenNote([{ id: "Work:1", done: true }], state)).toBeNull();
-    expect(reopenNote([{ id: "Work:1", text: "new" }], state)).toBeNull();
-    expect(reopenNote([], state)).toBeNull();
+    expect(blockedDoneNote([{ id: "Work:1", done: true }], state)).toBeNull();
+    expect(blockedDoneNote([{ id: "Work:1", text: "new" }], state)).toBeNull();
+    expect(blockedDoneNote([], state)).toBeNull();
+  });
+
+  it("notes a done item that a dependency edit left waiting", () => {
+    const state = stateWith([[], ["Work:1"]], [1]);
+
+    const note = blockedDoneNote([{ id: "Work:2", deps: ["Work:1"] }], state);
+
+    expect(note).not.toBeNull();
+    expect(note).toContain("Work:2 is done but now waits on Work:1");
+  });
+
+  it("is silent when a dependency edit leaves a done item satisfied", () => {
+    const done = stateWith([[], ["Work:1"]], [0, 1]);
+    expect(blockedDoneNote([{ id: "Work:2", deps: ["Work:1"] }], done)).toBeNull();
+    // Clearing is never a problem, and an open item's annotation already
+    // reports its own blockers.
+    expect(blockedDoneNote([{ id: "Work:2", deps: [] }], done)).toBeNull();
+    expect(
+      blockedDoneNote([{ id: "Work:2", deps: ["Work:1"] }], stateWith([[], ["Work:1"]], [])),
+    ).toBeNull();
+  });
+
+  it("names an item once when a reopen and a dependency edit both hit it", () => {
+    const state = stateWith([[], ["Work:1"]], [1]);
+
+    const note = blockedDoneNote(
+      [
+        { id: "Work:1", done: false },
+        { id: "Work:2", deps: ["Work:1"] },
+      ],
+      state,
+    );
+
+    expect(note?.match(/Work:2/g) ?? []).toHaveLength(1);
   });
 
   it("is silent when no dependent is done", () => {
     const state = stateWith([[], ["Work:1"]], []);
 
-    expect(reopenNote([{ id: "Work:1", done: false }], state)).toBeNull();
+    expect(blockedDoneNote([{ id: "Work:1", done: false }], state)).toBeNull();
   });
 
   it("ignores a patch id that does not resolve", () => {
     const state = stateWith([[], ["Work:1"]], [1]);
 
-    expect(reopenNote([{ id: "?", done: false }], state)).toBeNull();
-    expect(reopenNote([{ id: "Other:1", done: false }], state)).toBeNull();
-    expect(reopenNote([{ id: "Work:9", done: false }], state)).toBeNull();
+    expect(blockedDoneNote([{ id: "?", done: false }], state)).toBeNull();
+    expect(blockedDoneNote([{ id: "Other:1", done: false }], state)).toBeNull();
+    expect(blockedDoneNote([{ id: "Work:9", done: false }], state)).toBeNull();
   });
 });
 
@@ -349,6 +383,12 @@ describe("tracker tool prompt metadata", () => {
     expect(TRACKER_TOOL_METADATA.description).toContain("blocked");
     expect(TRACKER_TOOL_METADATA.description).toContain("Ready now");
     expect(TRACKER_TOOL_METADATA.description).toContain("cannot be removed");
+    // A dependency-free list carries no blocked-by marker and no Ready now
+    // line, so the description has to say what that means.
+    expect(TRACKER_TOOL_METADATA.description).toContain("without a blocked-by marker");
+    // The done-row annotation and the batch order rule are stated too.
+    expect(TRACKER_TOOL_METADATA.description).toContain("waiting on");
+    expect(TRACKER_TOOL_METADATA.description).toContain("Patches apply in order");
   });
 
   it("runs tool calls sequentially to avoid mutation races", () => {

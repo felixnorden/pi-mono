@@ -153,29 +153,43 @@ export const cyclePath = (
 
 /**
  * Display refs of the dependencies of the item at `index` that are not done.
- * Empty for a done item, and for an item whose dependencies are all done.
+ * Independent of the item's own state, so a done item whose prerequisite was
+ * reopened still reports it.
  *
- * An unresolvable dependency counts as a blocker and is reported as `?`, so a
+ * An unresolvable dependency counts as unsatisfied and is reported as `?`, so a
  * hand-edited snapshot cannot silently unblock work.
  */
-export const blockersOf = (list: DependencyList, index: number): readonly string[] => {
+export const unsatisfiedDeps = (list: DependencyList, index: number): readonly string[] => {
   const item = list.items[index];
-  if (item === undefined || item.done) return [];
-  const blockers: string[] = [];
+  if (item === undefined) return [];
+  const unsatisfied: string[] = [];
   for (const ref of item.deps ?? []) {
     const dependency = resolveRef(list, ref);
-    if (dependency === undefined) blockers.push("?");
-    else if (!list.items[dependency]!.done) blockers.push(ref);
+    if (dependency === undefined) unsatisfied.push("?");
+    else if (!list.items[dependency]!.done) unsatisfied.push(ref);
   }
-  return blockers;
+  return unsatisfied;
 };
+
+/**
+ * What stops the item at `index` from being completed. Empty for a done item:
+ * completion is gated only on open work, so re-marking a done item done is
+ * never refused. The reading surfaces use `unsatisfiedDeps` when they need the
+ * fact for a done row.
+ */
+export const blockersOf = (list: DependencyList, index: number): readonly string[] =>
+  list.items[index]?.done === true ? [] : unsatisfiedDeps(list, index);
 
 /** Derived readiness of one item. `ready` means "open and unblocked". */
 export interface ItemReadiness {
   readonly index: number;
   readonly id: number;
   readonly ready: boolean;
-  /** The not-done dependencies, as display refs, or `?` when unresolvable. */
+  /**
+   * The not-done dependencies, as display refs, or `?` when unresolvable.
+   * Reported for a done item too, so a row whose prerequisite reopened can be
+   * marked; `ready` is false whenever the item is done.
+   */
   readonly blockers: readonly string[];
 }
 
@@ -185,7 +199,7 @@ export interface ItemReadiness {
  */
 export const readiness = (list: DependencyList): readonly ItemReadiness[] =>
   list.items.map((item, index) => {
-    const blockers = blockersOf(list, index);
+    const blockers = unsatisfiedDeps(list, index);
     return { index, id: item.id ?? 0, ready: !item.done && blockers.length === 0, blockers };
   });
 

@@ -630,40 +630,45 @@ export class TrackerStore extends Context.Service<
               }
               targets.push(index);
             }
-            // Later patches win for duplicate ids.
-            const byIndex = new Map<number, UpdateItemPatch>();
-            patches.forEach((patch, index) => byIndex.set(targets[index]!, patch));
-            // Every completion in the batch is gated on the list as it stands,
-            // so one call cannot complete an item that is still blocked. Mark
-            // the blocker done first, then complete the dependent.
+            // Later patches win for duplicate ids, which falls out of
+            // applying them in order below.
+            //
+            // The patches are applied in order, each validated against the list
+            // the earlier patches produced. A batch therefore behaves like the
+            // same calls in sequence: one call can complete a chain, and a
+            // completion that is out of order is still refused.
+            let items = [...list.items];
             for (const [index, patch] of patches.entries()) {
-              if (patch.done !== true) continue;
-              const blocked = blockedError(list, targets[index]!);
-              if (blocked !== null) return [Result.fail(blocked), s];
-            }
-            const nextItems = list.items.map((item, index) => {
-              const patch = byIndex.get(index);
-              if (!patch) return item;
-              return new TodoItem({
-                id: item.id,
-                text: patch.text === undefined ? item.text : patch.text.trim(),
-                done: patch.done ?? item.done,
-                deps: patch.deps === undefined ? item.deps : [...patch.deps],
-              });
-            });
-            const nextList = withItems(list, nextItems);
-            // Validate every dependency change against the batch's result, so
-            // two patches that would only close a cycle together are refused.
-            for (const [index, patch] of patches.entries()) {
-              if (patch.deps === undefined) continue;
               const target = targets[index]!;
-              const error = firstDependencyError(nextList, target, nextItems[target]!.deps);
-              if (error !== null) return [Result.fail(error), s];
+              if (patch.done === true) {
+                const blocked = blockedError(withItems(list, items), target);
+                if (blocked !== null) return [Result.fail(blocked), s];
+              }
+              const current = items[target]!;
+              items = items.map((item, at) =>
+                at === target
+                  ? new TodoItem({
+                      id: current.id,
+                      text: patch.text === undefined ? current.text : patch.text.trim(),
+                      done: patch.done ?? current.done,
+                      deps: patch.deps === undefined ? current.deps : [...patch.deps],
+                    })
+                  : item,
+              );
+              // Validate this patch's dependency set against the list it
+              // produces, so a cycle is refused at the patch that closes it.
+              if (patch.deps !== undefined) {
+                const worked = withItems(list, items);
+                const error = firstDependencyError(worked, target, items[target]!.deps);
+                if (error !== null) return [Result.fail(error), s];
+              }
             }
+            const nextList = withItems(list, items);
             const lists = s.lists.map((l) => (l.id === listId ? nextList : l));
             return [
-              // Results in patch order so the caller can map them 1:1.
-              Result.succeed(targets.map((index) => nextItems[index]!)),
+              // Results in patch order so the caller can map them 1:1. A patch
+              // that a later one overwrote reports the later state.
+              Result.succeed(targets.map((index) => items[index]!)),
               new TrackerState({ ...s, lists }),
             ];
           },

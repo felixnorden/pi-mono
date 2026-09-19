@@ -452,3 +452,16 @@ it("annotates a blocked item in the overlay items pane", () => {
   assert.match(text, /item 2/);
   assert.match(text, /\(blocked by #Work:1\)/);
 });
+
+it("annotates a done item whose dependency is open again in the overlay", () => {
+  // Item 2 is done while item 1, which it waits for, is open: the state a
+  // reopen or a dependency edit produces. The row is not "blocked", so it
+  // says what it waits on.
+  const h = makeOverlay(stateWith(listWithDeps([[], ["Work:1"]], [1])));
+
+  const text = h.overlay.render(80).join("\n");
+
+  assert.match(text, /item 2/);
+  assert.match(text, /\(waiting on #Work:1\)/);
+  notContain(text, "blocked by");
+});
