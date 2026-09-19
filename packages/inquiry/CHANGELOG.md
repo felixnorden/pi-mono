@@ -1,5 +1,11 @@
 # @ftrdotdev/pi-inquiry
 
+## 0.5.0
+
+### Patch Changes
+
+- @ftrdotdev/pi-tui@0.5.0
+
 ## 0.4.0
 
 ### Patch Changes
