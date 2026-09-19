@@ -59,9 +59,9 @@ export const displayList = <T extends DependencyItem>(
 
 /**
  * A marker field of a fixed width: `✓` for a done item, `●` for the current
- * (first ready) item, `⏳` for a blocked one, `○` for any other open item.
- * `visibleWidth` supplies the padding, because `⏳` is two columns wide where
- * the others are one.
+ * (first ready) item, `⊘` for a blocked one, `○` for any other open item.
+ * `visibleWidth` supplies the padding, so the field stays flush even if a
+ * marker is ever wider than one column.
  */
 const itemMarker = (item: TodoItem, blocked: boolean, isCurrent: boolean, theme: Theme): string => {
   const [glyph, color] = item.done
@@ -69,7 +69,7 @@ const itemMarker = (item: TodoItem, blocked: boolean, isCurrent: boolean, theme:
     : isCurrent
       ? (["●", "accent"] as const)
       : blocked
-        ? (["⏳", "dim"] as const)
+        ? (["⊘", "dim"] as const)
         : (["○", "dim"] as const);
   return theme.fg(color, glyph + " ".repeat(Math.max(0, MARKER_WIDTH - visibleWidth(glyph))));
 };

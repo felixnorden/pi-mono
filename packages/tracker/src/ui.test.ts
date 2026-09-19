@@ -362,18 +362,18 @@ it("marks the first ready item as current, not the first open item", () => {
   ).join("\n");
 
   assert.match(text, /● item 3/);
-  assert.match(text, /⏳item 2/);
+  assert.match(text, /⊘ item 2/);
   assert.match(text, /✓ item 1/);
 });
 
-it("renders a blocked item with the waiting glyph", () => {
+it("renders a blocked item with the blocked glyph", () => {
   const text = renderTrackerWidget(
     stateWith(listWithDeps([[], ["Work:1"]])),
     identityTheme,
     40,
   ).join("\n");
 
-  assert.match(text, /⏳item 2/);
+  assert.match(text, /⊘ item 2/);
 });
 
 it("starts every item text at the same column, whatever the marker", () => {
@@ -392,8 +392,9 @@ it("starts every item text at the same column, whatever the marker", () => {
   assert.match(text, /✓ item 1/);
   assert.match(text, /● item 3/);
   assert.match(text, /○ item 4/);
-  assert.match(text, /⏳item 2/);
-  // A `⏳` marker is two columns wide, like `✓ `, so the text column is flush.
+  assert.match(text, /⊘ item 2/);
+  // Every marker is padded to the same two columns, so the text column is
+  // flush even for the blocked rows.
   assert.strictEqual(new Set(columns).size, 1);
 });
 
@@ -414,7 +415,7 @@ it("a dependency-free list renders exactly as before", () => {
   assert.match(text, /✓ item 1/);
   assert.match(text, /● item 2/);
   assert.match(text, /○ item 3/);
-  notContain(text, "⏳");
+  notContain(text, "⊘");
 });
 
 it("planner anchors on the first ready item, not the first open item", () => {

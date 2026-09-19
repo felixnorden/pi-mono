@@ -20,7 +20,7 @@ Add item dependencies as a DAG, with readiness gates and a derived display order
 - The `list` action marks blocked items and ends every list that has
   dependencies with a `Ready now` line.
 - The widget marks the current (first ready) item with `●`, other ready items
-  with `○`, blocked items with `⏳`, and done items with `✓`.
+  with `○`, blocked items with `⊘`, and done items with `✓`.
 - The widget, the `list` action, and the `/tracker` items pane render items in
   a stable dependency order. A list with no dependencies keeps its stored
   order, and its output is byte-identical to before.

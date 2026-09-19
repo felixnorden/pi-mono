@@ -26,15 +26,15 @@ The snapshot does not enter the LLM context.
 Ask Pi to manage your todolists. Pi calls the `tracker` tool. The tool
 supports these actions:
 
-| Action        | Purpose                                   | Parameters                                              |
-| ------------- | ----------------------------------------- | ------------------------------------------------------- |
-| `list`        | Show all lists and items                  | —                                                       |
-| `create_list` | Create a list (becomes active by default) | `name`, `initial_items?`, `activate?`                   |
-| `delete_list` | Delete a list                             | `list_id`                                               |
-| `set_active`  | Set or clear the active list              | `list_id` (optional)                                    |
-| `add_item`    | Add one or more items                     | `list_id`, `text` (string, item object, or array)       |
+| Action        | Purpose                                   | Parameters                                                  |
+| ------------- | ----------------------------------------- | ----------------------------------------------------------- |
+| `list`        | Show all lists and items                  | —                                                           |
+| `create_list` | Create a list (becomes active by default) | `name`, `initial_items?`, `activate?`                       |
+| `delete_list` | Delete a list                             | `list_id`                                                   |
+| `set_active`  | Set or clear the active list              | `list_id` (optional)                                        |
+| `add_item`    | Add one or more items                     | `list_id`, `text` (string, item object, or array)           |
 | `update_item` | Update one or more items                  | `item_id` + `text?`/`done?`/`deps?`, or `list_id` + `items` |
-| `remove_item` | Remove an item                            | `item_id`                                               |
+| `remove_item` | Remove an item                            | `item_id`                                                   |
 
 `create_list` accepts `initial_items` to create the list with its first
 items in one call, so the list and its items are created atomically. Each
@@ -152,12 +152,12 @@ total counts.
 
 Each item line starts with one marker:
 
-| Marker | Meaning                                                                |
-| ------ | ---------------------------------------------------------------------- |
-| `✓`    | Done.                                                                  |
-| `●`    | The current item: the first ready item, in the accent color.           |
-| `○`    | Another open item that is ready.                                       |
-| `⏳`   | An open item that waits for an unfinished dependency.                  |
+| Marker | Meaning                                                      |
+| ------ | ------------------------------------------------------------ |
+| `✓`    | Done.                                                        |
+| `●`    | The current item: the first ready item, in the accent color. |
+| `○`    | Another open item that is ready.                             |
+| `⊘`    | An open item that waits for an unfinished dependency.        |
 
 The marker field is two columns wide for every marker, so the text stays
 flush. The widget and the `list` action show the same derived order and the
@@ -212,12 +212,12 @@ Registration lives in `package.json` under the `pi` field:
 
 ## Project structure
 
-| File                 | Purpose                                                      |
-| -------------------- | ------------------------------------------------------------ |
-| `src/domain.ts`      | Schema domain model (`TodoItem`, `TodoList`, `TrackerState`) |
+| File                 | Purpose                                                          |
+| -------------------- | ---------------------------------------------------------------- |
+| `src/domain.ts`      | Schema domain model (`TodoItem`, `TodoList`, `TrackerState`)     |
 | `src/deps.ts`        | Dependency references, cycle detection, readiness, derived order |
-| `src/store.ts`       | `TrackerStore` service with `Effect.Ref` state               |
-| `src/persistence.ts` | `TrackerPersistence` service (save and restore snapshots)    |
-| `src/ui.ts`          | Widget pane and interactive `/tracker` component             |
-| `src/index.ts`       | Pi bridge: tool, command, session hooks, widget refresh      |
-| `src/*.test.ts`      | Test suites                                                  |
+| `src/store.ts`       | `TrackerStore` service with `Effect.Ref` state                   |
+| `src/persistence.ts` | `TrackerPersistence` service (save and restore snapshots)        |
+| `src/ui.ts`          | Widget pane and interactive `/tracker` component                 |
+| `src/index.ts`       | Pi bridge: tool, command, session hooks, widget refresh          |
+| `src/*.test.ts`      | Test suites                                                      |
