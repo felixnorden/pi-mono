@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import type {
   ExtensionAPI,
-  ExtensionContext,
+  ExtensionToolContext,
   Theme,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -548,7 +548,7 @@ it("the preview tool registers with the preview name and a path parameter", () =
 
 it("tool execute returns the exact confirmation stub and the display record for a readable file", async () => {
   const tool = registerTool(makeMemFs({ "/cwd/src/file.md": "# Title" }));
-  const ctx = { cwd: "/cwd" } as ExtensionContext;
+  const ctx = { cwd: "/cwd" } as ExtensionToolContext;
   const result = await tool.execute("call-1", { path: "src/file.md" }, undefined, undefined, ctx);
   assert.strictEqual(
     (result.content[0] as { type: "text"; text: string }).text,
@@ -565,7 +565,7 @@ it("tool execute returns the exact confirmation stub and the display record for 
 
 it("tool execute keeps the model stub for images and returns an image detail record", async () => {
   const tool = registerTool(makeMemFs({}, { "/cwd/pic.png": PNG_BYTES }));
-  const ctx = { cwd: "/cwd" } as ExtensionContext;
+  const ctx = { cwd: "/cwd" } as ExtensionToolContext;
   const result = await tool.execute("call-1", { path: "pic.png" }, undefined, undefined, ctx);
   assert.strictEqual(
     (result.content[0] as { type: "text"; text: string }).text,
@@ -586,7 +586,7 @@ it("tool execute keeps the model stub for images and returns an image detail rec
 
 it("tool execute returns only the text stub for text files (no image block)", async () => {
   const tool = registerTool(makeMemFs({ "/cwd/file.md": "# Title" }));
-  const ctx = { cwd: "/cwd" } as ExtensionContext;
+  const ctx = { cwd: "/cwd" } as ExtensionToolContext;
   const result = await tool.execute("call-1", { path: "file.md" }, undefined, undefined, ctx);
   assert.strictEqual(result.content.length, 1);
   assert.strictEqual((result.content[0] as { type: string }).type, "text");
@@ -594,14 +594,14 @@ it("tool execute returns only the text stub for text files (no image block)", as
 
 it("tool execute resolves relative paths against the tool context cwd", async () => {
   const tool = registerTool(makeMemFs({ "/cwd/src/file.md": "# Title" }));
-  const ctx = { cwd: "/cwd" } as ExtensionContext;
+  const ctx = { cwd: "/cwd" } as ExtensionToolContext;
   const result = await tool.execute("call-1", { path: "src/file.md" }, undefined, undefined, ctx);
   assert.strictEqual(result.details.path, "/cwd/src/file.md");
 });
 
 it("tool execute returns the exact failure stub and error details when the read fails", async () => {
   const tool = registerTool();
-  const ctx = { cwd: "/cwd" } as ExtensionContext;
+  const ctx = { cwd: "/cwd" } as ExtensionToolContext;
   const result = await tool.execute("call-1", { path: "missing.md" }, undefined, undefined, ctx);
   const expectedMessage = PlatformError.systemError({
     _tag: "NotFound",
@@ -626,7 +626,7 @@ it("tool execute returns the exact failure stub and error details when the read 
 
 it("tool execute reports the failure stub when the reference is unresolvable", async () => {
   const tool = registerTool();
-  const ctx = { cwd: "/cwd" } as ExtensionContext;
+  const ctx = { cwd: "/cwd" } as ExtensionToolContext;
   const result = await tool.execute(
     "call-1",
     { path: "file://host/path" },

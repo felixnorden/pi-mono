@@ -135,9 +135,19 @@ const EXPECTED: Record<string, string[]> = {
 };
 
 // The header prints the installed pi version. Rewrite the frozen tables so a pi
-// dependency bump does not break pixel parity.
+// dependency bump does not break pixel parity. A version of a different length
+// changes the top-border padding, so restore each boxed row to its frozen width
+// by adding or removing trailing dashes before the closing corner.
+const FROZEN_VERSION = "v0.84.4";
 for (const [width, lines] of Object.entries(EXPECTED)) {
-  EXPECTED[width] = lines.map((line) => line.replaceAll("v0.84.4", `v${VERSION}`));
+  EXPECTED[width] = lines.map((line) => {
+    if (!line.includes(FROZEN_VERSION)) return line;
+    let next = line.replaceAll(FROZEN_VERSION, `v${VERSION}`);
+    if (!next.endsWith("\u256e")) return next;
+    while (next.length < line.length) next = `${next.slice(0, -1)}\u2500\u256e`;
+    while (next.length > line.length) next = `${next.slice(0, -2)}\u256e`;
+    return next;
+  });
 }
 
 // Render one width through the service layer entry under the fixed seed.

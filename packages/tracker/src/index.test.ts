@@ -8,7 +8,7 @@
 import type {
   AgentToolResult,
   ExtensionAPI,
-  ExtensionContext,
+  ExtensionToolContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
@@ -17,7 +17,7 @@ import type { TrackerToolDetails, TrackerToolParams } from "./tool-metadata.ts";
 
 interface Harness {
   readonly tool: ToolDefinition<any, unknown, any>;
-  readonly ctx: ExtensionContext;
+  readonly ctx: ExtensionToolContext;
   /** Every persisted snapshot, in the order the session received it. */
   readonly appends: unknown[];
 }
@@ -44,7 +44,7 @@ const makeHarness = (): Harness => {
   if (!registered) throw new Error("tracker did not register a tool");
   const ctx = {
     ui: { setWidget: () => {}, notify: () => {} },
-  } as unknown as ExtensionContext;
+  } as unknown as ExtensionToolContext;
   return { tool: registered, ctx, appends };
 };
 

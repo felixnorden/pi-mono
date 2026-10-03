@@ -35,7 +35,6 @@
     "access": "public"
   },
   "scripts": {
-    "prepare": "bun effect-tsgo patch --typescript --oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint && oxlint --type-aware -A all -D typescript/unbound-method",

@@ -65,12 +65,12 @@ export type QuestionListParams = typeof QuestionListParamsSchema.Type;
 
 /**
  * JSON Schema form of the wire params, passed to pi as the tool's
- * `parameters`. `additionalProperties: true` mirrors the legacy typebox
+ * `parameters`. `onExcessProperty: "ignore"` mirrors the legacy typebox
  * contract (unknown keys such as the old `value` field are tolerated) and
  * matches Effect's own struct decoding, which ignores unknown keys.
  */
 export const QuestionListParamsJsonSchema = Schema.toJsonSchemaDocument(QuestionListParamsSchema, {
-  additionalProperties: true,
+  onExcessProperty: "ignore",
 }).schema;
 
 /** Decode raw tool arguments into validated params. Throws `Schema.SchemaError` on invalid input. */

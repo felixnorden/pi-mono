@@ -1,5 +1,6 @@
+// @effect-diagnostics unstableApiUsage:off
 import { Context, Duration, Effect, Layer, Schema, Stream, PlatformError } from "effect";
-import * as CP from "effect/unstable/process";
+import * as CP from "effect/process";
 
 /** Fixed per-invocation time cap applied to every git command (2 seconds). */
 export const GIT_EXECUTION_CAP: Duration.Duration = Duration.seconds(2);

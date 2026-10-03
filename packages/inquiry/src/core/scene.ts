@@ -373,7 +373,7 @@ export const buildScene = (state: MachineState, width: number): Scene => {
  * pre-wrapped, so this should never truncate once widths are accurate.
  */
 export const clampLine = (content: SceneLine, width: number): SceneLine => {
-  const out: SceneLine = [];
+  const out: Span[] = [];
   let used = 0;
   for (const s of content) {
     const w = visibleWidth(s.text);
