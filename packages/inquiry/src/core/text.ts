@@ -42,8 +42,7 @@ const graphemeWidth = (segment: string): number => {
 };
 
 /** True when `segment` is an emoji as pi-tui defines it (`➡️`, `⚠️`, `👨‍👩‍👧`). */
-const isEmoji = (segment: string): boolean =>
-  couldBeEmoji(segment) && rgiEmojiRegex.test(segment);
+const isEmoji = (segment: string): boolean => couldBeEmoji(segment) && rgiEmojiRegex.test(segment);
 
 /** Width in terminal columns of a single character (code point). */
 export const charWidth = (ch: string): number => {

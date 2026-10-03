@@ -19,6 +19,13 @@ import {
   pickSlashCommandTips,
 } from "../utils.ts";
 
+/** Clear the visible screen and home the cursor. */
+function clearVisibleScreen(): void {
+  if (process.stdout.isTTY) {
+    process.stdout.write("\x1b[2J\x1b[H");
+  }
+}
+
 /**
  * Pi header widget (`setHeader`), framed in the house rounded box.
  *
@@ -138,7 +145,11 @@ export class HeaderRenderService extends Context.Service<
  */
 export function installHeader(pi: ExtensionAPI, ctx: ExtensionContext): () => void {
   let header: DisposableComponent | undefined;
-  ctx.ui.setHeader(() => {
+  ctx.ui.setHeader((tui) => {
+    // Regular mode keeps the terminal's scrollback, so clear the previous
+    // screen on mount. Fullscreen owns the alternate screen, which is already
+    // fresh; clearing there only flickers.
+    if (tui.mode === "regular") clearVisibleScreen();
     // Re-mount: dispose the previous instance before building the new one.
     if (header?.dispose) header.dispose();
     // Build the service layer and run construction synchronously at mount.

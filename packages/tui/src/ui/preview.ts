@@ -431,13 +431,13 @@ function makePreviewComponent(data: PreviewData, expanded: boolean, theme: Theme
       ? `${data.path} (${data.dimensions.widthPx}x${data.dimensions.heightPx})`
       : data.path;
     return makeBorderedBox(new Text(theme.fg("accent", caption), 0, 0), theme, {
-      label: theme.fg("accent", theme.bold("preview")),
-      bg: (s) => theme.bg("customMessageBg", s),
+      label: theme.style("preview", { fg: "accent", bold: true }),
+      bg: "customMessageBg",
     });
   }
   return makeBorderedBox(renderBodyComponent(data, expanded, theme), theme, {
-    label: theme.fg("accent", theme.bold("preview")),
-    bg: (s) => theme.bg("customMessageBg", s),
+    label: theme.style("preview", { fg: "accent", bold: true }),
+    bg: "customMessageBg",
   });
 }
 
@@ -527,8 +527,8 @@ export function registerPreview(
 
     renderCall(args, theme) {
       return makeBorderedBox(new Text(args.path, 0, 0), theme, {
-        label: theme.fg("toolTitle", theme.bold("preview")),
-        bg: (s) => theme.bg("customMessageBg", s),
+        label: theme.style("preview", { fg: "toolTitle", bold: true }),
+        bg: "customMessageBg",
       });
     },
 
@@ -538,9 +538,9 @@ export function registerPreview(
       if (!data) return context.lastComponent ?? new Text("", 0, 0);
       if (data.error) {
         return makeBorderedBox(new Text(`preview failed: ${data.error}`, 0, 0), theme, {
-          label: theme.fg("warning", theme.bold("preview")),
+          label: theme.style("preview", { fg: "warning", bold: true }),
           color: "warning",
-          bg: (s) => theme.bg("customMessageBg", s),
+          bg: "customMessageBg",
         });
       }
       return makePreviewComponent(data, options.expanded, theme);
@@ -556,9 +556,9 @@ export function registerPreview(
       const noData = new Container();
       noData.addChild(new Text(theme.fg("warning", "[preview] no data"), 0, 0));
       return makeBorderedBox(noData, theme, {
-        label: theme.fg("warning", theme.bold("preview")),
+        label: theme.style("preview", { fg: "warning", bold: true }),
         color: "warning",
-        bg: (s) => theme.bg("customMessageBg", s),
+        bg: "customMessageBg",
       });
     }
     // Image entries mirror pi's native tool-image layout exactly: the bordered
@@ -585,8 +585,8 @@ export function registerPreview(
     body.addChild(new Text(theme.fg("accent", data.path), 0, 0));
     body.addChild(renderBodyComponent(data, expanded, theme));
     return makeBorderedBox(body, theme, {
-      label: theme.fg("accent", theme.bold("preview")),
-      bg: (s) => theme.bg("customMessageBg", s),
+      label: theme.style("preview", { fg: "accent", bold: true }),
+      bg: "customMessageBg",
     });
   });
 

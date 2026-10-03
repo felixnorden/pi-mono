@@ -138,7 +138,7 @@ export default function question(pi: ExtensionAPI) {
       if (qs.length === 1) {
         const q = qs[0];
         let text =
-          theme.fg("toolTitle", theme.bold("question ")) +
+          theme.style("question ", { fg: "toolTitle", bold: true }) +
           theme.fg("muted", typeof q?.prompt === "string" ? q.prompt : "");
         const opts = Array.isArray(q?.options) ? q.options : [];
         if (opts.length > 0) {
@@ -150,7 +150,7 @@ export default function question(pi: ExtensionAPI) {
       }
       const labels = qs.map(questionLabel).join(", ");
       let text =
-        theme.fg("toolTitle", theme.bold("question ")) +
+        theme.style("question ", { fg: "toolTitle", bold: true }) +
         theme.fg("muted", `${qs.length} questions`);
       if (labels) {
         text += theme.fg("dim", ` (${labels})`);

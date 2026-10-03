@@ -339,3 +339,37 @@ it("stays glyph-free when vim is off", () => {
   assert.ok(!topBorderOf(editor).includes("V"));
   assert.ok(!topBorderOf(editor).includes("I"));
 });
+
+// ---------------------------------------------------------------------------
+// Embedded status indicator (pi 1.0 routes working/retry/compaction here)
+// ---------------------------------------------------------------------------
+
+/** Fake pi status indicator: fixed full and spinner strings, no animation. */
+const fakeStatus = (full: string, spinner: string) =>
+  ({
+    renderInBorder: () => full,
+    renderSpinnerInBorder: () => spinner,
+    dispose: () => {},
+  }) as unknown as Parameters<CustomEditor["setWorkingStatusIndicator"]>[0];
+
+it("renders an embedded status indicator in the top border", () => {
+  const editor = makeEditor();
+  editor.setWorkingStatusIndicator(fakeStatus("⠋ Working", "⠋"));
+  assert.ok(topBorderOf(editor).includes("Working"));
+});
+
+it("keeps the status spinner when the message does not fit the border", () => {
+  const editor = makeEditor();
+  editor.setWorkingStatusIndicator(fakeStatus("⠋ Working on a long task", "⠋"));
+  const top = editor.render(14)[0] ?? "";
+  assert.ok(top.includes("⠋"));
+  assert.ok(!top.includes("long task"));
+});
+
+it("returns to the plain border after the status indicator clears", () => {
+  const editor = makeEditor();
+  editor.setWorkingStatusIndicator(fakeStatus("⠋ Working", "⠋"));
+  assert.ok(topBorderOf(editor).includes("Working"));
+  editor.setWorkingStatusIndicator(undefined);
+  assert.ok(!topBorderOf(editor).includes("Working"));
+});

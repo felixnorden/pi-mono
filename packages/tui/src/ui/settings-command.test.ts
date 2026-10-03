@@ -11,6 +11,7 @@ const theme = {
   fg: (_color: string, text: string) => text,
   bg: (_color: string, text: string) => text,
   bold: (text: string) => text,
+  style: (text: string) => text,
 } as unknown as Theme;
 
 const RENDER_WIDTH = 120;
@@ -72,7 +73,10 @@ it("starts with the first item of the features tab selected", () => {
 it("renders the Vim mode item on the features tab showing Off by default", () => {
   const { ui } = makeUi();
   const lines = rendered(ui);
-  assert.strictEqual(lines.some((line) => line.includes("Vim mode") && line.includes("Off")), true);
+  assert.strictEqual(
+    lines.some((line) => line.includes("Vim mode") && line.includes("Off")),
+    true,
+  );
 });
 
 it("Space toggles vim on and reports the change", () => {
@@ -82,7 +86,10 @@ it("Space toggles vim on and reports the change", () => {
   assert.strictEqual(changes.length, 1);
   assert.strictEqual(changes[0]!.vim, true);
   assert.strictEqual(changes[0]!.enabled, true); // other fields untouched
-  assert.strictEqual(rendered(ui).some((line) => line.includes("Vim mode") && line.includes("On")), true);
+  assert.strictEqual(
+    rendered(ui).some((line) => line.includes("Vim mode") && line.includes("On")),
+    true,
+  );
 });
 
 it("j moves the selection down and wraps to the first item at the end", () => {

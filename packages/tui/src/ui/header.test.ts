@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { vi } from "vitest";
 import { Effect, Random } from "effect";
 import { VERSION, type Theme } from "@earendil-works/pi-coding-agent";
 import { HeaderRenderService, installHeader } from "./header.ts";
@@ -12,6 +13,7 @@ const plainTheme = {
   fg: (_color: string, text: string) => text,
   bg: (_color: string, text: string) => text,
   bold: (text: string) => `*${text}*`,
+  style: (text: string) => text,
 } as unknown as Theme;
 
 const pi = {
@@ -243,13 +245,13 @@ it("installHeader registers a closure component at mount and unregisters on clea
   const cleanup = installHeader(pi, mountCtx);
 
   assert.strictEqual(typeof captured, "function");
-  const componentA = captured!(undefined, plainTheme) as {
+  const componentA = captured!({ mode: "fullscreen" }, plainTheme) as {
     render: (width: number) => string[];
   };
   const linesA = componentA.render(80);
 
   // Re-mount swaps the slot to a fresh component; both render the header.
-  const componentB = captured!(undefined, plainTheme) as {
+  const componentB = captured!({ mode: "fullscreen" }, plainTheme) as {
     render: (width: number) => string[];
   };
   assert.notStrictEqual(componentA, componentB);
@@ -273,4 +275,32 @@ it("installHeader registers a closure component at mount and unregisters on clea
   cleanup();
   assert.strictEqual(unregistered, true);
   assert.strictEqual(captured, undefined);
+});
+
+it("clears the screen on mount only in regular mode", () => {
+  const originalIsTTY = process.stdout.isTTY;
+  Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+  const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  try {
+    let captured: ((tui: unknown, theme: unknown) => unknown) | undefined;
+    const mountCtx = {
+      model: { provider: "anthropic", id: "claude-sonnet-4" },
+      cwd: "/projects/pi-mono/packages/tui",
+      ui: {
+        theme: plainTheme,
+        setHeader(factory: ((tui: unknown, theme: unknown) => unknown) | undefined) {
+          captured = factory;
+        },
+      },
+    } as never;
+
+    installHeader(pi, mountCtx);
+    captured!({ mode: "fullscreen" }, plainTheme);
+    assert.strictEqual(write.mock.calls.length, 0, "fullscreen must not clear");
+    captured!({ mode: "regular" }, plainTheme);
+    assert.deepStrictEqual(write.mock.calls[0]?.[0], "\x1b[2J\x1b[H");
+  } finally {
+    write.mockRestore();
+    Object.defineProperty(process.stdout, "isTTY", { value: originalIsTTY, configurable: true });
+  }
 });

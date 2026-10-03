@@ -14,6 +14,7 @@ const plainTheme = {
   fg: (_color: string, text: string) => text,
   bg: (_color: string, text: string) => text,
   bold: (text: string) => text,
+  style: (text: string) => text,
 } as unknown as Theme;
 
 // Marker theme for color and background assertions.
@@ -21,6 +22,12 @@ const markerTheme = {
   fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
   bg: (color: string, text: string) => `[${color}]${text}[/${color}]`,
   bold: (text: string) => text,
+  style: (text: string, options: { fg?: string; bg?: string }) => {
+    let out = text;
+    if (options.fg) out = `<${options.fg}>${out}</${options.fg}>`;
+    if (options.bg) out = `[${options.bg}]${out}[/${options.bg}]`;
+    return out;
+  },
 } as unknown as Theme;
 
 it("renders top and bottom borders with the content rail-wrapped between them", () => {
@@ -48,9 +55,8 @@ it("truncates long body lines to the content width", () => {
   assert.deepStrictEqual(out, ["╭──────╮", "│ abcd\x1b[0m │", "╰──────╯"]);
 });
 
-it("applies the background function to every rendered line", () => {
-  const bg = (s: string) => `[customMessageBg]${s}[/customMessageBg]`;
-  const out = makeBorderedBox(lines(["hi"]), markerTheme, { bg }).render(12);
+it("applies the background token to every rendered line", () => {
+  const out = makeBorderedBox(lines(["hi"]), markerTheme, { bg: "customMessageBg" }).render(12);
   assert.strictEqual(out.length, 3);
   for (const line of out) {
     assert.strictEqual(line.startsWith("[customMessageBg]"), true);

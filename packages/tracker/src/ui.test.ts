@@ -16,12 +16,13 @@ import {
 /**
  * Identity theme: styles pass text through unchanged, so render output is
  * plain text that assertions can search. The overlay and widget only use
- * `fg`, `bold` and `strikethrough`, which this stub covers.
+ * `fg`, `bold`, `strikethrough` and `style`, which this stub covers.
  */
 const identityTheme = {
   fg: (_color: string, text: string): string => text,
   bold: (text: string): string => text,
   strikethrough: (text: string): string => text,
+  style: (text: string): string => text,
 } as unknown as Theme;
 
 /** A realistic two-list state: Work is the active list. */
@@ -464,4 +465,68 @@ it("annotates a done item whose dependency is open again in the overlay", () => 
   assert.match(text, /item 2/);
   assert.match(text, /\(waiting on #Work:1\)/);
   notContain(text, "blocked by");
+});
+
+it("paints the selected overlay row with the selection background", () => {
+  // Marker theme: `style()` records the background token so the test can see
+  // the selection paint without a real terminal theme.
+  const markerTheme = {
+    ...identityTheme,
+    style: (text: string, options: { bg?: string }) =>
+      options.bg === undefined ? text : `[${options.bg}]${text}[/${options.bg}]`,
+  } as unknown as Theme;
+  const overlay = makeTrackerOverlay({
+    getState: () => twoListState(),
+    theme: markerTheme,
+    requestRender: () => {},
+    onAction: async () => null,
+    onClose: () => {},
+  });
+  // The lists pane opens with the first list selected, so its row carries the
+  // background and unselected rows do not.
+  const lines = overlay.render(80);
+  assert.strictEqual(lines.filter((line) => line.includes("[selectedBg]")).length, 1);
+});
+
+/** Overlay with a recording clipboard, so copy tests never touch the OS. */
+const makeCopyOverlay = (): { overlay: TrackerOverlayHandle; copied: string[] } => {
+  const copied: string[] = [];
+  const overlay = makeTrackerOverlay({
+    getState: () => twoListState(),
+    theme: identityTheme,
+    requestRender: () => {},
+    onAction: async () => null,
+    onClose: () => {},
+    copyText: async (text) => {
+      copied.push(text);
+    },
+  });
+  return { overlay, copied };
+};
+
+it("copies the selected list and reports it (c in the lists pane)", async () => {
+  const { overlay, copied } = makeCopyOverlay();
+  overlay.handleInput("c");
+  await flushAsync();
+  assert.deepStrictEqual(copied, ["Work"]);
+  assert.ok(overlay.render(80).some((line) => line.includes("Copied")));
+});
+
+it("copies the selected item reference and text (c in the items pane)", async () => {
+  const { overlay, copied } = makeCopyOverlay();
+  overlay.handleInput("\t"); // switch to the items pane
+  overlay.handleInput("c");
+  await flushAsync();
+  assert.strictEqual(copied.length, 1);
+  assert.match(copied[0]!, /^Work:\d+ /);
+});
+
+it("moves the selection on wheel events", () => {
+  const h = makeOverlay(twoListState());
+  assert.ok(h.overlay.render(80).join("\n").includes("→ ● Work"));
+  h.overlay.handleMouse({
+    type: "wheel",
+    wheelDelta: 1,
+  } as Parameters<TrackerOverlayHandle["handleMouse"]>[0]);
+  assert.ok(h.overlay.render(80).join("\n").includes("→ Home"));
 });

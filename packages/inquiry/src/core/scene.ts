@@ -359,7 +359,11 @@ export const buildScene = (state: MachineState, width: number): Scene => {
   for (const content of lines) {
     const pad = contentWidth - visibleWidth(plain(content));
     const body =
-      pad > 0 ? [...content, span(" ".repeat(pad))] : pad < 0 ? clampLine(content, contentWidth) : content;
+      pad > 0
+        ? [...content, span(" ".repeat(pad))]
+        : pad < 0
+          ? clampLine(content, contentWidth)
+          : content;
     framed.push([border(frame.railLeft), ...body, border(frame.railRight)]);
   }
   framed.push([border(frame.bottom.left), border(frame.bottom.fill), border(frame.bottom.right)]);

@@ -434,9 +434,17 @@ describe("buildScene: terminal-width crash regression", () => {
       );
     };
     let w = 0;
-    for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)) {
-      if (segment === "\t") { w += 3; continue; }
-      if (couldBeEmoji(segment) && rgiEmoji.test(segment)) { w += 2; continue; }
+    for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+      text,
+    )) {
+      if (segment === "\t") {
+        w += 3;
+        continue;
+      }
+      if (couldBeEmoji(segment) && rgiEmoji.test(segment)) {
+        w += 2;
+        continue;
+      }
       for (const ch of segment) {
         const cp = ch.codePointAt(0)!;
         if (cp === 0xfe0f || cp === 0x200d) w += 0;
@@ -470,9 +478,7 @@ describe("buildScene: terminal-width crash regression", () => {
   });
 
   it("emits no line wider than the terminal", () => {
-    const questions = normalizeQuestions(
-      decodeParams({ questions: [q7CrashPayload()] }),
-    );
+    const questions = normalizeQuestions(decodeParams({ questions: [q7CrashPayload()] }));
     const scene = buildScene(initialMachineState(questions), 110);
     for (const l of plainLines(scene)) {
       expect(terminalColumns(l)).toBeLessThanOrEqual(110);
@@ -480,9 +486,7 @@ describe("buildScene: terminal-width crash regression", () => {
   });
 
   it("renders the prompt continuation and option description without the model's leading emoji", () => {
-    const questions = normalizeQuestions(
-      decodeParams({ questions: [q7CrashPayload()] }),
-    );
+    const questions = normalizeQuestions(decodeParams({ questions: [q7CrashPayload()] }));
     const scene = buildScene(initialMachineState(questions), 110);
     const text = plainLines(scene).join("\n");
     expect(text).toContain("Recommended: A — document-only.");

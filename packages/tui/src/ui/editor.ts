@@ -6,7 +6,7 @@ import {
   type Theme,
   type ThemeColor,
 } from "@earendil-works/pi-coding-agent";
-import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
+import type { Color, EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
   inspectAutocompleteInternals,
@@ -23,6 +23,20 @@ import { renderSelection } from "../vim/selection-render.ts";
 import { type Cursor, type Range, type VimTextModelShape } from "../vim/text-model.ts";
 import { wordBackward, wordEnd, wordForward } from "../vim/word-motion.ts";
 
+/** A status indicator embedded in the editor's top border, at two sizes. */
+interface BorderStatus {
+  /** Spinner plus message, as pi renders it inside a border. */
+  readonly full: string;
+  /** Spinner only, for widths where the message does not fit. */
+  readonly spinner: string;
+}
+
+/** Join defined, non-empty label parts with the house separator. */
+function joinLabel(...parts: Array<string | undefined>): string | undefined {
+  const kept = parts.filter((part): part is string => part !== undefined && part.length > 0);
+  return kept.length === 0 ? undefined : kept.join(" · ");
+}
+
 /**
  * Top or bottom border of the editor frame, composed from the shared
  * {@link buildBoxFrame} model and {@link composeBorderLine} so every box in
@@ -38,17 +52,26 @@ function roundedBorder(
   paint: (s: string) => string,
   sourceLine?: string,
   modeGlyph?: string,
+  status?: BorderStatus,
 ): string {
   const scrollLabel =
     sourceLine === undefined ? undefined : stripAnsi(sourceLine).match(/([↑↓]\s+\d+\s+more)/)?.[1];
-  // The mode glyph and the scroll hint share the border's single label slot;
-  // join them with the house separator so a narrow editor drops both together.
-  const label =
-    modeGlyph === undefined
-      ? scrollLabel
-      : scrollLabel === undefined
-        ? modeGlyph
-        : `${modeGlyph} · ${scrollLabel}`;
+  // An embedded status takes the top border's left segment, like pi's own
+  // editor: `╭─ <status> ─────╮`. The status outranks the mode glyph and the
+  // scroll hint, and the spinner alone is the last resort before the plain
+  // border. Narrow widths therefore keep the status instead of dropping it.
+  if (kind === "top" && status !== undefined) {
+    const inner = Math.max(0, width - 2);
+    const glyph = modeGlyph === undefined || modeGlyph.length === 0 ? "" : `${modeGlyph} · `;
+    for (const text of [`${glyph}${status.full}`, `${glyph}${status.spinner}`, status.spinner]) {
+      const textWidth = visibleWidth(text);
+      const dashes = inner - 2 - textWidth - 1;
+      if (textWidth > 0 && dashes >= 0) {
+        return paint("╭─ ") + text + paint(` ${"─".repeat(dashes)}`) + paint("╮");
+      }
+    }
+  }
+  const label = joinLabel(modeGlyph, scrollLabel);
   const frame = buildBoxFrame(width, {
     label,
     labelWidth: label === undefined ? undefined : visibleWidth(label),
@@ -74,9 +97,9 @@ export interface TuiEditorOptions {
    * undefined to keep pi's own border color. Generic — the editor has no
    * notion of what supplied the color.
    */
-  readonly getBorderTint?: () => ThemeColor | undefined;
-  /** Paints a given theme color onto text (e.g. `theme.fg(color, s)`). */
-  readonly tintPaint?: (color: ThemeColor, s: string) => string;
+  readonly getBorderTint?: () => ThemeColor | Color | undefined;
+  /** Paints a given theme color onto text (e.g. `theme.style(s, { fg: color })`). */
+  readonly tintPaint?: (color: ThemeColor | Color, s: string) => string;
   /**
    * Live mode indicator for the top border (e.g. vim's N/I/V letter), or
    * undefined for none. A thunk so the glyph follows mode changes on every
@@ -95,9 +118,15 @@ export class TuiEditor extends CustomEditor {
   private readonly boxTheme: Theme;
   private readonly onAutocompleteMismatch?: (detail: string) => void;
   private readonly paintSelection: (s: string) => string;
-  private readonly getBorderTint?: () => ThemeColor | undefined;
-  private readonly tintPaint?: (color: ThemeColor, s: string) => string;
+  private readonly getBorderTint?: () => ThemeColor | Color | undefined;
+  private readonly tintPaint?: (color: ThemeColor | Color, s: string) => string;
   private readonly getModeIndicator?: () => string | undefined;
+  /**
+   * The status indicator pi embeds in the top border. pi only calls
+   * `setWorkingStatusIndicator()` when `embedWorkingStatus` is true, so we
+   * capture it to render the house border ourselves.
+   */
+  private statusIndicator?: Parameters<CustomEditor["setWorkingStatusIndicator"]>[0];
   /** The modal state machine backing vim; read by the package's tint wiring. */
   readonly vimState: VimEditorState;
   private autocompleteDiagnosed = false;
@@ -108,9 +137,10 @@ export class TuiEditor extends CustomEditor {
     keybindings: KeybindingsManager,
     options: TuiEditorOptions = {},
   ) {
-    super(tui, editorTheme, keybindings, { paddingX: 0 });
+    super(tui, editorTheme, keybindings, { paddingX: 0, embedWorkingStatus: true });
     this.boxTheme = {
       fg: (_color: ThemeColor, s: string) => this.borderPaint(s),
+      style: (s: string) => this.borderPaint(s),
     } as unknown as Theme;
     this.onAutocompleteMismatch = options.onAutocompleteMismatch;
     this.paintSelection = options.paintSelection ?? ((s: string) => s);
@@ -130,6 +160,13 @@ export class TuiEditor extends CustomEditor {
   override setPaddingX(_padding: number): void {
     // The custom rail owns the horizontal inset and keeps one stable text gap.
     super.setPaddingX(0);
+  }
+
+  override setWorkingStatusIndicator(
+    indicator: Parameters<CustomEditor["setWorkingStatusIndicator"]>[0],
+  ): void {
+    this.statusIndicator = indicator;
+    super.setWorkingStatusIndicator(indicator);
   }
 
   /**
@@ -315,7 +352,16 @@ export class TuiEditor extends CustomEditor {
       : undefined;
 
     const result: string[] = [];
-    result.push(roundedBorder(width, "top", borderPaint, baseLines[0], this.getModeIndicator?.()));
+    const indicator = this.statusIndicator;
+    const status: BorderStatus | undefined = indicator
+      ? {
+          full: indicator.renderInBorder(Math.max(1, width - 5)),
+          spinner: indicator.renderSpinnerInBorder(width),
+        }
+      : undefined;
+    result.push(
+      roundedBorder(width, "top", borderPaint, baseLines[0], this.getModeIndicator?.(), status),
+    );
 
     for (let i = 1; i < bottomIdx; i++) {
       const line = contentLines ? (contentLines[i - 1] ?? "") : (baseLines[i] ?? "");
@@ -362,8 +408,8 @@ export function installEditor(
   ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
     const editor = new TuiEditor(tui, editorTheme, keybindings, {
       getVimEnabled: options.getVimEnabled,
-      // Paints the resolved border tint through the theme's color fg().
-      tintPaint: (color, s) => ctx.ui.theme.fg(color, s),
+      // Paints the resolved border tint through the theme's color style().
+      tintPaint: (color, s) => ctx.ui.theme.style(s, { fg: color }),
       // The editor stays generic: it asks the shared service for a tint and
       // knows nothing about vim. vim is just one provider registered here.
       getBorderTint: () => options.tint.getTint(),

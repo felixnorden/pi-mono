@@ -144,7 +144,10 @@ it("keeps inference plus tool plus wait at or below total active time at every i
   assert.deepStrictEqual(observed, expected);
   for (const b of observed) {
     assert.ok(b.inference + b.tool + b.wait <= b.total);
-    assert.strictEqual(b.inference + b.tool + b.wait, b.total - (b.total - b.inference - b.tool - b.wait));
+    assert.strictEqual(
+      b.inference + b.tool + b.wait,
+      b.total - (b.total - b.inference - b.tool - b.wait),
+    );
   }
 });
 
@@ -235,20 +238,18 @@ it("parity: waitingMs reports the open wait span and 0 when no prompt is open", 
 
 it("toTrackerEvent maps pi message roles and tool calls onto tracker descriptors", () => {
   // Assistant message_start opens an inference span.
-  assert.deepStrictEqual(
-    toTrackerEvent({ kind: "message_start", role: "assistant", now: 1000 }),
-    { type: "message_start", role: "assistant", now: 1000 },
-  );
+  assert.deepStrictEqual(toTrackerEvent({ kind: "message_start", role: "assistant", now: 1000 }), {
+    type: "message_start",
+    role: "assistant",
+    now: 1000,
+  });
   // toolResult message_end never maps to an assistant span.
   assert.strictEqual(
     toTrackerEvent({ kind: "message_end", role: "toolResult", now: 2000 }),
     undefined,
   );
   // User messages never map either.
-  assert.strictEqual(
-    toTrackerEvent({ kind: "message_start", role: "user", now: 2000 }),
-    undefined,
-  );
+  assert.strictEqual(toTrackerEvent({ kind: "message_start", role: "user", now: 2000 }), undefined);
   // Tool executions carry their call id through.
   assert.deepStrictEqual(
     toTrackerEvent({ kind: "tool_execution_start", toolCallId: "call_1", now: 3000 }),

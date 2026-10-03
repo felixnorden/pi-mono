@@ -1,4 +1,4 @@
-import { afterEach, assert, it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import { Effect } from "effect";
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import {

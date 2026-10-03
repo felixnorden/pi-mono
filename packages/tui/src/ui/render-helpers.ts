@@ -159,19 +159,22 @@ export function renderGitSegment(
 }
 
 /**
- * The runtime footer segment: a runtime symbol (ascii or nerd per the
- * icon mode) plus its version when known. Returns `""` for no runtime.
+ * The runtime footer segment: one symbol (ascii or nerd per the icon mode)
+ * per matching runtime, each with its version when known. Multiple runtimes
+ * are joined with a dim separator. Returns `""` for no runtime.
  */
 export function renderRuntimeSegment(
   theme: Theme,
-  runtime: RuntimeInfo | null,
+  runtimes: readonly RuntimeInfo[],
   iconMode: TuiConfig["icons"]["mode"],
 ): string {
-  if (!runtime) return "";
-  const symbol = theme.fg("success", runtimeSymbol(runtime.name, iconMode));
-  const version = runtime.version ? theme.fg("muted", runtime.version) : "";
-  const label = [symbol, version].filter(Boolean).join(" ");
-  return label;
+  return runtimes
+    .map((runtime) => {
+      const symbol = theme.fg("success", runtimeSymbol(runtime.name, iconMode));
+      const version = runtime.version ? theme.fg("muted", runtime.version) : "";
+      return [symbol, version].filter(Boolean).join(" ");
+    })
+    .join(theme.fg("dim", " · "));
 }
 
 /**
@@ -189,7 +192,9 @@ export interface TimerSegmentParts {
 function renderSplit(theme: Theme, glyphs: IconGlyphs, inference: number, tool: number): string {
   const buckets: string[] = [];
   if (inference > 0) {
-    buckets.push(`${theme.fg("dim", glyphs.inference)} ${theme.fg("accent", formatDuration(inference))}`);
+    buckets.push(
+      `${theme.fg("dim", glyphs.inference)} ${theme.fg("accent", formatDuration(inference))}`,
+    );
   }
   if (tool > 0) {
     buckets.push(`${theme.fg("dim", glyphs.tool)} ${theme.fg("accent", formatDuration(tool))}`);

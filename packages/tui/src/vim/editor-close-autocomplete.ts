@@ -8,9 +8,7 @@
  * degrade softly (no-op) if pi's internals change shape, instead of crashing
  * with a TypeError.
  */
-export function closeAutocomplete(editor: {
-  readonly isShowingAutocomplete: () => boolean;
-}): void {
+export function closeAutocomplete(editor: { readonly isShowingAutocomplete: () => boolean }): void {
   if (!editor.isShowingAutocomplete()) return;
   const internal = editor as unknown as {
     readonly cancelAutocomplete?: () => void;

@@ -27,32 +27,6 @@ import * as NodeChildProcessSpawner from "@effect/platform-node/NodeChildProcess
 import { VimRouter } from "./vim/vim-router.ts";
 import { EditorTintService } from "./ui/editor-tint.ts";
 
-function isInteractiveLaunch(): boolean {
-  if (!process.stdout.isTTY) return false;
-  const args = process.argv.slice(2);
-  const nonInteractiveFlags = [
-    "-p",
-    "--print",
-    "--help",
-    "-h",
-    "--version",
-    "-v",
-    "--list-models",
-    "--export",
-  ];
-  for (const arg of args) {
-    if (nonInteractiveFlags.includes(arg)) return false;
-    if (arg.startsWith("--mode")) return false;
-  }
-  return true;
-}
-
-function clearVisibleScreen(): void {
-  if (process.stdout.isTTY) {
-    process.stdout.write("\x1b[2J\x1b[H");
-  }
-}
-
 function isTuiContext(ctx: ExtensionContext): boolean {
   try {
     const mode = (ctx as ExtensionContext & { mode?: string }).mode;
@@ -79,7 +53,6 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
   let lastCtx: ExtensionContext | undefined;
   let requestFooterRender: (() => void) | undefined;
   let workingTimer: ReturnType<typeof setInterval> | undefined;
-  // TODO: configure
   let cleanupHeader: (() => void) | undefined;
   let cleanupFooter: (() => void) | undefined;
   let cleanupEditor: (() => void) | undefined;
@@ -183,7 +156,10 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
       requestFooterRender?.();
     };
     tick();
-    workingTimer = setInterval(tick, 250);
+    // The footer timer renders whole seconds (`formatDuration`), so a 1s
+    // cadence keeps the display exact and avoids 3 wasted full-layout
+    // re-renders per second.
+    workingTimer = setInterval(tick, 1000);
     workingTimer.unref?.();
   };
 
@@ -205,10 +181,6 @@ const main = Effect.fn("tui/main")(function* (pi: ExtensionAPI) {
         invalidateUsageCache();
 
         config = yield* conf.load.pipe(Effect.mapError((e) => ctx.ui.notify(e.message, "error")));
-
-        if (isInteractiveLaunch() && config.enabled) {
-          clearVisibleScreen();
-        }
 
         applyUi(ctx);
 

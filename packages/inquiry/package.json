@@ -39,7 +39,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint && oxlint --type-aware -A all -D typescript/unbound-method",
     "lint:fix": "oxlint --fix",
-    "fmt": "oxfmt -c oxfmt.config.ts"
+    "fmt": "oxfmt"
   },
   "dependencies": {
     "@ftrdotdev/pi-tui": "^0.5.2",

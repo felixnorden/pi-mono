@@ -1,5 +1,6 @@
 import { Context, Layer } from "effect";
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { Color } from "@earendil-works/pi-tui";
 
 /**
  * A border-tint contribution. `id` stamps the contributor so a later
@@ -10,7 +11,7 @@ import type { ThemeColor } from "@earendil-works/pi-coding-agent";
  */
 export interface BorderTintProvider {
   readonly id: string;
-  readonly getTint: () => ThemeColor | undefined;
+  readonly getTint: () => ThemeColor | Color | undefined;
 }
 
 /**
@@ -33,7 +34,7 @@ export class EditorTintService extends Context.Service<
     readonly configure: (
       update: (current: readonly BorderTintProvider[]) => readonly BorderTintProvider[],
     ) => void;
-    readonly getTint: () => ThemeColor | undefined;
+    readonly getTint: () => ThemeColor | Color | undefined;
   }
 >()("tui/editor/EditorTintService") {
   static readonly layer = Layer.sync(EditorTintService, () => {

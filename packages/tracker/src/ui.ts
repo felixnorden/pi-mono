@@ -1,6 +1,12 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { copyToClipboard, type Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
-import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  Key,
+  matchesKey,
+  truncateToWidth,
+  visibleWidth,
+  type TuiMouseEvent,
+} from "@earendil-works/pi-tui";
 import { makeBorderedBox } from "@ftrdotdev/pi-tui";
 import {
   firstReadyIndex,
@@ -22,6 +28,9 @@ const MARKER_WIDTH = 2;
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(Math.max(value, min), max);
 
+/** Positive modulo, so a wheel step past either end wraps. */
+const wrap = (value: number, count: number): number => ((value % count) + count) % count;
+
 // --------------------------------------------------------------------------
 // Widget pane (ctx.ui.setWidget)
 // --------------------------------------------------------------------------
@@ -36,7 +45,8 @@ const widgetLabel =
   (theme: Theme): string => {
     const done = list.items.filter((item) => item.done).length;
     return (
-      theme.fg("accent", theme.bold(list.name)) + theme.fg("dim", ` (${done}/${list.items.length})`)
+      theme.style(list.name, { fg: "accent", bold: true }) +
+      theme.fg("dim", ` (${done}/${list.items.length})`)
     );
   };
 
@@ -192,7 +202,9 @@ const widgetRows =
       const item = view.list.items[row.index]!;
       const blocked = (view.ready[row.index]?.blockers.length ?? 0) > 0;
       const marker = itemMarker(item, blocked, row.index === current, theme);
-      const text = item.done ? theme.fg("muted", theme.strikethrough(item.text)) : item.text;
+      const text = item.done
+        ? theme.style(item.text, { fg: "muted", strikethrough: true })
+        : item.text;
       rows.push(`  ${marker}${text}`);
     }
     return rows;
@@ -261,6 +273,8 @@ export interface TrackerOverlayOptions {
   readonly onAction: (action: TrackerUiAction) => Promise<string | null>;
   /** Close the overlay. */
   readonly onClose: () => void;
+  /** Write text to the clipboard. Defaults to pi's `copyToClipboard`. */
+  readonly copyText?: (text: string) => Promise<void>;
 }
 
 /** The interactive overlay surface: render + input + cache invalidation. */
@@ -268,6 +282,8 @@ export interface TrackerOverlayHandle {
   readonly render: (width: number) => string[];
   readonly invalidate: () => void;
   readonly handleInput: (data: string) => void;
+  /** Move the cursor on wheel events; other mouse events are ignored. */
+  readonly handleMouse: (event: TuiMouseEvent) => { handled: boolean } | undefined;
 }
 
 /**
@@ -287,6 +303,8 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
   let itemIndex = 0;
   let input: InputMode | null = null;
   let error: string | null = null;
+  let notice: string | null = null;
+  const writeClipboard = options.copyText ?? copyToClipboard;
 
   // Render cache (tui.md "Performance"): lines are reused while the inputs
   // (width, state snapshot, overlay state) are unchanged.
@@ -307,6 +325,7 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
     if (matchesKey(data, Key.tab) || matchesKey(data, Key.shift("tab"))) {
       mode = mode === "lists" ? "items" : "lists";
       error = null;
+      notice = null;
       syncCursors();
       options.requestRender();
       return;
@@ -315,8 +334,30 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
     const handled = mode === "lists" ? handleListsKey(data, state) : handleItemsKey(data, state);
     if (handled) {
       error = null;
+      notice = null;
       options.requestRender();
     }
+  };
+
+  const handleMouse = (event: TuiMouseEvent): { handled: boolean } | undefined => {
+    if (event.type !== "wheel") return undefined;
+    const delta = event.wheelDelta ?? 0;
+    if (delta === 0 || input) return { handled: delta !== 0 };
+    // pi normalizes wheel events to logical lines (the renderer applies
+    // `WheelScrollAccelerator`), so the delta is the step count directly.
+    const step = Math.abs(delta);
+    const direction = delta > 0 ? step : -step;
+    const state = options.getState();
+    if (mode === "lists") {
+      const count = state.lists.length;
+      if (count > 0) listIndex = wrap(listIndex + direction, count);
+    } else {
+      const list = activeList(state);
+      const count = list ? orderedItems(list).length : 0;
+      if (count > 0) itemIndex = wrap(itemIndex + direction, count);
+    }
+    options.requestRender();
+    return { handled: true };
   };
 
   const render = (width: number): string[] => {
@@ -335,7 +376,9 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
 
     // Lists pane
     const listsHeader =
-      mode === "lists" ? theme.fg("accent", theme.bold("Lists")) : theme.fg("muted", "Lists");
+      mode === "lists"
+        ? theme.style("Lists", { fg: "accent", bold: true })
+        : theme.fg("muted", "Lists");
     lines.push(truncateToWidth(`  ${listsHeader}`, width));
 
     if (state.lists.length === 0) {
@@ -353,9 +396,12 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
         const name = isActive ? `${theme.fg("success", "● ")}${list.name}` : list.name;
         if (selected) {
           lines.push(
-            truncateToWidth(
-              `  ${theme.fg("accent", "→ ")}${theme.fg("accent", name)}${counts}`,
-              width,
+            theme.style(
+              truncateToWidth(
+                `  ${theme.fg("accent", "→ ")}${theme.fg("accent", name)}${counts}`,
+                width,
+              ),
+              { bg: "selectedBg" },
             ),
           );
         } else {
@@ -376,12 +422,11 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
 
     // Items pane
     const activeListFor = activeList(state);
-    const itemsHeader = theme.fg(
-      mode === "items" ? "accent" : "muted",
-      mode === "items"
-        ? theme.bold(`Items — ${activeListFor?.name ?? "(no list)"}`)
-        : `Items — ${activeListFor?.name ?? "(no list)"}`,
-    );
+    const itemsTitle = `Items — ${activeListFor?.name ?? "(no list)"}`;
+    const itemsHeader = theme.style(itemsTitle, {
+      fg: mode === "items" ? "accent" : "muted",
+      bold: mode === "items",
+    });
     lines.push(truncateToWidth(`  ${itemsHeader}`, width));
 
     if (!activeListFor) {
@@ -399,8 +444,11 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
         const prefix = selected ? theme.fg("accent", "→ ") : "  ";
         const blocker = readinessSuffix(item.done, view.ready[index]?.blockers ?? []);
         const check = itemMarker(item, blocker !== "", false, theme);
-        const text = item.done ? theme.fg("muted", theme.strikethrough(item.text)) : item.text;
-        lines.push(truncateToWidth(`${prefix}${check}${text}${blocker}`, width));
+        const text = item.done
+          ? theme.style(item.text, { fg: "muted", strikethrough: true })
+          : item.text;
+        const row = truncateToWidth(`${prefix}${check}${text}${blocker}`, width);
+        lines.push(selected ? theme.style(row, { bg: "selectedBg" }) : row);
       }
       if (activeListFor.items.length > MAX_ITEMS) {
         lines.push(
@@ -426,14 +474,17 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
     } else if (error) {
       lines.push("");
       lines.push(truncateToWidth(`  ${theme.fg("warning", `! ${error}`)}`, width));
+    } else if (notice) {
+      lines.push("");
+      lines.push(truncateToWidth(`  ${theme.fg("success", `✓ ${notice}`)}`, width));
     }
 
     // Help
     lines.push("");
     const help =
       mode === "lists"
-        ? "[tab] items · [n] new · [d] delete · [space] toggle · [↑↓] move · [enter] active · [esc] close"
-        : "[tab] lists · [a] add · [x] toggle · [e] edit · [r] remove · [↑↓] move · [esc] close";
+        ? "[tab] items · [n] new · [d] delete · [c] copy · [space] toggle · [↑↓] move · [enter] active · [esc] close"
+        : "[tab] lists · [a] add · [x] toggle · [e] edit · [r] remove · [c] copy · [↑↓] move · [esc] close";
     lines.push(truncateToWidth(`  ${theme.fg("dim", help)}`, width));
 
     cachedWidth = width;
@@ -457,7 +508,7 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
    */
   const thisSignature = (): string => {
     const inputPart = input === null ? "" : `${input.kind}:${input.buffer}`;
-    return `${mode}:${listIndex}:${itemIndex}:${error ?? ""}:${inputPart}`;
+    return `${mode}:${listIndex}:${itemIndex}:${error ?? ""}:${notice ?? ""}:${inputPart}`;
   };
 
   const activeList = (state: TrackerState): TodoList | undefined => {
@@ -468,6 +519,19 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
       return state.lists[listIndex];
     }
     return state.lists.find((list) => list.id === state.activeListId);
+  };
+
+  const copyText = (text: string, label: string): void => {
+    void writeClipboard(text).then(
+      () => {
+        notice = `Copied ${label}`;
+        options.requestRender();
+      },
+      (cause: unknown) => {
+        error = `Copy failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+        options.requestRender();
+      },
+    );
   };
 
   const handleListsKey = (data: string, state: TrackerState): boolean => {
@@ -502,6 +566,11 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
     if (data === "d") {
       const list = lists[listIndex]!;
       void runAction({ type: "deleteList", listId: list.id });
+      return true;
+    }
+    if (data === "c") {
+      const list = lists[listIndex]!;
+      copyText(list.name, `list "${list.name}"`);
       return true;
     }
     if (data === " " || matchesKey(data, Key.space)) {
@@ -569,6 +638,12 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
       input = { kind: "newList", buffer: "" };
       return true;
     }
+    if (data === "c") {
+      const item = items[itemIndex];
+      if (!item) return true;
+      copyText(`${list.name}:${item.id} ${item.text}`, `item "${item.text}"`);
+      return true;
+    }
     return false;
   };
 
@@ -621,5 +696,5 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
     itemIndex = items.length === 0 ? 0 : clamp(itemIndex, 0, items.length - 1);
   };
 
-  return { render, invalidate, handleInput };
+  return { render, invalidate, handleInput, handleMouse };
 };

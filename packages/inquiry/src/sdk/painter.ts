@@ -22,12 +22,13 @@ export const paintScene = (scene: Scene, theme: Theme): string[] => {
 };
 
 const paintSpan = (span: Span, theme: Theme): string => {
+  // One `theme.style()` call per span: fg (or the cursor's inverse) and bold
+  // combine into a single SGR wrapper instead of nested fg(bold(text)).
   if (span.style === "cursor") {
-    const inner = span.bold ? theme.bold(span.text) : span.text;
-    return theme.inverse(inner);
+    return theme.style(span.text, { inverse: true, bold: span.bold });
   }
-  let text = span.text;
-  if (span.bold) text = theme.bold(text);
-  if (span.style) return theme.fg(span.style, text);
-  return text;
+  if (span.style !== undefined) {
+    return theme.style(span.text, { fg: span.style, bold: span.bold });
+  }
+  return span.bold ? theme.bold(span.text) : span.text;
 };

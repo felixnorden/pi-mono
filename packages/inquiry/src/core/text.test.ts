@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  charWidth,
-  stripLeadingEmoji,
-  truncateToWidth,
-  visibleWidth,
-  wrapText,
-} from "./text.ts";
+import { charWidth, stripLeadingEmoji, truncateToWidth, visibleWidth, wrapText } from "./text.ts";
 
 describe("visibleWidth", () => {
   it("counts ASCII as one column per character", () => {

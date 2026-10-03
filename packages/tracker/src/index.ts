@@ -513,7 +513,8 @@ export default function (pi: ExtensionAPI): void {
       // Args can come from failed validation too, so read them loosely.
       const raw = args as unknown as Record<string, unknown>;
       const action = String(raw.action ?? "list");
-      let text = theme.fg("toolTitle", theme.bold("tracker ")) + theme.fg("muted", action);
+      let text =
+        theme.style("tracker ", { fg: "toolTitle", bold: true }) + theme.fg("muted", action);
       if (typeof raw.name === "string") text += ` ${theme.fg("dim", `"${raw.name}"`)}`;
       if (typeof raw.text === "string") {
         text += ` ${theme.fg("dim", `"${raw.text}"`)}`;
@@ -619,6 +620,7 @@ export default function (pi: ExtensionAPI): void {
           render: (width) => framed.render(width),
           invalidate: () => framed.invalidate(),
           handleInput: (data) => overlay.handleInput(data),
+          handleMouse: (event) => overlay.handleMouse(event),
         };
       });
     },

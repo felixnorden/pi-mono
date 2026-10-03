@@ -1,22 +1,22 @@
 {
   "name": "@ftrdotdev/pi-qrspi",
   "version": "0.2.3",
+  "keywords": [
+    "coding-agent",
+    "extension",
+    "pi",
+    "pi-coding-agent",
+    "pi-package",
+    "planning",
+    "qrspi",
+    "skill",
+    "tdd",
+    "workflow"
+  ],
   "homepage": "https://github.com/felixnorden/pi-mono/blob/main/packages/qrspi/README.md",
   "bugs": {
     "url": "https://github.com/felixnorden/pi-mono/issues"
   },
-  "keywords": [
-    "pi",
-    "pi-package",
-    "pi-coding-agent",
-    "coding-agent",
-    "planning",
-    "tdd",
-    "qrspi",
-    "workflow",
-    "skill",
-    "extension"
-  ],
   "license": "MIT",
   "author": "Felix Nordén <felixnorden@gmail.com>",
   "repository": {

@@ -158,7 +158,7 @@ const RUNTIMES: readonly RuntimeDef[] = [
 
 interface CacheEntry {
   fingerprint: string;
-  runtime: RuntimeInfo | null;
+  runtime: RuntimeInfo;
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -221,36 +221,33 @@ async function fetchVersion(def: RuntimeDef, cwd: string): Promise<string | unde
   }
 }
 
-export async function readRuntimeInfo(cwd: string): Promise<RuntimeInfo | null> {
+/**
+ * Every runtime that matches `cwd`, in table order. Each match carries its
+ * version when the runtime's version command answers. Results are cached per
+ * `(cwd, runtime)` and invalidated by a fingerprint of the marker files.
+ */
+export async function readRuntimeInfo(cwd: string): Promise<RuntimeInfo[]> {
+  const matches: RuntimeInfo[] = [];
   for (const def of RUNTIMES) {
     if (!matchesDef(cwd, def)) continue;
-    const fp = fingerprint(cwd, def);
-    const cacheKey = `${cwd}\0${def.name}`;
-    const cached = cache.get(cacheKey);
-    if (cached && cached.fingerprint === fp) {
-      return cached.runtime;
-    }
-
-    for (const key of cache.keys()) {
-      if (key === cacheKey || key.startsWith(`${cwd}\0`)) cache.delete(key);
-    }
-
-    const version = await fetchVersion(def, cwd);
-    const info: RuntimeInfo = {
-      name: def.name,
-      version,
-    };
-    cache.set(cacheKey, { fingerprint: fp, runtime: info });
-    while (cache.size > CACHE_MAX) {
-      const oldest = cache.keys().next().value;
-      if (oldest === undefined) break;
-      cache.delete(oldest);
-    }
-    return info;
+    matches.push(await resolveRuntime(cwd, def));
   }
-  return null;
+  return matches;
 }
 
-export function clearRuntimeCache(): void {
-  cache.clear();
+async function resolveRuntime(cwd: string, def: RuntimeDef): Promise<RuntimeInfo> {
+  const fp = fingerprint(cwd, def);
+  const cacheKey = `${cwd}\0${def.name}`;
+  const cached = cache.get(cacheKey);
+  if (cached && cached.fingerprint === fp) return cached.runtime;
+
+  const version = await fetchVersion(def, cwd);
+  const info: RuntimeInfo = { name: def.name, version };
+  cache.set(cacheKey, { fingerprint: fp, runtime: info });
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+  return info;
 }

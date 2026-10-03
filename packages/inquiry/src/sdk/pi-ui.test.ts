@@ -4,7 +4,13 @@ import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { initialMachineState, step, type MachineState } from "../core/machine.ts";
 import { KeyEvent } from "../core/keyboard.ts";
 import { Option, Question } from "../core/domain.ts";
-import { codePointToUtf16, makeSceneRenderer, runQuestionUi, utf16ToCodePoint } from "./pi-ui.ts";
+import {
+  codePointToUtf16,
+  makeSceneRenderer,
+  questionClipboardText,
+  runQuestionUi,
+  utf16ToCodePoint,
+} from "./pi-ui.ts";
 
 describe("makeSceneRenderer cache", () => {
   const fixture = (): { state: MachineState; theme: Theme; paints: () => number } => {
@@ -19,6 +25,10 @@ describe("makeSceneRenderer cache", () => {
         return text;
       },
       bold: (text: string): string => text,
+      style: (text: string): string => {
+        count++;
+        return text;
+      },
     } as unknown as Theme;
     const state = initialMachineState([
       new Question({
@@ -183,5 +193,32 @@ describe("cursor unit conversion", () => {
     expect(codePointToUtf16("ab", -1)).toBe(0);
     expect(utf16ToCodePoint("ab", 99)).toBe(2);
     expect(utf16ToCodePoint("ab", -1)).toBe(0);
+  });
+});
+
+describe("questionClipboardText", () => {
+  const question = (allowOther: boolean): Question =>
+    new Question({
+      id: "q1",
+      label: "Q1",
+      prompt: "Pick one?",
+      options: [new Option({ label: "First" }), new Option({ label: "Second" })],
+      allowOther,
+      multiple: false,
+    });
+
+  it("lists the prompt and numbered options", () => {
+    const text = questionClipboardText(initialMachineState([question(false)]));
+    expect(text).toBe("Pick one?\n1. First\n2. Second");
+  });
+
+  it("appends the implicit other answer when allowOther is set", () => {
+    const text = questionClipboardText(initialMachineState([question(true)]));
+    expect(text.endsWith("3. Type something.")).toBe(true);
+  });
+
+  it("is empty on the submit tab", () => {
+    const state = { ...initialMachineState([question(false)]), currentTab: 1 };
+    expect(questionClipboardText(state)).toBe("");
   });
 });

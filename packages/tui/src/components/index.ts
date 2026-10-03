@@ -25,6 +25,9 @@ export {
   type BoxTopBorder,
 } from "../frame/box-frame.ts";
 export { VimRouter, type NavigationIntent } from "../vim/vim-router.ts";
+// Derived theme colors: mix concrete token colors when a component needs a
+// shade that is not a theme token.
+export { emphasize, isDark, mixThemeTokens, recede } from "../ui/theme-color.ts";
 // Editor customization: a generic Effect service other extensions can import
 // and `.configure` to inject/override the editor's border tint.
 export {

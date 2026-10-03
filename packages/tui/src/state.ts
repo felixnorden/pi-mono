@@ -7,7 +7,7 @@ import { formatProviderLabel } from "./utils.ts";
 
 export interface FooterState {
   git: GitStatus;
-  runtime: RuntimeInfo | null;
+  runtime: RuntimeInfo[];
   sessionStartEpoch: number;
   /** Frozen active-work total from the last finished run, as today. */
   lastDoneIn: number | undefined;
@@ -71,7 +71,7 @@ export function invalidateUsageCache(): void {
 export function createInitialState(): FooterState {
   return {
     git: GitStatus.empty(),
-    runtime: null,
+    runtime: [],
     sessionStartEpoch: Date.now(),
     lastDoneIn: undefined,
     tracker: new ActivityTracker(),

@@ -1,5 +1,5 @@
-import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
+import type { Theme, ThemeBg, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { Color, Component } from "@earendil-works/pi-tui";
 import { composeBorderLine, buildBoxFrame } from "../frame/box-frame.ts";
 import { padRight, visibleWidth } from "../utils.ts";
 import { defineComponent } from "./define-component.ts";
@@ -12,16 +12,19 @@ export interface BorderedBoxOptions {
    * follow theme changes. When the box is too narrow the label is omitted.
    */
   readonly label?: string | ((theme: Theme) => string);
-  /** Border color token. Defaults to "accent". */
-  readonly color?: ThemeColor;
+  /** Border color: a theme token, or a concrete derived `Color`. Defaults to "accent". */
+  readonly color?: ThemeColor | Color;
   /**
    * Decorative dash run after the label. Defaults to " ─────". Pass a
    * different tail (e.g. a single space for a scroll hint) when the label
    * should not trail with the full dash run.
    */
   readonly labelSuffix?: string;
-  /** Background function applied to every rendered line. */
-  readonly bg?: (s: string) => string;
+  /**
+   * Background token applied to every rendered line, including the embedded
+   * label. Painted through `theme.style()`, not a caller-supplied wrapper.
+   */
+  readonly bg?: ThemeBg;
   /** Horizontal padding between the rails and the content. Defaults to 1. */
   readonly paddingX?: number;
   /**
@@ -69,8 +72,15 @@ export const makeBorderedBox = (
     });
     if (!frame) return [];
 
-    const paint = (s: string) => theme.fg(options.color ?? "accent", s);
-    const bg = options.bg ?? ((s: string) => s);
+    // Border chrome carries the foreground token and the background in one
+    // `theme.style()` call. Body content styles itself, so it only needs the
+    // background wrapper; the wrapper also covers the embedded label, which
+    // `composeBorderLine` passes through raw (already pre-themed by callers).
+    const paint = (s: string) => theme.style(s, { fg: options.color ?? "accent", bg: options.bg });
+    const bg =
+      options.bg === undefined
+        ? (s: string) => s
+        : (s: string) => theme.style(s, { bg: options.bg });
     const pad = frame.padLeft;
 
     const top = bg(composeBorderLine(frame, "top", paint));

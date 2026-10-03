@@ -271,8 +271,8 @@ export const makeSettingsUi = (
     body.addChild(selectList);
 
     bordered = makeBorderedBox(body, theme, {
-      label: theme.bold(theme.fg("accent", copy.title)),
-      bg: (s: string) => theme.bg("customMessageBg", s),
+      label: theme.style(copy.title, { fg: "accent", bold: true }),
+      bg: "customMessageBg",
     });
     cachedWidth = undefined;
     cachedLines = undefined;
@@ -383,7 +383,16 @@ export function registerSettingsCommand(
             },
           };
         },
-        { overlay: true },
+        {
+          overlay: true,
+          overlayOptions: {
+            width: "60%",
+            minWidth: 44,
+            maxHeight: "80%",
+            anchor: "center",
+            margin: 1,
+          },
+        },
       );
     },
   });

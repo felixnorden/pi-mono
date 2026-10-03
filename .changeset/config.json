@@ -5,13 +5,7 @@
   "baseBranch": "main",
   "access": "public",
   "format": "auto",
-  "fixed": [
-    [
-      "@ftrdotdev/pi-tui",
-      "@ftrdotdev/pi-tracker",
-      "@ftrdotdev/pi-inquiry"
-    ]
-  ],
+  "fixed": [["@ftrdotdev/pi-tui", "@ftrdotdev/pi-tracker", "@ftrdotdev/pi-inquiry"]],
   "updateInternalDependencies": "patch",
   "privatePackages": {
     "version": false,

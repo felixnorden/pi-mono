@@ -45,6 +45,7 @@ const encode = (raw: string) => new TextEncoder().encode(raw);
  * `getPngDimensions` only inspects the signature and the width/height words at
  * offsets 16..23, so this suffices to exercise the dimension detection path.
  */
+// prettier-ignore
 const PNG_BYTES = new Uint8Array([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
   0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, // IHDR chunk header
@@ -242,9 +243,7 @@ function makeMemFs(
     );
   const fs: Partial<FileSystem.FileSystem> = {
     readFile: (path) =>
-      files.has(path)
-        ? Effect.succeed(files.get(path)!)
-        : notFound("readFile")(path),
+      files.has(path) ? Effect.succeed(files.get(path)!) : notFound("readFile")(path),
     readFileString: (path) =>
       files.has(path)
         ? Effect.succeed(new TextDecoder().decode(files.get(path)!))
@@ -343,7 +342,11 @@ it("mimeFromPath maps supported image extensions to their MIME type", () => {
 
 it("bytesToBase64 round-trips through atob for ASCII and binary bytes", () => {
   assert.strictEqual(bytesToBase64(encode("abc")), "YWJj");
-  const round = new Uint8Array(atob(bytesToBase64(PNG_BYTES)).split("").map((c) => c.charCodeAt(0)));
+  const round = new Uint8Array(
+    atob(bytesToBase64(PNG_BYTES))
+      .split("")
+      .map((c) => c.charCodeAt(0)),
+  );
   assert.deepStrictEqual(round, PNG_BYTES);
   assert.strictEqual(bytesToBase64(PNG_BYTES), PNG_BASE64);
 });
@@ -385,10 +388,12 @@ it.effect("read returns an AVIF image record with parsed dimensions", () =>
   }),
 );
 
-
 it.effect("read routes jpeg/gif/webp extensions to image records", () =>
   Effect.gen(function* () {
-    const mem = makeMemFs({}, { "/a/x.jpg": PNG_BYTES, "/a/y.gif": PNG_BYTES, "/a/z.webp": PNG_BYTES });
+    const mem = makeMemFs(
+      {},
+      { "/a/x.jpg": PNG_BYTES, "/a/y.gif": PNG_BYTES, "/a/z.webp": PNG_BYTES },
+    );
     const jpeg = yield* runRead(mem, "/a/x.jpg");
     const gif = yield* runRead(mem, "/a/y.gif");
     const webp = yield* runRead(mem, "/a/z.webp");
@@ -491,6 +496,7 @@ const theme = {
   fg: (_color: string, text: string) => text,
   bg: (_color: string, text: string) => text,
   bold: (text: string) => text,
+  style: (text: string) => text,
 } as unknown as Theme;
 
 class FakePi {
@@ -645,20 +651,38 @@ it("tool execute reports the failure stub when the reference is unresolvable", a
 });
 
 it("renderBodyComponent renders markdown content with the Markdown component when the language hint is markdown", () => {
-  const data = { kind: "text" as const, path: "/a.md", content: "# Hi", lang: "markdown", truncated: false };
+  const data = {
+    kind: "text" as const,
+    path: "/a.md",
+    content: "# Hi",
+    lang: "markdown",
+    truncated: false,
+  };
   const out = renderBodyComponent(data, true, theme);
   assert.instanceOf(out, Markdown);
 });
 
 it("renderBodyComponent renders code content with the Text component when the language hint is not markdown", () => {
-  const data = { kind: "text" as const, path: "/a.ts", content: "const x = 1;", lang: "typescript", truncated: false };
+  const data = {
+    kind: "text" as const,
+    path: "/a.ts",
+    content: "const x = 1;",
+    lang: "typescript",
+    truncated: false,
+  };
   const out = renderBodyComponent(data, true, theme);
   assert.instanceOf(out, Text);
 });
 
 it("renderBodyComponent collapses code content to the collapsed line count when not expanded", () => {
   const content = Array.from({ length: 45 }, (_, i) => `line ${i + 1}`).join("\n");
-  const data = { kind: "text" as const, path: "/a.ts", content, lang: "typescript", truncated: false };
+  const data = {
+    kind: "text" as const,
+    path: "/a.ts",
+    content,
+    lang: "typescript",
+    truncated: false,
+  };
   const out = renderBodyComponent(data, false, theme);
   assert.instanceOf(out, Text);
   assert.strictEqual(
@@ -668,7 +692,13 @@ it("renderBodyComponent collapses code content to the collapsed line count when 
 });
 
 it("renderBodyComponent appends the truncated note for a truncated expanded record", () => {
-  const data = { kind: "text" as const, path: "/a.md", content: "# Hi", lang: "markdown", truncated: true };
+  const data = {
+    kind: "text" as const,
+    path: "/a.md",
+    content: "# Hi",
+    lang: "markdown",
+    truncated: true,
+  };
   const out = renderBodyComponent(data, true, theme);
   assert.instanceOf(out, Markdown);
   assert.strictEqual(out.render(200).join("\n").includes("... (truncated preview)"), true);
@@ -676,7 +706,13 @@ it("renderBodyComponent appends the truncated note for a truncated expanded reco
 
 it("renderBodyComponent appends the more-lines note for a collapsed markdown record", () => {
   const content = Array.from({ length: 41 }, (_, i) => `line ${i + 1}`).join("\n");
-  const data = { kind: "text" as const, path: "/a.md", content, lang: "markdown", truncated: false };
+  const data = {
+    kind: "text" as const,
+    path: "/a.md",
+    content,
+    lang: "markdown",
+    truncated: false,
+  };
   const out = renderBodyComponent(data, false, theme);
   assert.instanceOf(out, Markdown);
   assert.strictEqual(
@@ -777,7 +813,14 @@ it("renderResult renders the warning box for an error result", () => {
   const tool = registerTool();
   const result = {
     content: [],
-    details: { kind: "text", path: "/x", content: "", lang: undefined, truncated: false, error: "boom" },
+    details: {
+      kind: "text",
+      path: "/x",
+      content: "",
+      lang: undefined,
+      truncated: false,
+      error: "boom",
+    },
   } as any;
   const out = tool.renderResult!(result, { expanded: true, isPartial: false }, theme, {} as any);
   assert.ok(isComponent(out));
@@ -787,7 +830,13 @@ it("renderResult renders the warning box for an error result", () => {
 
 it("renderResult renders the body in a bordered box for a success result", () => {
   const tool = registerTool();
-  const record = { kind: "text", path: "/a.md", content: "# Hi", lang: "markdown", truncated: false };
+  const record = {
+    kind: "text",
+    path: "/a.md",
+    content: "# Hi",
+    lang: "markdown",
+    truncated: false,
+  };
   const out = tool.renderResult!(
     { content: [], details: record } as any,
     { expanded: true, isPartial: false },
@@ -877,7 +926,13 @@ it("the preview command appends the display record as a custom entry on success"
   assert.deepStrictEqual(pi.entries, [
     {
       type: "preview",
-      data: { kind: "text", path: "/cwd/file.md", content: "# Hi", lang: "markdown", truncated: false },
+      data: {
+        kind: "text",
+        path: "/cwd/file.md",
+        content: "# Hi",
+        lang: "markdown",
+        truncated: false,
+      },
     },
   ]);
   assert.strictEqual(calls.length, 0);
@@ -932,7 +987,15 @@ it("the entry renderer renders the path header and the body inside a bordered bo
   registerPreview(pi as unknown as ExtensionAPI, makePreviewContext(makeMemFs()));
   const renderer = pi.renderers.find((r) => r.type === "preview")!.renderer;
   const out = renderer(
-    { data: { kind: "text", path: "/abs/a.md", content: "# Hi", lang: "markdown", truncated: false } },
+    {
+      data: {
+        kind: "text",
+        path: "/abs/a.md",
+        content: "# Hi",
+        lang: "markdown",
+        truncated: false,
+      },
+    },
     { expanded: true },
     theme,
   );
@@ -973,9 +1036,14 @@ it("the entry renderer draws image entries as caption box + spacer + bare kitty 
     const boxRows = rendered.split("\n");
     assert.strictEqual(boxRows.includes(""), true);
     // …then the kitty transmission on its own line (no rail prefix, no box glyph before \x1b_G).
-    assert.strictEqual(lines.some((l: string) => l.startsWith("\x1b_G")), true);
     assert.strictEqual(
-      lines.some((l: string) => l.includes("│ \x1b_G") || l.includes("╭ \x1b_G") || /[╭─╰╯]\x1b_G/.test(l)),
+      lines.some((l: string) => l.startsWith("\x1b_G")),
+      true,
+    );
+    assert.strictEqual(
+      lines.some(
+        (l: string) => l.includes("│ \x1b_G") || l.includes("╭ \x1b_G") || /[╭─╰╯]\x1b_G/.test(l),
+      ),
       false,
     );
   } finally {

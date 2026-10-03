@@ -43,7 +43,7 @@ const state: FooterState = {
     deleted: 0,
     commit: null,
   }),
-  runtime: null,
+  runtime: [],
   sessionStartEpoch: 1_700_000_000_000,
   lastDoneIn: undefined,
   tracker: new ActivityTracker(),

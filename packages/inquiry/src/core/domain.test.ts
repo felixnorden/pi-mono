@@ -192,7 +192,9 @@ describe("normalizeQuestions", () => {
     );
     const q = questions[0]!;
     expect(q.label).toBe("Q7 deployBlock");
-    expect(q.prompt).toBe("Q7 — deployBlock guard: should anything guard it?\n\nRecommended: A — document-only.");
+    expect(q.prompt).toBe(
+      "Q7 — deployBlock guard: should anything guard it?\n\nRecommended: A — document-only.",
+    );
     expect(q.options[0]?.label).toBe("Document-only");
     expect(q.options[0]?.description).toBe(
       "Recommended. Zero mechanics; the Slice-13 gate + docs cover operator responsibility.",

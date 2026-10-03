@@ -22,6 +22,7 @@ const identityTheme = {
   fg: (_color: string, text: string): string => text,
   inverse: (text: string): string => text,
   bold: (text: string): string => text,
+  style: (text: string): string => text,
 } as unknown as Theme;
 
 const THEMED = [

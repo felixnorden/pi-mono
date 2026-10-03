@@ -15,7 +15,11 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { delimiter, join } from "path";
 import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
-import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
+import {
+  copyToClipboard,
+  type ExtensionUIContext,
+  type Theme,
+} from "@earendil-works/pi-coding-agent";
 import { QuestionResult, type Question } from "../core/domain.ts";
 import { initialMachineState, type MachineState } from "../core/machine.ts";
 import { buildScene } from "../core/scene.ts";
@@ -24,6 +28,19 @@ import { runQuestionnaire } from "../core/flow.ts";
 import type { KeyEvent } from "../core/keyboard.ts";
 import { parseKey } from "./keys.ts";
 import { paintScene } from "./painter.ts";
+
+/**
+ * Plain text of the current question for the clipboard: the prompt, the
+ * numbered options, and the implicit "Type something." entry. Empty on the
+ * submit tab, where no single question is active.
+ */
+export const questionClipboardText = (state: MachineState): string => {
+  const question = state.questions[state.currentTab];
+  if (!question) return "";
+  const lines = [question.prompt, ...question.options.map((o, i) => `${i + 1}. ${o.label}`)];
+  if (question.allowOther) lines.push(`${question.options.length + 1}. Type something.`);
+  return lines.join("\n");
+};
 
 export const runQuestionUi = (
   ui: ExtensionUIContext,
@@ -67,24 +84,54 @@ export const runQuestionUi = (
     // frame, but the scene only changes when the machine emits a new
     // snapshot or the terminal is resized (tui.md "Performance").
     const scene = makeSceneRenderer(() => cell.state, theme);
+
+    const feed = (data: string): void => {
+      // app.tools.expand (default ctrl+o): keep the transcript's tool-output
+      // expansion toggle working while the questionnaire owns input focus.
+      // The app only routes app actions through the editor, which is not
+      // focused here, so intercept the key ourselves. keybindings.matches()
+      // honors the user's keybindings.json (rebinds, "[]" disables).
+      if (keybindings.matches(data, "app.tools.expand")) {
+        ui.setToolsExpanded(!ui.getToolsExpanded());
+        return;
+      }
+      // ctrl+y copies the current question's text. The core has no binding
+      // for it, so it never reaches the keyboard queue.
+      if (data === "\x19") {
+        const text = questionClipboardText(cell.state);
+        if (text !== "") {
+          void copyToClipboard(text).then(
+            () => ui.notify("Copied question"),
+            (cause: unknown) =>
+              ui.notify(
+                `Copy failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+                "error",
+              ),
+          );
+        }
+        return;
+      }
+      const key = parseKey(data);
+      if (key) Effect.runSync(Queue.offer(keys, key));
+    };
+
     return {
       render: (width) => scene.render(width),
       invalidate: () => {
         scene.invalidate();
         tui.requestRender();
       },
-      handleInput: (data) => {
-        // app.tools.expand (default ctrl+o): keep the transcript's tool-output
-        // expansion toggle working while the questionnaire owns input focus.
-        // The app only routes app actions through the editor, which is not
-        // focused here, so intercept the key ourselves. keybindings.matches()
-        // honors the user's keybindings.json (rebinds, "[]" disables).
-        if (keybindings.matches(data, "app.tools.expand")) {
-          ui.setToolsExpanded(!ui.getToolsExpanded());
-          return;
-        }
-        const key = parseKey(data);
-        if (key) Effect.runSync(Queue.offer(keys, key));
+      handleInput: feed,
+      // pi normalizes wheel events to logical lines (the renderer applies
+      // `WheelScrollAccelerator`), so the delta is the step count directly.
+      // Reuse the arrow-key path so wheel and keyboard share one cursor model.
+      handleMouse: (event) => {
+        if (event.type !== "wheel") return undefined;
+        const delta = event.wheelDelta ?? 0;
+        if (delta === 0) return { handled: false };
+        const arrow = delta > 0 ? "\x1b[B" : "\x1b[A";
+        for (let i = 0; i < Math.abs(delta); i++) feed(arrow);
+        return { handled: true };
       },
       dispose: () => {
         Effect.runSync(Fiber.interrupt(fiber));
