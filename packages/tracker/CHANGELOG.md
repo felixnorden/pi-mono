@@ -1,5 +1,35 @@
 # @ftrdotdev/pi-tracker
 
+## 0.6.0
+
+### Minor Changes
+
+- 3803293: Add mouse-wheel navigation, clipboard copy, and new theme helpers.
+
+  - The footer lists every runtime that matches the working directory, in table order, and joins them with a dim `·`. Previously it showed the first match only. An empty result stays an empty segment.
+  - The editor's top border shows pi's working status indicator during a run: spinner and message when they fit, spinner alone on narrow widths. The mode glyph and the scroll hint move behind it in the label slot.
+  - `makeBorderedBox` takes a theme background token for `bg` instead of a caller-supplied function. Pass `"customMessageBg"` where the code passed `(s) => theme.bg("customMessageBg", s)`. The border, the embedded label, and the body now paint the same background.
+  - `@ftrdotdev/pi-tui` exports derived theme colors: `mixThemeTokens`, `recede`, `emphasize`, and `isDark`. Use them for shades that are not theme tokens, such as a dimmed border or a selected row. `recede` and `emphasize` follow `theme.appearance`, so a light theme needs no special case.
+  - The `/tracker` overlay moves the cursor with the mouse wheel and wraps at either end. `[c]` copies the selected list or item and reports `Copied ...` in the overlay.
+  - The selected row in the `/tracker` overlay uses the `selectedBg` token.
+  - The inquiry questionnaire moves the cursor with the mouse wheel and copies the open question and its options with `ctrl+y`.
+  - The header clears the visible screen once per process, on the first regular-mode mount, and never again. Fullscreen owns the alternate screen, where the clear only flickered. A re-mount (`reload`, `new`, `fork`, `/resume`, settings toggle) no longer clears: that write went outside pi-tui and desynced its differential redraw, which left the space for an extension widget blank until the next full repaint.
+
+- 56780b8: Start smart compaction when a tracker item completes.
+
+  - Completing an item in the active list starts one classifier call at the settle boundary. The call asks one two-label choice question per judged item: `needs-context` or `stands-alone`. It judges the whole ready frontier, dependents first, up to `smartCompaction.maxCandidates` items. It keeps the context when any item needs the completed work. When no item needs it, the extension starts Pi's own compaction. It then resumes the session with a pointer that names the next ready item.
+  - Classification reads five keys from `tui.json`: `smartCompaction.enabled`, `smartCompaction.classifier`, `smartCompaction.keepContextThreshold`, `smartCompaction.keepContextMinConfidence`, and `smartCompaction.maxCandidates`. It fails open. A disabled feature, no credential-available classifier, an error, a timeout, an aborted run, or an unready list keeps the full context.
+  - `smartCompaction.keepContextThreshold` sets the probability of `needs-context` at or above which the context is kept. The default is `0.5`. A value outside `(0, 1)` falls back to the default.
+  - `smartCompaction.keepContextMinConfidence` sets the answer confidence below which the context is kept. The default is `0.5`. A value outside `(0, 1)` falls back to the default. The floor only adds keeping, so an unsure answer cannot cause a premature compaction.
+  - `smartCompaction.maxCandidates` caps how many ready items one classification judges. The default is `8`. An integer outside `1..20` falls back to the default.
+  - The preference order is Cloudflare Clef Flash, then TypeSafe Jev, then OpenCode's Jev. The OpenCode entries are the fallback when only OpenCode credentials are configured. `smartCompaction.classifier` overrides the order. The shared config keys are pinned by `test-fixtures/tui-config.contract.json`.
+
+### Patch Changes
+
+- Updated dependencies [3803293]
+- Updated dependencies [6876f36]
+  - @ftrdotdev/pi-tui@0.6.0
+
 ## 0.5.2
 
 ### Patch Changes

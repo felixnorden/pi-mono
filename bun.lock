@@ -16,7 +16,7 @@
     },
     "packages/inquiry": {
       "name": "@ftrdotdev/pi-inquiry",
-      "version": "0.5.2",
+      "version": "0.6.0",
       "dependencies": {
         "@ftrdotdev/pi-tui": "^0.5.1",
         "effect": "catalog:effect",
@@ -51,7 +51,7 @@
     },
     "packages/tracker": {
       "name": "@ftrdotdev/pi-tracker",
-      "version": "0.5.2",
+      "version": "0.6.0",
       "dependencies": {
         "@effect/platform-node": "catalog:effect",
         "@effect/platform-node-shared": "catalog:effect",
@@ -78,7 +78,7 @@
     },
     "packages/tui": {
       "name": "@ftrdotdev/pi-tui",
-      "version": "0.5.2",
+      "version": "0.6.0",
       "dependencies": {
         "@effect/platform-node": "catalog:effect",
         "@effect/platform-node-shared": "catalog:effect",
