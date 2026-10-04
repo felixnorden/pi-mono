@@ -1,13 +1,18 @@
 import { assert, it } from "@effect/vitest";
 import { Effect, PlatformError, Schema } from "effect";
 import * as FileSystem from "effect/FileSystem";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
+  adjustKeepContextThreshold,
+  adjustMaxCandidates,
   applyDefaults,
   ConfigParseError,
   ConfigWriteError,
   DEFAULT_CONFIG,
+  decodeConfig,
   encodeConfig,
   getConfigPath,
   TuiConfig,
@@ -467,3 +472,129 @@ it("ConfigWriteError carries the expected tag", () => {
   assert.strictEqual(err._tag, "ConfigWriteError");
   assert.instanceOf(err, ConfigWriteError);
 });
+
+// ---------------------------------------------------------------------------
+// Smart compaction: shared with the tracker reader
+// ---------------------------------------------------------------------------
+
+const CONTRACT_FIXTURE = new URL(
+  "../../tracker/test-fixtures/tui-config.contract.json",
+  import.meta.url,
+);
+
+it.effect("the shared contract fixture decodes into the smart-compaction section", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const raw = yield* fs.readFileString(fileURLToPath(CONTRACT_FIXTURE));
+    const config = applyDefaults(decodeConfig(raw));
+    assert.strictEqual(config.smartCompaction.enabled, true);
+    assert.strictEqual(config.smartCompaction.classifier, "typesafe/jev-latest");
+    assert.strictEqual(config.smartCompaction.keepContextThreshold, 0.5);
+    assert.strictEqual(config.smartCompaction.keepContextMinConfidence, 0.5);
+    assert.strictEqual(config.smartCompaction.maxCandidates, 8);
+  }).pipe(Effect.provide(NodeFileSystem.layer)),
+);
+
+it("a config file without the smart-compaction section applies the smart-compaction defaults", () => {
+  const config = applyDefaults({ enabled: false });
+  assert.deepStrictEqual(config.smartCompaction, {
+    enabled: true,
+    classifier: null,
+    keepContextThreshold: 0.5,
+    keepContextMinConfidence: 0.5,
+    maxCandidates: 8,
+  });
+});
+
+it("an encoded default config carries all smart-compaction keys", () => {
+  const encoded = JSON.parse(encodeConfig(DEFAULT_CONFIG)) as {
+    smartCompaction: unknown;
+  };
+  assert.deepStrictEqual(encoded.smartCompaction, {
+    enabled: true,
+    classifier: null,
+    keepContextThreshold: 0.5,
+    keepContextMinConfidence: 0.5,
+    maxCandidates: 8,
+  });
+});
+
+it("a config file keeps a valid keep-context threshold", () => {
+  const config = applyDefaults({ smartCompaction: { keepContextThreshold: 0.72 } });
+  assert.strictEqual(config.smartCompaction.keepContextThreshold, 0.72);
+});
+
+it("an out-of-range keep-context threshold falls back to the default", () => {
+  for (const invalid of [0, 1, -0.1, 1.5]) {
+    const config = applyDefaults({ smartCompaction: { keepContextThreshold: invalid } });
+    assert.strictEqual(config.smartCompaction.keepContextThreshold, 0.5);
+  }
+});
+
+it("a config file keeps a valid keep-context min confidence", () => {
+  const config = applyDefaults({ smartCompaction: { keepContextMinConfidence: 0.72 } });
+  assert.strictEqual(config.smartCompaction.keepContextMinConfidence, 0.72);
+});
+
+it("an out-of-range keep-context min confidence falls back to the default", () => {
+  for (const invalid of [0, 1, -0.1, 1.5]) {
+    const config = applyDefaults({ smartCompaction: { keepContextMinConfidence: invalid } });
+    assert.strictEqual(config.smartCompaction.keepContextMinConfidence, 0.5);
+  }
+});
+
+it("adjustKeepContextThreshold steps by 0.05 and clamps inside the open interval", () => {
+  assert.strictEqual(adjustKeepContextThreshold(0.5, 0.05), 0.55);
+  assert.strictEqual(adjustKeepContextThreshold(0.5, -0.05), 0.45);
+  assert.strictEqual(adjustKeepContextThreshold(0.95, 0.05), 0.95);
+  assert.strictEqual(adjustKeepContextThreshold(0.05, -0.05), 0.05);
+});
+
+it("a config file keeps a valid max-candidates cap", () => {
+  const config = applyDefaults({ smartCompaction: { maxCandidates: 3 } });
+  assert.strictEqual(config.smartCompaction.maxCandidates, 3);
+});
+
+it("a cap that is not an integer in range falls back to the default", () => {
+  for (const invalid of [0, 21, 5.5, -1]) {
+    const config = applyDefaults({ smartCompaction: { maxCandidates: invalid } });
+    assert.strictEqual(config.smartCompaction.maxCandidates, 8);
+  }
+});
+
+it("adjustMaxCandidates steps by one and clamps to the bounds", () => {
+  assert.strictEqual(adjustMaxCandidates(8, 1), 9);
+  assert.strictEqual(adjustMaxCandidates(8, -1), 7);
+  assert.strictEqual(adjustMaxCandidates(20, 1), 20);
+  assert.strictEqual(adjustMaxCandidates(1, -1), 1);
+});
+
+it.effect("save keeps a chosen classifier through a load round trip", () =>
+  Effect.gen(function* () {
+    const mem = makeMemFs();
+    const config = yield* runWithMem(
+      mem,
+      Effect.gen(function* () {
+        const svc = yield* TuiConfigService;
+        yield* svc.save({
+          ...DEFAULT_CONFIG,
+          smartCompaction: {
+            enabled: false,
+            classifier: "typesafe/jev-latest",
+            keepContextThreshold: 0.8,
+            keepContextMinConfidence: 0.8,
+            maxCandidates: 3,
+          },
+        });
+        return yield* svc.load;
+      }),
+    );
+    assert.deepStrictEqual(config.smartCompaction, {
+      enabled: false,
+      classifier: "typesafe/jev-latest",
+      keepContextThreshold: 0.8,
+      keepContextMinConfidence: 0.8,
+      maxCandidates: 3,
+    });
+  }),
+);

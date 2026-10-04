@@ -76,6 +76,13 @@ const config: TuiConfig = {
     stalls: true,
     cost: true,
   },
+  smartCompaction: {
+    enabled: true,
+    classifier: null,
+    keepContextThreshold: 0.5,
+    keepContextMinConfidence: 0.5,
+    maxCandidates: 8,
+  },
 };
 const getConfig = () => config;
 

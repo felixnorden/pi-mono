@@ -9,7 +9,15 @@ import {
   Text,
 } from "@earendil-works/pi-tui";
 import { makeBorderedBox } from "../components/bordered-box.ts";
-import type { IconMode, TuiConfig, SettingsLanguage } from "../config.ts";
+import {
+  adjustKeepContextThreshold,
+  adjustMaxCandidates,
+  KEEP_CONTEXT_THRESHOLD_STEP,
+  MAX_CANDIDATES_STEP,
+  type IconMode,
+  type TuiConfig,
+  type SettingsLanguage,
+} from "../config.ts";
 import { VimRouter } from "../vim/vim-router.ts";
 
 interface SettingItem {
@@ -18,15 +26,29 @@ interface SettingItem {
   currentValue: string;
 }
 
-type Tab = "features" | "icons" | "segments" | "telemetry";
+type Tab = "features" | "compaction" | "icons" | "segments" | "telemetry";
 
-const TABS: Tab[] = ["features", "icons", "segments", "telemetry"];
+const BASE_TABS: readonly Tab[] = ["features", "icons", "segments", "telemetry"];
+const COMPACTION_TAB: Tab = "compaction";
+
+/**
+ * The tab order. The Compaction tab exists only while the tracker extension is
+ * loaded, so a session without it never shows tracker-only settings.
+ */
+const tabsFor = (hasTracker: boolean): readonly Tab[] =>
+  hasTracker ? ["features", COMPACTION_TAB, "icons", "segments", "telemetry"] : BASE_TABS;
 
 const COPY = {
   en: {
     title: "TUI Settings",
-    tabs: { features: "General", icons: "Icons", segments: "Footer", telemetry: "Telemetry" },
-    hint: "Tab/Shift+Tab/←/→/h/l: tabs · ↑/↓/j/k: move · Enter/Space: change · Esc/q: close",
+    tabs: {
+      features: "General",
+      compaction: "Compaction",
+      icons: "Icons",
+      segments: "Footer",
+      telemetry: "Telemetry",
+    },
+    hint: "Tab/Shift+Tab/←/→/h/l: tabs · ↑/↓/j/k: move · Enter/Space: change · +/−: threshold · Esc/q: close",
     labels: {
       enabled: "Enabled",
       vim: "Vim mode",
@@ -45,6 +67,11 @@ const COPY = {
       tokenCounts: "Token counts",
       stallDetails: "Stall details",
       costRate: "Cost rate",
+      smartCompactionEnabled: "Smart compaction",
+      smartCompactionClassifier: "Compaction classifier",
+      smartCompactionKeepContextThreshold: "Keep-context confidence",
+      smartCompactionKeepContextMinConfidence: "Min confidence",
+      smartCompactionMaxCandidates: "Max candidates",
     },
     values: {
       on: "On",
@@ -93,6 +120,99 @@ function toggleTelemetry(config: TuiConfig, key: keyof TuiConfig["telemetry"]): 
   };
 }
 
+/** A classifier the picker can offer. Structural, so a registry model fits. */
+export interface ClassifierDescriptor {
+  readonly provider: string;
+  readonly id: string;
+  readonly name?: string | undefined;
+}
+
+/** The classifier fields this dialog needs from the model registry. Structural,
+ *  so `ctx.modelRegistry` satisfies it and tests pass a plain object. */
+export interface ClassifierSource {
+  readonly getAvailableOfType: (
+    type: "classifier",
+  ) => Promise<readonly ClassifierDescriptor[]>;
+  readonly getModelsOfType: (type: "classifier") => readonly ClassifierDescriptor[];
+}
+
+/** The slice of `ExtensionAPI` the dialog needs to detect the tracker. */
+export interface TrackerProbe {
+  readonly getAllTools: () => readonly { readonly name: string }[];
+  readonly getCommands: () => readonly { readonly name: string; readonly source: string }[];
+}
+
+/**
+ * Whether the tracker extension is loaded in this session. The tracker
+ * registers a tool and a command named `tracker`; either one proves presence,
+ * so the Compaction tab is hidden when it is not installed.
+ */
+export const hasTrackerExtension = (probe: TrackerProbe): boolean =>
+  probe.getAllTools().some((tool) => tool.name === "tracker") ||
+  probe
+    .getCommands()
+    .some((command) => command.name === "tracker" && command.source === "extension");
+
+export interface ClassifierChoice {
+  /** `"provider/modelId"`, or null for the preference order. */
+  readonly value: string | null;
+  readonly label: string;
+}
+
+const AUTOMATIC_CLASSIFIER_CHOICE: ClassifierChoice = {
+  value: null,
+  label: "Automatic (prefer Clef Flash, then Jev)",
+};
+
+/**
+ * Credential-available classifiers, else the whole catalog. `Automatic` is
+ * always first, so a chosen classifier is reversible.
+ */
+export const loadClassifierChoices = async (
+  source: ClassifierSource,
+): Promise<ClassifierChoice[]> => {
+  let models: readonly ClassifierDescriptor[];
+  try {
+    const available = await source.getAvailableOfType("classifier");
+    models = available.length > 0 ? available : source.getModelsOfType("classifier");
+  } catch {
+    // Discovery failure must not empty the picker.
+    models = source.getModelsOfType("classifier");
+  }
+  const choices: ClassifierChoice[] = [AUTOMATIC_CLASSIFIER_CHOICE];
+  const seen = new Set<string>();
+  for (const model of models) {
+    const value = `${model.provider}/${model.id}`;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    choices.push({ value, label: model.name ?? value });
+  }
+  return choices;
+};
+
+function classifierLabel(choices: readonly ClassifierChoice[], value: string | null): string {
+  if (value === null) return AUTOMATIC_CLASSIFIER_CHOICE.label;
+  return choices.find((choice) => choice.value === value)?.label ?? value;
+}
+
+function toggleSmartCompaction(config: TuiConfig): TuiConfig {
+  return {
+    ...config,
+    smartCompaction: { ...config.smartCompaction, enabled: !config.smartCompaction.enabled },
+  };
+}
+
+function cycleClassifier(config: TuiConfig, choices: readonly ClassifierChoice[]): TuiConfig {
+  const currentIndex = choices.findIndex(
+    (choice) => choice.value === config.smartCompaction.classifier,
+  );
+  const next = choices[(currentIndex + 1) % choices.length] ?? AUTOMATIC_CLASSIFIER_CHOICE;
+  return { ...config, smartCompaction: { ...config.smartCompaction, classifier: next.value } };
+}
+
+/** Two-decimal display for the keep-context threshold row. */
+const formatKeepContextThreshold = (value: number): string => value.toFixed(2);
+
 function buildFeaturesItems(config: TuiConfig, copy: SettingsCopy): SettingItem[] {
   return [
     {
@@ -109,6 +229,43 @@ function buildFeaturesItems(config: TuiConfig, copy: SettingsCopy): SettingItem[
       id: "settingsLanguage",
       label: copy.labels.language,
       currentValue: copy.values.languages[config.settingsLanguage],
+    },
+  ];
+}
+
+/** Integer display for the max-candidates row. */
+const formatMaxCandidates = (value: number): string => String(value);
+
+function buildCompactionItems(
+  config: TuiConfig,
+  copy: SettingsCopy,
+  choices: readonly ClassifierChoice[],
+): SettingItem[] {
+  return [
+    {
+      id: "smartCompactionEnabled",
+      label: copy.labels.smartCompactionEnabled,
+      currentValue: config.smartCompaction.enabled ? copy.values.on : copy.values.off,
+    },
+    {
+      id: "smartCompactionClassifier",
+      label: copy.labels.smartCompactionClassifier,
+      currentValue: classifierLabel(choices, config.smartCompaction.classifier),
+    },
+    {
+      id: "smartCompactionKeepContextThreshold",
+      label: copy.labels.smartCompactionKeepContextThreshold,
+      currentValue: formatKeepContextThreshold(config.smartCompaction.keepContextThreshold),
+    },
+    {
+      id: "smartCompactionKeepContextMinConfidence",
+      label: copy.labels.smartCompactionKeepContextMinConfidence,
+      currentValue: formatKeepContextThreshold(config.smartCompaction.keepContextMinConfidence),
+    },
+    {
+      id: "smartCompactionMaxCandidates",
+      label: copy.labels.smartCompactionMaxCandidates,
+      currentValue: formatMaxCandidates(config.smartCompaction.maxCandidates),
     },
   ];
 }
@@ -153,11 +310,17 @@ function buildTelemetryItems(config: TuiConfig, copy: SettingsCopy): SettingItem
   ];
 }
 
-function buildItems(tab: Tab, config: TuiConfig): SettingItem[] {
+function buildItems(
+  tab: Tab,
+  config: TuiConfig,
+  choices: readonly ClassifierChoice[],
+): SettingItem[] {
   const copy = COPY[config.settingsLanguage];
   switch (tab) {
     case "features":
       return buildFeaturesItems(config, copy);
+    case "compaction":
+      return buildCompactionItems(config, copy, choices);
     case "icons":
       return buildIconsItems(config, copy);
     case "segments":
@@ -167,11 +330,20 @@ function buildItems(tab: Tab, config: TuiConfig): SettingItem[] {
   }
 }
 
-function handleSettingChange(tab: Tab, itemId: string, config: TuiConfig): TuiConfig {
+function handleSettingChange(
+  tab: Tab,
+  itemId: string,
+  config: TuiConfig,
+  choices: readonly ClassifierChoice[],
+): TuiConfig {
   if (tab === "features") {
     if (itemId === "enabled") return toggleEnabled(config);
     if (itemId === "vim") return toggleVim(config);
     if (itemId === "settingsLanguage") return toggleLanguage(config);
+  }
+  if (tab === "compaction") {
+    if (itemId === "smartCompactionEnabled") return toggleSmartCompaction(config);
+    if (itemId === "smartCompactionClassifier") return cycleClassifier(config, choices);
   }
   if (tab === "icons" && itemId === "mode") return cycleIconMode(config);
   if (tab === "segments") {
@@ -200,10 +372,13 @@ export interface SettingsUiHandle {
 export const makeSettingsUi = (
   theme: Theme,
   config: TuiConfig,
+  classifierChoices: readonly ClassifierChoice[],
+  hasTracker: boolean,
   onChange: (config: TuiConfig) => void,
   onClose: () => void,
   router: VimRouter["Service"],
 ): SettingsUiHandle => {
+  const tabs = tabsFor(hasTracker);
   let tab: Tab = "features";
   let currentConfig = config;
   let selectList!: SelectList;
@@ -214,16 +389,72 @@ export const makeSettingsUi = (
   let cachedLines: string[] | undefined;
   let compact = false;
 
+  const adjustThreshold = (delta: number): void => {
+    currentConfig = {
+      ...currentConfig,
+      smartCompaction: {
+        ...currentConfig.smartCompaction,
+        keepContextThreshold: adjustKeepContextThreshold(
+          currentConfig.smartCompaction.keepContextThreshold,
+          delta,
+        ),
+      },
+    };
+    onChange(currentConfig);
+    rebuild("smartCompactionKeepContextThreshold");
+  };
+
+  const adjustMinConfidenceBy = (delta: number): void => {
+    currentConfig = {
+      ...currentConfig,
+      smartCompaction: {
+        ...currentConfig.smartCompaction,
+        keepContextMinConfidence: adjustKeepContextThreshold(
+          currentConfig.smartCompaction.keepContextMinConfidence,
+          delta,
+        ),
+      },
+    };
+    onChange(currentConfig);
+    rebuild("smartCompactionKeepContextMinConfidence");
+  };
+
+  const adjustMaxCandidatesBy = (delta: number): void => {
+    currentConfig = {
+      ...currentConfig,
+      smartCompaction: {
+        ...currentConfig.smartCompaction,
+        maxCandidates: adjustMaxCandidates(currentConfig.smartCompaction.maxCandidates, delta),
+      },
+    };
+    onChange(currentConfig);
+    rebuild("smartCompactionMaxCandidates");
+  };
+
   const applySetting = (itemId: string): void => {
     selectedItemByTab[tab] = itemId;
-    currentConfig = handleSettingChange(tab, itemId, currentConfig);
+    // The numeric rows have no enumerated value: Enter/Space steps them up, and
+    // the +/− keys step them either way.
+    if (itemId === "smartCompactionKeepContextThreshold") {
+      adjustThreshold(KEEP_CONTEXT_THRESHOLD_STEP);
+      return;
+    }
+    if (itemId === "smartCompactionKeepContextMinConfidence") {
+      adjustMinConfidenceBy(KEEP_CONTEXT_THRESHOLD_STEP);
+      return;
+    }
+    if (itemId === "smartCompactionMaxCandidates") {
+      adjustMaxCandidatesBy(MAX_CANDIDATES_STEP);
+      return;
+    }
+    currentConfig = handleSettingChange(tab, itemId, currentConfig, classifierChoices);
     onChange(currentConfig);
     rebuild(itemId);
   };
 
   const switchTab = (offset: number): void => {
-    const idx = TABS.indexOf(tab);
-    tab = TABS[(idx + offset + TABS.length) % TABS.length]!;
+    const idx = tabs.indexOf(tab);
+    tab = tabs[(idx + offset + tabs.length) % tabs.length]!;
     rebuild();
   };
 
@@ -231,7 +462,7 @@ export const makeSettingsUi = (
     const copy = COPY[currentConfig.settingsLanguage];
     body.clear();
 
-    const tabBar = TABS.map((tabName) => {
+    const tabBar = tabs.map((tabName) => {
       const active = tabName === tab;
       const label = active ? `[${copy.tabs[tabName]}]` : ` ${copy.tabs[tabName]} `;
       return active ? theme.fg("accent", label) : theme.fg("dim", label);
@@ -239,7 +470,7 @@ export const makeSettingsUi = (
     body.addChild(new Text(tabBar, 0, 0));
     body.addChild(new Text(theme.fg("dim", copy.hint), 0, 0));
 
-    const items = buildItems(tab, currentConfig).map(
+    const items = buildItems(tab, currentConfig, classifierChoices).map(
       (item) =>
         ({
           value: item.id,
@@ -286,7 +517,7 @@ export const makeSettingsUi = (
    * (h/l drive switchTab) with or without the vim toggle.
    */
   const moveSelection = (offset: number): void => {
-    const items = buildItems(tab, currentConfig);
+    const items = buildItems(tab, currentConfig, classifierChoices);
     if (items.length === 0) return;
     const currentIndex = items.findIndex((item) => item.id === selectList.getSelectedItem()?.value);
     const nextIndex = (currentIndex + offset + items.length) % items.length;
@@ -322,6 +553,18 @@ export const makeSettingsUi = (
     if (matchesKey(data, Key.space) || data === " ") {
       const selected = selectList.getSelectedItem();
       if (selected) applySetting(selected.value);
+    } else if (data === "+" || data === "=" || data === "-" || data === "_") {
+      const selected = selectList.getSelectedItem()?.value;
+      const sign = data === "+" || data === "=" ? 1 : -1;
+      if (selected === "smartCompactionKeepContextThreshold") {
+        adjustThreshold(sign * KEEP_CONTEXT_THRESHOLD_STEP);
+      } else if (selected === "smartCompactionKeepContextMinConfidence") {
+        adjustMinConfidenceBy(sign * KEEP_CONTEXT_THRESHOLD_STEP);
+      } else if (selected === "smartCompactionMaxCandidates") {
+        adjustMaxCandidatesBy(sign * MAX_CANDIDATES_STEP);
+      } else {
+        selectList.handleInput?.(data);
+      }
     } else {
       selectList.handleInput?.(data);
     }
@@ -365,11 +608,15 @@ export function registerSettingsCommand(
     description: "Open the tui settings UI",
     handler: async (_args, ctx: ExtensionContext) => {
       if (!ctx.hasUI) return;
+      const choices = await loadClassifierChoices(ctx.modelRegistry);
+      const hasTracker = hasTrackerExtension(pi);
       await ctx.ui.custom<void>(
         (tui: TUI, theme, _kb, done) => {
           const ui = makeSettingsUi(
             theme,
             hooks.getConfig(),
+            choices,
+            hasTracker,
             (config) => hooks.onConfigChanged(config),
             () => done(undefined),
             router,

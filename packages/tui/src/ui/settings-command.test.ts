@@ -3,7 +3,15 @@ import { Effect } from "effect";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_CONFIG, type TuiConfig } from "../config.ts";
 import { VimRouter } from "../vim/vim-router.ts";
-import { makeSettingsUi, type SettingsUiHandle } from "./settings-command.ts";
+import {
+  hasTrackerExtension,
+  loadClassifierChoices,
+  makeSettingsUi,
+  type ClassifierChoice,
+  type ClassifierDescriptor,
+  type ClassifierSource,
+  type SettingsUiHandle,
+} from "./settings-command.ts";
 
 // Pass-through theme: selections and the active tab are detected via
 // plain-text markers ("→ " prefix, "[Tab]" brackets) in the render output.
@@ -29,11 +37,23 @@ interface UiSpy {
   closes: number;
 }
 
-const makeUi = (overrides: Partial<TuiConfig> = {}): UiSpy => {
+const defaultChoices: ClassifierChoice[] = [
+  { value: null, label: "Automatic (prefer Clef Flash, then Jev)" },
+  { value: "typesafe/jev-latest", label: "Safe" },
+  { value: "cloudflare-workers-ai/@cf/cloudflare/clef-flash", label: "Fast" },
+];
+
+const makeUi = (
+  overrides: Partial<TuiConfig> = {},
+  choices: readonly ClassifierChoice[] = defaultChoices,
+  hasTracker = true,
+): UiSpy => {
   const spy: UiSpy = { ui: undefined!, changes: [], closes: 0 };
   spy.ui = makeSettingsUi(
     theme,
     { ...structuredClone(DEFAULT_CONFIG), ...overrides },
+    choices,
+    hasTracker,
     (config) => {
       spy.changes.push(config);
     },
@@ -53,7 +73,7 @@ const selectedShows = (ui: SettingsUiHandle, label: string): boolean =>
 const activeTab = (ui: SettingsUiHandle): string | undefined => {
   const line = rendered(ui).find((l) => l.includes("["));
   if (!line) return undefined;
-  for (const tab of ["General", "Icons", "Footer", "Telemetry"] as const) {
+  for (const tab of ["General", "Compaction", "Icons", "Footer", "Telemetry"] as const) {
     if (line.includes(`[${tab}]`)) return tab;
   }
   return undefined;
@@ -139,6 +159,8 @@ it("j moves the selection with vim off (settings gate is unconditional)", () => 
 it("l switches to the next tab and wraps from the last tab to the first", () => {
   const { ui } = makeUi();
   ui.handleInput("l");
+  assert.strictEqual(activeTab(ui), "Compaction");
+  ui.handleInput("l");
   assert.strictEqual(activeTab(ui), "Icons");
   ui.handleInput("l");
   assert.strictEqual(activeTab(ui), "Footer");
@@ -157,6 +179,8 @@ it("h switches to the previous tab and wraps from the first tab to the last", ()
   ui.handleInput("h");
   assert.strictEqual(activeTab(ui), "Icons");
   ui.handleInput("h");
+  assert.strictEqual(activeTab(ui), "Compaction");
+  ui.handleInput("h");
   assert.strictEqual(activeTab(ui), "General");
 });
 
@@ -164,7 +188,7 @@ it("remembers the selected item per tab when navigating with h/l", () => {
   const { ui } = makeUi();
   ui.handleInput("j"); // features: Vim mode
   ui.handleInput("j"); // features: Language
-  ui.handleInput("l"); // → Icons
+  ui.handleInput("l"); // → Compaction
   ui.handleInput("h"); // → back to features
   assert.strictEqual(selectedShows(ui, "Language"), true);
 });
@@ -184,13 +208,14 @@ it("the arrow keys still move the selection", () => {
 it("Tab and Shift+Tab still switch tabs", () => {
   const { ui } = makeUi();
   ui.handleInput("\t");
-  assert.strictEqual(activeTab(ui), "Icons");
+  assert.strictEqual(activeTab(ui), "Compaction");
   ui.handleInput("\x1b[Z");
   assert.strictEqual(activeTab(ui), "General");
 });
 
 it("j and k work on tabs with more items than fit the visible list", () => {
   const { ui } = makeUi();
+  ui.handleInput("l");
   ui.handleInput("l");
   ui.handleInput("l"); // → Footer (9 items)
   ui.handleInput("k"); // wrap to the bottom of the segments list
@@ -222,4 +247,308 @@ it("unrelated letters are ignored", () => {
   assert.strictEqual(changes.length, 0);
   assert.strictEqual(closes, 0);
   assert.strictEqual(selectedShows(ui, "Enabled"), true);
+});
+
+// ---------------------------------------------------------------------------
+// Compaction tab: gated on the tracker extension, five rows
+// ---------------------------------------------------------------------------
+
+/** Switch from the General tab to the Compaction tab. */
+const goToCompaction = (ui: SettingsUiHandle): void => {
+  ui.handleInput("\t");
+};
+
+type CompactionRow = "toggle" | "classifier" | "threshold" | "minConfidence" | "cap";
+const ROW_OFFSET: Record<CompactionRow, number> = {
+  toggle: 0,
+  classifier: 1,
+  threshold: 2,
+  minConfidence: 3,
+  cap: 4,
+};
+
+/** Switch to the Compaction tab and move to the named row. */
+const selectCompactionRow = (ui: SettingsUiHandle, row: CompactionRow): void => {
+  goToCompaction(ui);
+  for (let step = 0; step < ROW_OFFSET[row]; step += 1) ui.handleInput("j");
+};
+
+it("the Compaction tab is hidden when the tracker extension is not loaded", () => {
+  const { ui } = makeUi({}, defaultChoices, false);
+  assert.strictEqual(activeTab(ui), "General");
+  ui.handleInput("l");
+  assert.strictEqual(activeTab(ui), "Icons");
+  assert.strictEqual(
+    rendered(ui).some((line) => line.includes("Smart compaction")),
+    false,
+  );
+});
+
+it("the Compaction tab shows the toggle, classifier, threshold, min confidence, and cap", () => {
+  const { ui } = makeUi();
+  goToCompaction(ui);
+  const lines = rendered(ui);
+  for (const label of [
+    "Smart compaction",
+    "Compaction classifier",
+    "Keep-context confidence",
+    "Min confidence",
+    "Max candidates",
+  ]) {
+    assert.strictEqual(lines.some((line) => line.includes(label)), true);
+  }
+});
+
+it("pressing enter toggles smart compaction On -> Off -> On", () => {
+  const { ui, changes } = makeUi();
+  selectCompactionRow(ui, "toggle");
+  assert.strictEqual(selectedShows(ui, "Smart compaction"), true);
+
+  ui.handleInput("\r");
+  assert.strictEqual(changes.at(-1)?.smartCompaction.enabled, false);
+  ui.handleInput("\r");
+  assert.strictEqual(changes.at(-1)?.smartCompaction.enabled, true);
+  assert.deepStrictEqual(
+    changes.map((config) => config.smartCompaction.enabled),
+    [false, true],
+  );
+});
+
+it("cycling the classifier row advances to the next enumerated choice", () => {
+  const { ui, changes } = makeUi();
+  selectCompactionRow(ui, "classifier");
+
+  ui.handleInput("\r");
+
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0]!.smartCompaction.classifier, "typesafe/jev-latest");
+});
+
+it("cycling past the last classifier choice returns to Automatic", () => {
+  const { ui, changes } = makeUi({
+    smartCompaction: {
+      ...DEFAULT_CONFIG.smartCompaction,
+      classifier: "cloudflare-workers-ai/@cf/cloudflare/clef-flash",
+    },
+  });
+  selectCompactionRow(ui, "classifier");
+
+  ui.handleInput("\r");
+
+  assert.strictEqual(changes.at(-1)?.smartCompaction.classifier, null);
+});
+
+it("the classifier row shows the label of the chosen model", () => {
+  const { ui } = makeUi({
+    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, classifier: "typesafe/jev-latest" },
+  });
+  selectCompactionRow(ui, "classifier");
+  const lines = rendered(ui);
+  assert.strictEqual(
+    lines.some((line) => line.includes("Compaction classifier") && line.includes("Safe")),
+    true,
+  );
+});
+
+it("the Compaction tab adds exactly the five smart-compaction rows", () => {
+  const { ui } = makeUi();
+  selectCompactionRow(ui, "cap");
+  assert.strictEqual(selectedShows(ui, "Max candidates"), true);
+  ui.handleInput("j"); // wraps to the first item, proving no extra row follows
+  assert.strictEqual(selectedShows(ui, "Smart compaction"), true);
+});
+
+it("the threshold row shows the current value with two decimals", () => {
+  const { ui } = makeUi({
+    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, keepContextThreshold: 0.7 },
+  });
+  goToCompaction(ui);
+  assert.strictEqual(
+    rendered(ui).some((line) => line.includes("Keep-context confidence") && line.includes("0.70")),
+    true,
+  );
+});
+
+it("Enter on the threshold row steps the value up by 0.05", () => {
+  const { ui, changes } = makeUi();
+  selectCompactionRow(ui, "threshold");
+  assert.strictEqual(selectedShows(ui, "Keep-context confidence"), true);
+
+  ui.handleInput("\r");
+
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0]!.smartCompaction.keepContextThreshold, 0.55);
+});
+
+it("the +/- keys adjust the threshold row and clamp inside the open interval", () => {
+  const { ui, changes } = makeUi({
+    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, keepContextThreshold: 0.95 },
+  });
+  selectCompactionRow(ui, "threshold");
+
+  ui.handleInput("+");
+  assert.strictEqual(changes.at(-1)?.smartCompaction.keepContextThreshold, 0.95);
+  ui.handleInput("-");
+  assert.strictEqual(changes.at(-1)?.smartCompaction.keepContextThreshold, 0.9);
+});
+
+it("the min-confidence row shows the current value with two decimals", () => {
+  const { ui } = makeUi({
+    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, keepContextMinConfidence: 0.7 },
+  });
+  goToCompaction(ui);
+  assert.strictEqual(
+    rendered(ui).some((line) => line.includes("Min confidence") && line.includes("0.70")),
+    true,
+  );
+});
+
+it("Enter on the min-confidence row steps the value up by 0.05", () => {
+  const { ui, changes } = makeUi();
+  selectCompactionRow(ui, "minConfidence");
+  assert.strictEqual(selectedShows(ui, "Min confidence"), true);
+
+  ui.handleInput("\r");
+
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0]!.smartCompaction.keepContextMinConfidence, 0.55);
+});
+
+it("the +/- keys adjust the min-confidence row and clamp inside the open interval", () => {
+  const { ui, changes } = makeUi({
+    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, keepContextMinConfidence: 0.95 },
+  });
+  selectCompactionRow(ui, "minConfidence");
+
+  ui.handleInput("+");
+  assert.strictEqual(changes.at(-1)?.smartCompaction.keepContextMinConfidence, 0.95);
+  ui.handleInput("-");
+  assert.strictEqual(changes.at(-1)?.smartCompaction.keepContextMinConfidence, 0.9);
+});
+
+it("the cap row shows the integer value", () => {
+  const { ui } = makeUi({
+    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, maxCandidates: 3 },
+  });
+  goToCompaction(ui);
+  assert.strictEqual(
+    rendered(ui).some((line) => line.includes("Max candidates") && line.includes("3")),
+    true,
+  );
+});
+
+it("Enter on the cap row steps the value up by one", () => {
+  const { ui, changes } = makeUi();
+  selectCompactionRow(ui, "cap");
+
+  ui.handleInput("\r");
+
+  assert.strictEqual(changes.length, 1);
+  assert.strictEqual(changes[0]!.smartCompaction.maxCandidates, 9);
+});
+
+it("the +/- keys adjust the cap row and clamp to the bounds", () => {
+  const { ui, changes } = makeUi({
+    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, maxCandidates: 20 },
+  });
+  selectCompactionRow(ui, "cap");
+
+  ui.handleInput("+");
+  assert.strictEqual(changes.at(-1)?.smartCompaction.maxCandidates, 20);
+  ui.handleInput("-");
+  assert.strictEqual(changes.at(-1)?.smartCompaction.maxCandidates, 19);
+});
+
+// ---------------------------------------------------------------------------
+// hasTrackerExtension: the gate itself
+// ---------------------------------------------------------------------------
+
+const probe = (
+  tools: readonly string[],
+  commands: readonly { name: string; source: string }[],
+): {
+  getAllTools: () => readonly { name: string }[];
+  getCommands: () => readonly { name: string; source: string }[];
+} => ({
+  getAllTools: () => tools.map((name) => ({ name })),
+  getCommands: () => commands,
+});
+
+it("hasTrackerExtension is true when the tracker tool is registered", () => {
+  assert.strictEqual(hasTrackerExtension(probe(["read", "tracker"], [])), true);
+});
+
+it("hasTrackerExtension is true when the tracker extension command is registered", () => {
+  assert.strictEqual(
+    hasTrackerExtension(probe([], [{ name: "tracker", source: "extension" }])),
+    true,
+  );
+});
+
+it("hasTrackerExtension ignores a non-extension command named tracker", () => {
+  assert.strictEqual(hasTrackerExtension(probe([], [{ name: "tracker", source: "prompt" }])), false);
+});
+
+it("hasTrackerExtension is false when the tracker is not loaded", () => {
+  assert.strictEqual(
+    hasTrackerExtension(probe(["read", "bash"], [{ name: "tui", source: "extension" }])),
+    false,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// loadClassifierChoices: credential-available models, else the catalog
+// ---------------------------------------------------------------------------
+
+const descriptor = (provider: string, id: string, name: string): ClassifierDescriptor => ({
+  provider,
+  id,
+  name,
+});
+
+const catalogModels: readonly ClassifierDescriptor[] = [
+  descriptor("cloudflare-workers-ai", "@cf/cloudflare/clef-flash", "Clef Flash"),
+  descriptor("typesafe", "jev-latest", "Jev"),
+  descriptor("other", "alpha", "Alpha"),
+  descriptor("other", "beta", "Beta"),
+];
+
+const source = (available: readonly ClassifierDescriptor[]): ClassifierSource => ({
+  getAvailableOfType: async () => available,
+  getModelsOfType: () => catalogModels,
+});
+
+it("loadClassifierChoices prefers credential-available classifiers", async () => {
+  const choices = await loadClassifierChoices(source([catalogModels[0]!, catalogModels[1]!]));
+  assert.deepStrictEqual(
+    choices.map((choice) => choice.value),
+    [null, "cloudflare-workers-ai/@cf/cloudflare/clef-flash", "typesafe/jev-latest"],
+  );
+  assert.strictEqual(choices[0]!.label, "Automatic (prefer Clef Flash, then Jev)");
+});
+
+it("loadClassifierChoices falls back to the full catalog when none are available", async () => {
+  const choices = await loadClassifierChoices(source([]));
+  assert.strictEqual(choices.length, catalogModels.length + 1);
+  assert.deepStrictEqual(
+    choices.map((choice) => choice.value),
+    [
+      null,
+      "cloudflare-workers-ai/@cf/cloudflare/clef-flash",
+      "typesafe/jev-latest",
+      "other/alpha",
+      "other/beta",
+    ],
+  );
+});
+
+it("loadClassifierChoices survives a discovery failure", async () => {
+  const failing: ClassifierSource = {
+    getAvailableOfType: async () => {
+      throw new Error("no credentials");
+    },
+    getModelsOfType: () => catalogModels,
+  };
+  const choices = await loadClassifierChoices(failing);
+  assert.strictEqual(choices.length, catalogModels.length + 1);
 });

@@ -37,6 +37,13 @@ export class TuiConfig extends Schema.Class<TuiConfig>("tui/config/TuiConfig")({
     stalls: Schema.Boolean,
     cost: Schema.Boolean,
   }),
+  smartCompaction: Schema.Struct({
+    enabled: Schema.Boolean,
+    classifier: Schema.NullOr(Schema.String),
+    keepContextThreshold: Schema.Number,
+    keepContextMinConfidence: Schema.Number,
+    maxCandidates: Schema.Number,
+  }),
 }) {}
 
 export type TelemetryConfig = TuiConfig["telemetry"];
@@ -66,7 +73,55 @@ export const DEFAULT_CONFIG: TuiConfig = {
     stalls: true,
     cost: true,
   },
+  smartCompaction: {
+    enabled: true,
+    classifier: null,
+    keepContextThreshold: 0.5,
+    keepContextMinConfidence: 0.5,
+    maxCandidates: 8,
+  },
 };
+
+/**
+ * Step and bounds for the settings dialog's threshold editor. The value must
+ * stay strictly inside (0, 1); the dialog clamps to this open interval so a
+ * user cannot write a value the tracker would reject.
+ */
+export const KEEP_CONTEXT_THRESHOLD_STEP = 0.05;
+export const KEEP_CONTEXT_THRESHOLD_MIN = 0.05;
+export const KEEP_CONTEXT_THRESHOLD_MAX = 0.95;
+
+/** True when `value` is a usable keep-context threshold: strictly inside (0, 1). */
+export const isKeepContextThreshold = (value: number): boolean => value > 0 && value < 1;
+
+/**
+ * True when `value` is a usable confidence floor: strictly inside (0, 1). The
+ * tracker applies the same open-interval rule to both knobs.
+ */
+export const isKeepContextMinConfidence = isKeepContextThreshold;
+
+/** Nudge a threshold by `delta`, rounded to two decimals and kept inside the bounds. */
+export const adjustKeepContextThreshold = (value: number, delta: number): number => {
+  const next = Math.round((value + delta) * 100) / 100;
+  return Math.min(KEEP_CONTEXT_THRESHOLD_MAX, Math.max(KEEP_CONTEXT_THRESHOLD_MIN, next));
+};
+
+/**
+ * Step and bounds for the settings dialog's max-candidates editor. The tracker
+ * accepts an integer in [1, 20]; the dialog clamps to this interval.
+ */
+export const MAX_CANDIDATES_STEP = 1;
+export const MAX_CANDIDATES_MIN = 1;
+export const MAX_CANDIDATES_MAX = 20;
+export const DEFAULT_MAX_CANDIDATES = 8;
+
+/** True when `value` is a usable cap: an integer in [1, 20]. */
+export const isMaxCandidates = (value: number): boolean =>
+  Number.isInteger(value) && value >= MAX_CANDIDATES_MIN && value <= MAX_CANDIDATES_MAX;
+
+/** Nudge a cap by `delta`, clamped to the bounds. */
+export const adjustMaxCandidates = (value: number, delta: number): number =>
+  Math.min(MAX_CANDIDATES_MAX, Math.max(MAX_CANDIDATES_MIN, Math.round(value + delta)));
 
 export function getConfigPath(): string {
   return join(getAgentDir(), CONFIG_FILE_NAME);
@@ -109,6 +164,15 @@ const FileSchema = Schema.fromJsonString(
         cost: OptionalBoolean,
       }),
     ),
+    smartCompaction: Schema.optional(
+      Schema.Struct({
+        enabled: OptionalBoolean,
+        classifier: Schema.optional(Schema.NullOr(Schema.String)),
+        keepContextThreshold: Schema.optional(Schema.Finite),
+        keepContextMinConfidence: Schema.optional(Schema.Finite),
+        maxCandidates: Schema.optional(Schema.Int),
+      }),
+    ),
   }),
   { space: 2 },
 );
@@ -149,6 +213,25 @@ export function applyDefaults(partial: TuiConfigFile): TuiConfig {
       tokens: partial.telemetry?.tokens ?? DEFAULT_CONFIG.telemetry.tokens,
       stalls: partial.telemetry?.stalls ?? DEFAULT_CONFIG.telemetry.stalls,
       cost: partial.telemetry?.cost ?? DEFAULT_CONFIG.telemetry.cost,
+    },
+    smartCompaction: {
+      enabled: partial.smartCompaction?.enabled ?? DEFAULT_CONFIG.smartCompaction.enabled,
+      classifier: partial.smartCompaction?.classifier ?? DEFAULT_CONFIG.smartCompaction.classifier,
+      keepContextThreshold:
+        partial.smartCompaction?.keepContextThreshold !== undefined &&
+        isKeepContextThreshold(partial.smartCompaction.keepContextThreshold)
+          ? partial.smartCompaction.keepContextThreshold
+          : DEFAULT_CONFIG.smartCompaction.keepContextThreshold,
+      keepContextMinConfidence:
+        partial.smartCompaction?.keepContextMinConfidence !== undefined &&
+        isKeepContextMinConfidence(partial.smartCompaction.keepContextMinConfidence)
+          ? partial.smartCompaction.keepContextMinConfidence
+          : DEFAULT_CONFIG.smartCompaction.keepContextMinConfidence,
+      maxCandidates:
+        partial.smartCompaction?.maxCandidates !== undefined &&
+        isMaxCandidates(partial.smartCompaction.maxCandidates)
+          ? partial.smartCompaction.maxCandidates
+          : DEFAULT_CONFIG.smartCompaction.maxCandidates,
     },
   };
 }
