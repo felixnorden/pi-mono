@@ -6,9 +6,9 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { dependentsOf, formatItemRef, parseItemRef, unsatisfiedDeps } from "./deps.ts";
-import type { TodoItem, TodoList, TrackerState } from "./domain.ts";
-import type { EncodedState } from "./persistence.ts";
+import { dependentsOf, formatItemRef, parseItemRef, unsatisfiedDeps } from "../core/deps.ts";
+import type { TodoItem, TodoList, TrackerState } from "../core/domain.ts";
+import type { EncodedState } from "../core/persistence.ts";
 
 /** Tracker tool actions, in the same order as the store operations. */
 export const TOOL_ACTIONS = [

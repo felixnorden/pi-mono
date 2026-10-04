@@ -1,16 +1,24 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { makeBorderedBox } from "@ftrdotdev/pi-tui";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { Effect, Layer, ManagedRuntime, Option, Result } from "effect";
+import { join } from "node:path";
+import { ClassifierGateway } from "./compaction/classifier.ts";
+import { CompletionObserver } from "./compaction/completion.ts";
 import {
   formatItemRef,
   parseItemRef,
   type DependencyItem,
   type DependencyListView,
-} from "./deps.ts";
-import { TodoItem, TodoList, TrackerState, emptyState, encodeState } from "./domain.ts";
-import { TrackerPersistence } from "./persistence.ts";
-import { TrackerError, TrackerStore, type ItemSpec, type UpdateItemPatch } from "./store.ts";
+} from "./core/deps.ts";
+import { TodoItem, TodoList, TrackerState, emptyState, encodeState } from "./core/domain.ts";
+import { TrackerPersistence } from "./core/persistence.ts";
+import { SMART_COMPACTION_CUSTOM_TYPE } from "./compaction/pointer.ts";
+import { SMART_COMPACTION_CONFIG_FILE, SmartCompactionSettingsService } from "./compaction/settings.ts";
+import { SettleDecider } from "./compaction/settle.ts";
+import { TrackerError, TrackerStore, type ItemSpec, type UpdateItemPatch } from "./core/store.ts";
 import {
   TRACKER_TOOL_METADATA,
   blockedDoneNote,
@@ -19,14 +27,14 @@ import {
   type TrackerToolAction,
   type TrackerToolDetails,
   type TrackerToolParams,
-} from "./tool-metadata.ts";
+} from "./presentation/tool-metadata.ts";
 import {
   displayList,
   makeTrackerOverlay,
   makeTrackerWidget,
   readinessSuffix,
   type TrackerUiAction,
-} from "./ui.ts";
+} from "./presentation/ui.ts";
 
 /** Custom-entry type used to persist the tracker state in the session. */
 const CUSTOM_TYPE = "tracker/state";
@@ -46,6 +54,14 @@ const withStore = <A, E>(
 const withPersistence = <A, E>(
   f: (persistence: TrackerPersistence["Service"]) => Effect.Effect<A, E>,
 ): Effect.Effect<A, E, TrackerPersistence> => Effect.flatMap(TrackerPersistence, f);
+
+const withCompletionObserver = <A, E>(
+  f: (observer: CompletionObserver["Service"]) => Effect.Effect<A, E>,
+): Effect.Effect<A, E, CompletionObserver> => Effect.flatMap(CompletionObserver, f);
+
+const withSettleDecider = <A, E>(
+  f: (decider: SettleDecider["Service"]) => Effect.Effect<A, E>,
+): Effect.Effect<A, E, SettleDecider> => Effect.flatMap(SettleDecider, f);
 
 /** Throw for a missing required tool parameter; caught in `execute`. */
 const requireParam = <T>(value: T | undefined, name: string): T => {
@@ -71,11 +87,21 @@ const toItemSpecs = (raw: NonNullable<TrackerToolParams["text"]>): ItemSpec[] =>
 // --------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI): void {
+  // The settings path is resolved inside the factory, so a test can point
+  // ENV_AGENT_DIR at a temp directory before `tracker(api)` runs.
+  const decisionServices = Layer.mergeAll(
+    CompletionObserver.layer,
+    ClassifierGateway.layer,
+    SmartCompactionSettingsService.make(join(getAgentDir(), SMART_COMPACTION_CONFIG_FILE)),
+  );
+
   const runtime = ManagedRuntime.make(
-    TrackerStore.layer.pipe(
+    SettleDecider.layer.pipe(
+      Layer.provideMerge(Layer.mergeAll(TrackerStore.layer, decisionServices)),
       Layer.provideMerge(
         TrackerPersistence.layer((encoded) => pi.appendEntry(CUSTOM_TYPE, encoded)),
       ),
+      Layer.provide(NodeFileSystem.layer),
     ),
   );
 
@@ -183,6 +209,12 @@ export default function (pi: ExtensionAPI): void {
   const applyMutation = (ctx: ExtensionContext): Promise<TrackerState> =>
     enqueue(async () => {
       const next = await runtime.runPromise(withStore((store) => store.state));
+      // Record the transition before the mirror moves, so the observer sees the
+      // true pre-mutation state. Every mutation runs this, so a later mutation
+      // that completes nothing still refreshes the live snapshot.
+      await runtime.runPromise(
+        withCompletionObserver((observer) => observer.record(state, next)),
+      );
       state = next;
       await runtime.runPromise(
         withPersistence((p) => p.save(next)).pipe(
@@ -263,6 +295,58 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", async () => {
     await runtime.dispose();
+  });
+
+  // --- Smart compaction ---------------------------------------------------
+
+  /**
+   * Pi rethrows the provider's abort error on cancellation, so the error text
+   * is not a reliable signal. `session_compact_failed` fires first and carries
+   * the fact.
+   */
+  let compactionAborted = false;
+  pi.on("session_compact_failed", (event) => {
+    compactionAborted = event.aborted;
+  });
+
+  pi.on("agent_before_settle", async (event, ctx) => {
+    const decision = await runtime.runPromise(
+      withSettleDecider((decider) =>
+        decider.decide({
+          registry: ctx.modelRegistry,
+          outcome: event.outcome,
+          signal: ctx.signal,
+        }),
+      ),
+    );
+    if (decision.kind !== "compact") return;
+    // The run signal can fire after the verdict, while the classifier is the
+    // last thing between here and compaction. An abort keeps the context.
+    if (ctx.signal?.aborted) return;
+    const pointer = decision.pointer;
+    // Delivery comes from pi's completion contract, which fires only after
+    // compaction has finished. `deliver` is idempotent, so a double callback
+    // cannot start two turns.
+    let resumed = false;
+    const deliver = () => {
+      if (resumed) return;
+      resumed = true;
+      pi.sendMessage(
+        { customType: SMART_COMPACTION_CUSTOM_TYPE, content: pointer, display: true },
+        { triggerTurn: true },
+      );
+    };
+    compactionAborted = false;
+    ctx.compact({
+      onComplete: () => deliver(),
+      onError: (error) => {
+        // Compaction failed, but the run already stopped and the context is
+        // intact, so the pointer still resumes the work. A user cancellation
+        // is different: nothing is resumed.
+        ctx.ui.notify(`tracker: smart compaction failed: ${error.message}`, "warning");
+        if (!compactionAborted) deliver();
+      },
+    });
   });
 
   // --- Tool ---------------------------------------------------------------

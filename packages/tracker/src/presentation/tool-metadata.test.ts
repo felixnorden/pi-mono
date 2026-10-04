@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
-import { TodoItem, TodoList, TrackerState, emptyState } from "./domain.ts";
+import { TodoItem, TodoList, TrackerState, emptyState } from "../core/domain.ts";
 import {
   TOOL_ACTIONS,
   TRACKER_TOOL_METADATA,

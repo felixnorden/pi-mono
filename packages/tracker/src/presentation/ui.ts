@@ -15,9 +15,9 @@ import {
   type DependencyItem,
   type DependencyList,
   type DependencyListView,
-} from "./deps.ts";
-import type { TodoItem, TodoList, TrackerState } from "./domain.ts";
-import type { UpdateItemPatch } from "./store.ts";
+} from "../core/deps.ts";
+import type { TodoItem, TodoList, TrackerState } from "../core/domain.ts";
+import type { UpdateItemPatch } from "../core/store.ts";
 
 const MAX_LISTS = 8;
 const MAX_ITEMS = 12;

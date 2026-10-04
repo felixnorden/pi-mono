@@ -1,8 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { orderedItems } from "./deps.ts";
-import { TodoItem, TodoList, TrackerState } from "./domain.ts";
+import { orderedItems } from "../core/deps.ts";
+import { TodoItem, TodoList, TrackerState } from "../core/domain.ts";
 import {
   makeTrackerOverlay,
   makeTrackerWidget,

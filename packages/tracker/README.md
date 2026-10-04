@@ -11,6 +11,7 @@ pi-tracker is an extension for Pi. It manages todolists in your session.
 - Declare dependencies between items, so work happens in order.
 - Persist todolists with the session.
 - Show the active todolist in a widget above the editor.
+- Start Pi's compaction when a completed item's detail is no longer needed.
 
 ## How it works
 
@@ -28,7 +29,7 @@ supports these actions:
 
 | Action        | Purpose                                   | Parameters                                                  |
 | ------------- | ----------------------------------------- | ----------------------------------------------------------- |
-| `list`        | Show all lists and items                  | —                                                           |
+| `list`        | Show all lists and items                  | None                                                        |
 | `create_list` | Create a list (becomes active by default) | `name`, `initial_items?`, `activate?`                       |
 | `delete_list` | Delete a list                             | `list_id`                                                   |
 | `set_active`  | Set or clear the active list              | `list_id` (optional)                                        |
@@ -56,7 +57,7 @@ list makes it the active list (the widget switches to it); pass
 The tool validates every call and returns an error that names exactly what to
 fix: each action accepts only its own parameters, required fields are
 enforced, and the two `update_item` forms never mix. Read the error and retry
-with corrected parameters — not-found errors also list the available ids.
+with corrected parameters. Not-found errors also list the available ids.
 `update_item` also appends a reminder when one call marks two or more items
 done and leaves no open items behind (the terminal batch): the working
 rhythm is to mark each item done in the same turn it completes, never batch
@@ -117,9 +118,9 @@ action, the widget, and the `/tracker` items pane all use that order.
 
 The intended rhythm: break multi-step work into items up front (one item per
 deliverable), work through them one at a time, and mark each done as it
-completes. The list — shown in the widget — always shows current progress; the
-agent should read it with `list` before starting and after finishing, and
-update item text with `update_item` when scope changes.
+completes. The list in the widget always shows current progress. The agent
+reads it with `list` before starting and after finishing, and updates item text
+with `update_item` when scope changes.
 
 Failed calls are recoverable: the tool's errors say what to fix, and
 not-found errors name the available ids. The agent corrects the call and
@@ -177,6 +178,44 @@ whole report of an item's state, so a done item whose dependency was reopened
 keeps the `✓` there; the `(waiting on ...)` annotation appears in the `list`
 output and the `/tracker` items pane, which have room for it.
 
+### Smart compaction
+
+When you complete an item in the active list, pi-tracker asks a small
+classifier whether the **ready items** need the completed work. It judges the
+whole ready frontier in one call, up to `maxCandidates` entries, dependents
+first. Each candidate gets one two-label choice question: `needs-context` or
+`stands-alone`. The answer carries a probability and a `confidence`. When no
+ready item needs the detail, pi-tracker starts Pi's compaction at the settle
+boundary and then resumes the session with a pointer to the next ready item.
+
+The feature reads five keys from `tui.json`, under `smartCompaction`:
+
+| Key                        | Type             | Default | Meaning                                                                                  |
+| -------------------------- | ---------------- | ------- | ---------------------------------------------------------------------------------------- |
+| `enabled`                  | boolean          | `true`  | Turn smart compaction on or off.                                                          |
+| `classifier`               | string or null   | `null`  | A `provider/modelId` classifier. `null` uses the preference order: Clef Flash, then TypeSafe Jev, then OpenCode Jev. |
+| `keepContextThreshold`     | number in (0, 1) | `0.5`   | The probability of `needs-context` at or above which the context is kept.                  |
+| `keepContextMinConfidence` | number in (0, 1) | `0.5`   | The answer confidence below which the context is kept.                                     |
+| `maxCandidates`            | integer 1..20    | `8`     | How many ready items one classification judges.                                            |
+
+`keepContextThreshold` is the probability knob: raise it to compact less often,
+lower it to compact more often. `keepContextMinConfidence` is the second guard:
+when the model's answer is less confident than the floor, pi-tracker keeps the
+context. The gate only adds keeping, so it can never cause a premature
+compaction. `maxCandidates` bounds the classifier input; when more items are
+ready than the cap, the first `maxCandidates` are judged, dependents first.
+
+A value outside the range in the table falls back to the default. The feature
+fails open. A disabled feature, no credential-available classifier, a classifier
+error or timeout, an aborted run, or a list with no ready item keeps the full
+context. The classifier input is the item list only. The transcript never leaves
+the session.
+
+The `/tui` command edits all five on a **Compaction** tab: `Smart compaction`
+(toggle), `Compaction classifier` (picker), `Keep-context confidence`, `Min
+confidence`, and `Max candidates` (`+` and `-` adjust the numeric rows). The
+Compaction tab appears only while the tracker extension is loaded.
+
 ## Persistence
 
 The state lives in the session file. Pi writes a snapshot after every change.
@@ -213,7 +252,7 @@ Registration lives in `package.json` under the `pi` field:
 
 ```json
 "pi": {
-  "extensions": ["./src/index.ts"]
+  "extensions": ["./index.ts"]
 }
 ```
 
@@ -228,12 +267,14 @@ Registration lives in `package.json` under the `pi` field:
 
 ## Project structure
 
-| File                 | Purpose                                                          |
-| -------------------- | ---------------------------------------------------------------- |
-| `src/domain.ts`      | Schema domain model (`TodoItem`, `TodoList`, `TrackerState`)     |
-| `src/deps.ts`        | Dependency references, cycle detection, readiness, derived order |
-| `src/store.ts`       | `TrackerStore` service with `Effect.Ref` state                   |
-| `src/persistence.ts` | `TrackerPersistence` service (save and restore snapshots)        |
-| `src/ui.ts`          | Widget pane and interactive `/tracker` component                 |
-| `src/index.ts`       | Pi bridge: tool, command, session hooks, widget refresh          |
-| `src/*.test.ts`      | Test suites                                                      |
+| File                                | Purpose                                                          |
+| ----------------------------------- | ---------------------------------------------------------------- |
+| `src/core/domain.ts`                | Schema domain model (`TodoItem`, `TodoList`, `TrackerState`)     |
+| `src/core/deps.ts`                  | Dependency references, cycle detection, readiness, derived order |
+| `src/core/store.ts`                 | `TrackerStore` service with `Effect.Ref` state                   |
+| `src/core/persistence.ts`           | `TrackerPersistence` service (save and restore snapshots)        |
+| `src/compaction/*.ts`               | Smart compaction: classifier, settle, digest, pointer, settings  |
+| `src/presentation/ui.ts`            | Widget pane and interactive `/tracker` component                 |
+| `src/presentation/tool-metadata.ts` | Tool parameters, result details, and display labels              |
+| `src/index.ts`                      | Pi bridge: tool, command, session hooks, widget refresh          |
+| `src/**/*.test.ts`                  | Test suites, colocated with each module                          |

@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "smartCompaction": {
+    "enabled": true,
+    "classifier": "typesafe/jev-latest",
+    "keepContextThreshold": 0.5,
+    "keepContextMinConfidence": 0.5,
+    "maxCandidates": 8
+  }
+}
