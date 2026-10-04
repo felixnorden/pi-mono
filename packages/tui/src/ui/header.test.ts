@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { vi } from "vitest";
 import { Effect, Random } from "effect";
 import { VERSION, type Theme } from "@earendil-works/pi-coding-agent";
-import { HeaderRenderService, installHeader } from "./header.ts";
+import { HeaderRenderService, installHeader, resetScreenClearMemory } from "./header.ts";
 
 // Pixel parity: the header must render byte-identically through makeBorderedBox
 // as it did with its hand-rolled box (captured before the refactor). The tips
@@ -277,30 +277,47 @@ it("installHeader registers a closure component at mount and unregisters on clea
   assert.strictEqual(captured, undefined);
 });
 
-it("clears the screen on mount only in regular mode", () => {
+/** Mount context that captures the header factory pi would invoke. */
+const captureMountCtx = (
+  onFactory: (factory: ((tui: unknown, theme: unknown) => unknown) | undefined) => void,
+) =>
+  ({
+    model: { provider: "anthropic", id: "claude-sonnet-4" },
+    cwd: "/projects/pi-mono/packages/tui",
+    ui: {
+      theme: plainTheme,
+      setHeader(factory: ((tui: unknown, theme: unknown) => unknown) | undefined) {
+        onFactory(factory);
+      },
+    },
+  }) as never;
+
+it("clears the screen once per process, and only in regular mode", () => {
   const originalIsTTY = process.stdout.isTTY;
   Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
   const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   try {
+    resetScreenClearMemory();
     let captured: ((tui: unknown, theme: unknown) => unknown) | undefined;
-    const mountCtx = {
-      model: { provider: "anthropic", id: "claude-sonnet-4" },
-      cwd: "/projects/pi-mono/packages/tui",
-      ui: {
-        theme: plainTheme,
-        setHeader(factory: ((tui: unknown, theme: unknown) => unknown) | undefined) {
-          captured = factory;
-        },
-      },
-    } as never;
+    const mountCtx = captureMountCtx((factory) => {
+      captured = factory;
+    });
 
     installHeader(pi, mountCtx);
     captured!({ mode: "fullscreen" }, plainTheme);
     assert.strictEqual(write.mock.calls.length, 0, "fullscreen must not clear");
+
     captured!({ mode: "regular" }, plainTheme);
     assert.deepStrictEqual(write.mock.calls[0]?.[0], "\x1b[2J\x1b[H");
+
+    // A reload re-mounts in regular mode while pi-tui still holds the
+    // previous lines. The once guard must keep it from writing escape codes
+    // behind the renderer's back (the blank-widget regression).
+    captured!({ mode: "regular" }, plainTheme);
+    assert.strictEqual(write.mock.calls.length, 1, "re-mount must not clear again");
   } finally {
     write.mockRestore();
     Object.defineProperty(process.stdout, "isTTY", { value: originalIsTTY, configurable: true });
+    resetScreenClearMemory();
   }
 });

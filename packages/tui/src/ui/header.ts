@@ -19,11 +19,36 @@ import {
   pickSlashCommandTips,
 } from "../utils.ts";
 
-/** Clear the visible screen and home the cursor. */
-function clearVisibleScreen(): void {
-  if (process.stdout.isTTY) {
-    process.stdout.write("\x1b[2J\x1b[H");
-  }
+/**
+ * Process-wide flag: the raw screen clear runs at most once per launch.
+ * `Symbol.for` keeps the same key across extension module reloads, so a
+ * `/reload` re-import does not reset it.
+ */
+const SCREEN_CLEARED_KEY = Symbol.for("@ftrdotdev/pi-tui/screen-cleared");
+
+type ScreenClearedGlobal = typeof globalThis & { [SCREEN_CLEARED_KEY]?: boolean };
+
+/** Test seam: forget that the screen was cleared, so a test can assert it. */
+export function resetScreenClearMemory(): void {
+  delete (globalThis as ScreenClearedGlobal)[SCREEN_CLEARED_KEY];
+}
+
+/**
+ * Clear the visible screen and home the cursor, at most once per process.
+ *
+ * The write bypasses pi-tui, so it is only safe before the TUI has painted:
+ * on the first regular-mode mount, when the screen still holds the shell
+ * prompt. Every later mount (reload, new, fork, resume, settings toggle)
+ * happens while pi-tui holds the previous lines and its cursor row; clearing
+ * then desyncs the differential renderer and leaves regions such as an
+ * extension widget blank until the next full repaint.
+ */
+function clearVisibleScreenOnce(): void {
+  if (!process.stdout.isTTY) return;
+  const globals = globalThis as ScreenClearedGlobal;
+  if (globals[SCREEN_CLEARED_KEY]) return;
+  globals[SCREEN_CLEARED_KEY] = true;
+  process.stdout.write("\x1b[2J\x1b[H");
 }
 
 /**
@@ -146,10 +171,11 @@ export class HeaderRenderService extends Context.Service<
 export function installHeader(pi: ExtensionAPI, ctx: ExtensionContext): () => void {
   let header: DisposableComponent | undefined;
   ctx.ui.setHeader((tui) => {
-    // Regular mode keeps the terminal's scrollback, so clear the previous
-    // screen on mount. Fullscreen owns the alternate screen, which is already
-    // fresh; clearing there only flickers.
-    if (tui.mode === "regular") clearVisibleScreen();
+    // Regular mode keeps the terminal's scrollback, so the first mount clears
+    // the previous screen. Fullscreen owns the alternate screen, which is
+    // already fresh; clearing there only flickers. The once guard keeps a
+    // re-mount from desyncing pi-tui's differential renderer.
+    if (tui.mode === "regular") clearVisibleScreenOnce();
     // Re-mount: dispose the previous instance before building the new one.
     if (header?.dispose) header.dispose();
     // Build the service layer and run construction synchronously at mount.

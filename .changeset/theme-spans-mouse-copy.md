@@ -13,4 +13,4 @@ Add mouse-wheel navigation, clipboard copy, and new theme helpers.
 - The `/tracker` overlay moves the cursor with the mouse wheel and wraps at either end. `[c]` copies the selected list or item and reports `Copied ...` in the overlay.
 - The selected row in the `/tracker` overlay uses the `selectedBg` token.
 - The inquiry questionnaire moves the cursor with the mouse wheel and copies the open question and its options with `ctrl+y`.
-- The header clears the visible screen on mount in regular mode only. Fullscreen owns the alternate screen, where the clear only flickered.
+- The header clears the visible screen once per process, on the first regular-mode mount, and never again. Fullscreen owns the alternate screen, where the clear only flickered. A re-mount (`reload`, `new`, `fork`, `/resume`, settings toggle) no longer clears: that write went outside pi-tui and desynced its differential redraw, which left the space for an extension widget blank until the next full repaint.
