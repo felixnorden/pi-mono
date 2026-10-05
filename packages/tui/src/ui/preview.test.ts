@@ -511,6 +511,7 @@ class FakePi {
   }> = [];
   readonly entries: Array<{ type: string; data?: unknown }> = [];
   readonly toolResultHandlers: Array<(event: any) => any> = [];
+  readonly toolExecutionEndHandlers: Array<(event: any, ctx?: any) => any> = [];
   registerTool(tool: ToolDefinition<any, any, any>): void {
     this.tools.push(tool);
   }
@@ -525,6 +526,7 @@ class FakePi {
   }
   on(event: string, handler: any): void {
     if (event === "tool_result") this.toolResultHandlers.push(handler);
+    if (event === "tool_execution_end") this.toolExecutionEndHandlers.push(handler);
   }
 }
 
@@ -1049,4 +1051,68 @@ it("the entry renderer draws image entries as caption box + spacer + bare kitty 
   } finally {
     resetCapabilitiesCache();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Slice 6 — nested (codemode) previews append a renderable entry
+// ---------------------------------------------------------------------------
+
+const TEXT_RECORD: TextPreview = {
+  kind: "text",
+  path: "/cwd/file.md",
+  content: "# Hi",
+  lang: "markdown",
+  truncated: false,
+};
+
+const nestedEndEvent = (overrides: Record<string, unknown> = {}) => ({
+  type: "tool_execution_end",
+  toolCallId: "call-1/1",
+  toolName: "preview",
+  result: { content: [], details: TEXT_RECORD },
+  isError: false,
+  parentToolCallId: "call-1",
+  ...overrides,
+});
+
+const registerEndHook = () => {
+  const pi = new FakePi();
+  registerPreview(pi as unknown as ExtensionAPI, makePreviewContext(makeMemFs()));
+  return { pi, handler: pi.toolExecutionEndHandlers[0]! };
+};
+
+it("the nested-preview hook appends the display record so the entry renderer can draw it", () => {
+  const { pi, handler } = registerEndHook();
+  assert.strictEqual(pi.toolExecutionEndHandlers.length, 1);
+  handler(nestedEndEvent(), { mode: "tui" });
+  assert.deepStrictEqual(pi.entries, [{ type: "preview", data: TEXT_RECORD }]);
+});
+
+it("the nested-preview hook ignores model-issued (top-level) preview ends", () => {
+  const { pi, handler } = registerEndHook();
+  handler(nestedEndEvent({ parentToolCallId: undefined }), { mode: "tui" });
+  assert.strictEqual(pi.entries.length, 0);
+});
+
+it("the nested-preview hook ignores nested ends for other tools", () => {
+  const { pi, handler } = registerEndHook();
+  handler(nestedEndEvent({ toolName: "read" }), { mode: "tui" });
+  assert.strictEqual(pi.entries.length, 0);
+});
+
+it("the nested-preview hook ignores non-tui modes", () => {
+  const { pi, handler } = registerEndHook();
+  handler(nestedEndEvent(), { mode: "rpc" });
+  assert.strictEqual(pi.entries.length, 0);
+});
+
+it("the nested-preview hook ignores failed previews", () => {
+  const { pi, handler } = registerEndHook();
+  handler(
+    nestedEndEvent({
+      result: { content: [], details: { ...TEXT_RECORD, content: "", error: "boom" } },
+    }),
+    { mode: "tui" },
+  );
+  assert.strictEqual(pi.entries.length, 0);
 });

@@ -590,6 +590,21 @@ export function registerPreview(
     });
   });
 
+  // A preview called from inside a codemode script never gets its own tool row:
+  // pi's interactive mode ignores nested `tool_execution_*` events, and nested
+  // results never become transcript entries. The widget that `renderResult`
+  // draws for model-issued calls is therefore dropped, and codemode's renderer
+  // shows only the text call-row. Mirror the `/preview` command and append the
+  // display record as a custom entry so the entry renderer above draws it.
+  pi.on("tool_execution_end", (event, ctx) => {
+    if (!event.parentToolCallId || event.toolName !== "preview") return;
+    if (ctx.mode !== "tui") return;
+    const data = (event.result as { details?: PreviewData | PreviewDataError } | undefined)
+      ?.details;
+    if (!data || "error" in data) return;
+    pi.appendEntry("preview", data);
+  });
+
   pi.registerCommand("preview", {
     description:
       "Display a file in the chat for the user to read (TUI only, not sent to the model).",
