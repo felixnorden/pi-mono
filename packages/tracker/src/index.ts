@@ -16,7 +16,10 @@ import {
 import { TodoItem, TodoList, TrackerState, emptyState, encodeState } from "./core/domain.ts";
 import { TrackerPersistence } from "./core/persistence.ts";
 import { SMART_COMPACTION_CUSTOM_TYPE } from "./compaction/pointer.ts";
-import { SMART_COMPACTION_CONFIG_FILE, SmartCompactionSettingsService } from "./compaction/settings.ts";
+import {
+  SMART_COMPACTION_CONFIG_FILE,
+  SmartCompactionSettingsService,
+} from "./compaction/settings.ts";
 import { SettleDecider } from "./compaction/settle.ts";
 import { TrackerError, TrackerStore, type ItemSpec, type UpdateItemPatch } from "./core/store.ts";
 import {
@@ -212,9 +215,7 @@ export default function (pi: ExtensionAPI): void {
       // Record the transition before the mirror moves, so the observer sees the
       // true pre-mutation state. Every mutation runs this, so a later mutation
       // that completes nothing still refreshes the live snapshot.
-      await runtime.runPromise(
-        withCompletionObserver((observer) => observer.record(state, next)),
-      );
+      await runtime.runPromise(withCompletionObserver((observer) => observer.record(state, next)));
       state = next;
       await runtime.runPromise(
         withPersistence((p) => p.save(next)).pipe(

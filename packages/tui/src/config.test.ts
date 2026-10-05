@@ -534,7 +534,9 @@ it("a config file keeps a valid needs-context probability threshold", () => {
 
 it("an out-of-range needs-context probability threshold falls back to the default", () => {
   for (const invalid of [0, 1, -0.1, 1.5]) {
-    const config = applyDefaults({ smartCompaction: { needsContextProbabilityThreshold: invalid } });
+    const config = applyDefaults({
+      smartCompaction: { needsContextProbabilityThreshold: invalid },
+    });
     assert.strictEqual(config.smartCompaction.needsContextProbabilityThreshold, 0.5);
   }
 });

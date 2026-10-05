@@ -63,9 +63,7 @@ const mergeLiveBatch = (
   const completedItemIds = list.items
     .filter((item) => item.done && tracked.has(item.id))
     .map((item) => item.id);
-  return completedItemIds.length === 0
-    ? Option.none()
-    : Option.some({ list, completedItemIds });
+  return completedItemIds.length === 0 ? Option.none() : Option.some({ list, completedItemIds });
 };
 
 export class CompletionObserver extends Context.Service<

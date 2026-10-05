@@ -101,9 +101,8 @@ const input = (
   signal: overrides.signal,
 });
 
-const withGateway = <A, E>(
-  program: Effect.Effect<A, E, ClassifierGateway>,
-): Effect.Effect<A, E> => program.pipe(Effect.provide(ClassifierGateway.layer));
+const withGateway = <A, E>(program: Effect.Effect<A, E, ClassifierGateway>): Effect.Effect<A, E> =>
+  program.pipe(Effect.provide(ClassifierGateway.layer));
 
 // ---------------------------------------------------------------------------
 // resolveClassifier
@@ -179,9 +178,12 @@ it("resolveClassifier returns none when no classifier is credential-available", 
 // ---------------------------------------------------------------------------
 
 it("classifyVerdict keeps context at the threshold", () => {
-  assert.deepStrictEqual(verdict(choiceResult(DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD), [QUESTION_KEY]), {
-    kind: "keep",
-  });
+  assert.deepStrictEqual(
+    verdict(choiceResult(DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD), [QUESTION_KEY]),
+    {
+      kind: "keep",
+    },
+  );
 });
 
 it("classifyVerdict compacts below the threshold", () => {
@@ -334,51 +336,56 @@ it.effect("gateway returns disabled when the classifier call exceeds the deadlin
   ),
 );
 
-it.effect("gateway returns a compact verdict for an available classifier and a low probability", () =>
-  withGateway(
-    Effect.gen(function* () {
-      const gateway = yield* ClassifierGateway;
-      const registry: ClassifierRegistry = {
-        getAvailableOfType: async () => [clefFlash, jev],
-        classify: async () => choiceResult(0.1, 0.9),
-      };
-      const result = yield* gateway.verdict(input(registry));
-      assert.deepStrictEqual(result, { kind: "compact" });
-    }),
-  ),
+it.effect(
+  "gateway returns a compact verdict for an available classifier and a low probability",
+  () =>
+    withGateway(
+      Effect.gen(function* () {
+        const gateway = yield* ClassifierGateway;
+        const registry: ClassifierRegistry = {
+          getAvailableOfType: async () => [clefFlash, jev],
+          classify: async () => choiceResult(0.1, 0.9),
+        };
+        const result = yield* gateway.verdict(input(registry));
+        assert.deepStrictEqual(result, { kind: "compact" });
+      }),
+    ),
 );
 
-it.effect("gateway forwards the run signal to the classifier call and returns disabled on abort", () => {
-  // Constructed outside the Effect program so the run signal is a plain value.
-  const controller = new AbortController();
-  return withGateway(
-    Effect.gen(function* () {
-      const gateway = yield* ClassifierGateway;
-      const captured: { signal?: AbortSignal } = {};
-      const registry: ClassifierRegistry = {
-        getAvailableOfType: async () => [jev],
-        classify: (_model, _context, options) => {
-          captured.signal = options?.signal;
-          return new Promise((_resolve, reject) => {
-            options?.signal?.addEventListener("abort", () => reject(new Error("run abort")));
-          });
-        },
-      };
-      const fiber = yield* Effect.forkChild(
-        gateway.verdict(input(registry, { signal: controller.signal })),
-      );
-      let attempts = 0;
-      while (captured.signal === undefined && attempts < 1000) {
-        yield* Effect.yieldNow;
-        attempts += 1;
-      }
-      controller.abort();
-      const result = yield* Fiber.join(fiber);
-      assert.deepStrictEqual(result, { kind: "disabled" });
-      assert.strictEqual(captured.signal?.aborted, true);
-    }),
-  );
-});
+it.effect(
+  "gateway forwards the run signal to the classifier call and returns disabled on abort",
+  () => {
+    // Constructed outside the Effect program so the run signal is a plain value.
+    const controller = new AbortController();
+    return withGateway(
+      Effect.gen(function* () {
+        const gateway = yield* ClassifierGateway;
+        const captured: { signal?: AbortSignal } = {};
+        const registry: ClassifierRegistry = {
+          getAvailableOfType: async () => [jev],
+          classify: (_model, _context, options) => {
+            captured.signal = options?.signal;
+            return new Promise((_resolve, reject) => {
+              options?.signal?.addEventListener("abort", () => reject(new Error("run abort")));
+            });
+          },
+        };
+        const fiber = yield* Effect.forkChild(
+          gateway.verdict(input(registry, { signal: controller.signal })),
+        );
+        let attempts = 0;
+        while (captured.signal === undefined && attempts < 1000) {
+          yield* Effect.yieldNow;
+          attempts += 1;
+        }
+        controller.abort();
+        const result = yield* Fiber.join(fiber);
+        assert.deepStrictEqual(result, { kind: "disabled" });
+        assert.strictEqual(captured.signal?.aborted, true);
+      }),
+    );
+  },
+);
 
 it.effect("gateway sends exactly one choice question with the digest as the classifier state", () =>
   withGateway(

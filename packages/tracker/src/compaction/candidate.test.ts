@@ -10,7 +10,10 @@ interface ItemSpec {
   readonly deps?: readonly string[];
 }
 
-const completion = (items: readonly ItemSpec[], completedItemIds: readonly number[]): PendingCompletion => {
+const completion = (
+  items: readonly ItemSpec[],
+  completedItemIds: readonly number[],
+): PendingCompletion => {
   const list = new TodoList({
     id: 1,
     name: "Work",

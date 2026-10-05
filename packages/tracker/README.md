@@ -190,13 +190,13 @@ boundary and then resumes the session with a pointer to the next ready item.
 
 The feature reads five keys from `tui.json`, under `smartCompaction`:
 
-| Key                        | Type             | Default | Meaning                                                                                  |
-| -------------------------- | ---------------- | ------- | ---------------------------------------------------------------------------------------- |
-| `enabled`                  | boolean          | `true`  | Turn smart compaction on or off.                                                          |
-| `classifier`               | string or null   | `null`  | A `provider/modelId` classifier. `null` uses the preference order: Clef Flash, then TypeSafe Jev, then OpenCode Jev. |
-| `needsContextProbabilityThreshold` | number in (0, 1) | `0.5`   | The `needs-context` probability at or above which the context is kept.                     |
-| `minAnswerConfidence`      | number in (0, 1) | `0.5`   | The answer's self-reported confidence below which the context is kept.                     |
-| `maxCandidates`            | integer 1..20    | `8`     | How many ready items one classification judges.                                            |
+| Key                                | Type             | Default | Meaning                                                                                                              |
+| ---------------------------------- | ---------------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                          | boolean          | `true`  | Turn smart compaction on or off.                                                                                     |
+| `classifier`                       | string or null   | `null`  | A `provider/modelId` classifier. `null` uses the preference order: Clef Flash, then TypeSafe Jev, then OpenCode Jev. |
+| `needsContextProbabilityThreshold` | number in (0, 1) | `0.5`   | The `needs-context` probability at or above which the context is kept.                                               |
+| `minAnswerConfidence`              | number in (0, 1) | `0.5`   | The answer's self-reported confidence below which the context is kept.                                               |
+| `maxCandidates`                    | integer 1..20    | `8`     | How many ready items one classification judges.                                                                      |
 
 `needsContextProbabilityThreshold` is the probability knob: raise it to compact
 more often, lower it to keep context more often. It cuts on the probability the

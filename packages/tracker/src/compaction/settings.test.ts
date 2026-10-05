@@ -17,7 +17,10 @@ import {
   parseClassifierIdentity,
   type SmartCompactionSettings,
 } from "./settings.ts";
-import { DEFAULT_MIN_ANSWER_CONFIDENCE, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD } from "./classifier.ts";
+import {
+  DEFAULT_MIN_ANSWER_CONFIDENCE,
+  DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
+} from "./classifier.ts";
 
 const TEST_PATH = "/tmp/tracker-settings-test/tui.json";
 const FIXTURE_PATH = fileURLToPath(
@@ -63,11 +66,7 @@ function makeMemFs(init: Record<string, string> = {}): MemFs {
   return { fs, files, writes };
 }
 
-const load = (): Effect.Effect<
-  SmartCompactionSettings,
-  never,
-  SmartCompactionSettingsService
-> =>
+const load = (): Effect.Effect<SmartCompactionSettings, never, SmartCompactionSettingsService> =>
   Effect.gen(function* () {
     const service = yield* SmartCompactionSettingsService;
     return yield* service.load;
@@ -85,7 +84,10 @@ it.effect("load returns the fail-open defaults when the file is missing", () =>
     const settings = yield* runWithMem(mem, load());
     assert.strictEqual(settings.enabled, true);
     assert.strictEqual(Option.isNone(settings.chosen), true);
-    assert.strictEqual(settings.needsContextProbabilityThreshold, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD);
+    assert.strictEqual(
+      settings.needsContextProbabilityThreshold,
+      DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
+    );
   }),
 );
 
@@ -95,7 +97,10 @@ it.effect("load returns the fail-open defaults when the file is not JSON", () =>
     const settings = yield* runWithMem(mem, load());
     assert.strictEqual(settings.enabled, true);
     assert.strictEqual(Option.isNone(settings.chosen), true);
-    assert.strictEqual(settings.needsContextProbabilityThreshold, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD);
+    assert.strictEqual(
+      settings.needsContextProbabilityThreshold,
+      DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
+    );
   }),
 );
 
@@ -105,7 +110,10 @@ it.effect("load returns the fail-open defaults when the section has the wrong sh
     const settings = yield* runWithMem(mem, load());
     assert.strictEqual(settings.enabled, true);
     assert.strictEqual(Option.isNone(settings.chosen), true);
-    assert.strictEqual(settings.needsContextProbabilityThreshold, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD);
+    assert.strictEqual(
+      settings.needsContextProbabilityThreshold,
+      DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
+    );
   }),
 );
 
@@ -122,7 +130,10 @@ it.effect("load ignores an unrecognized enabled value and keeps a valid chosen c
       provider: "typesafe",
       modelId: "jev-latest",
     });
-    assert.strictEqual(settings.needsContextProbabilityThreshold, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD);
+    assert.strictEqual(
+      settings.needsContextProbabilityThreshold,
+      DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
+    );
   }),
 );
 
@@ -136,20 +147,25 @@ it.effect("load reads a valid needs-context probability threshold from the secti
   }),
 );
 
-it.effect("load falls back alone when the probability threshold is outside the open unit interval", () =>
-  Effect.gen(function* () {
-    for (const invalid of [0, 1, -0.1, 1.5, "0.5"]) {
-      const mem = makeMemFs({
-        [TEST_PATH]: JSON.stringify({
-          smartCompaction: { enabled: false, needsContextProbabilityThreshold: invalid },
-        }),
-      });
-      const settings = yield* runWithMem(mem, load());
-      assert.strictEqual(settings.needsContextProbabilityThreshold, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD);
-      // The bad value must not discard the rest of the section.
-      assert.strictEqual(settings.enabled, false);
-    }
-  }),
+it.effect(
+  "load falls back alone when the probability threshold is outside the open unit interval",
+  () =>
+    Effect.gen(function* () {
+      for (const invalid of [0, 1, -0.1, 1.5, "0.5"]) {
+        const mem = makeMemFs({
+          [TEST_PATH]: JSON.stringify({
+            smartCompaction: { enabled: false, needsContextProbabilityThreshold: invalid },
+          }),
+        });
+        const settings = yield* runWithMem(mem, load());
+        assert.strictEqual(
+          settings.needsContextProbabilityThreshold,
+          DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
+        );
+        // The bad value must not discard the rest of the section.
+        assert.strictEqual(settings.enabled, false);
+      }
+    }),
 );
 
 it.effect("load reads a valid min answer confidence from the section", () =>
@@ -162,20 +178,22 @@ it.effect("load reads a valid min answer confidence from the section", () =>
   }),
 );
 
-it.effect("load falls back alone when the min answer confidence is outside the open unit interval", () =>
-  Effect.gen(function* () {
-    for (const invalid of [0, 1, -0.1, 1.5, "0.5"]) {
-      const mem = makeMemFs({
-        [TEST_PATH]: JSON.stringify({
-          smartCompaction: { enabled: false, minAnswerConfidence: invalid },
-        }),
-      });
-      const settings = yield* runWithMem(mem, load());
-      assert.strictEqual(settings.minAnswerConfidence, DEFAULT_MIN_ANSWER_CONFIDENCE);
-      // The bad value must not discard the rest of the section.
-      assert.strictEqual(settings.enabled, false);
-    }
-  }),
+it.effect(
+  "load falls back alone when the min answer confidence is outside the open unit interval",
+  () =>
+    Effect.gen(function* () {
+      for (const invalid of [0, 1, -0.1, 1.5, "0.5"]) {
+        const mem = makeMemFs({
+          [TEST_PATH]: JSON.stringify({
+            smartCompaction: { enabled: false, minAnswerConfidence: invalid },
+          }),
+        });
+        const settings = yield* runWithMem(mem, load());
+        assert.strictEqual(settings.minAnswerConfidence, DEFAULT_MIN_ANSWER_CONFIDENCE);
+        // The bad value must not discard the rest of the section.
+        assert.strictEqual(settings.enabled, false);
+      }
+    }),
 );
 
 it.effect("load reads the legacy probability keys when the current keys are absent", () =>

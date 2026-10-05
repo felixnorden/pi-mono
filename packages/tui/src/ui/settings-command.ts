@@ -130,9 +130,7 @@ export interface ClassifierDescriptor {
 /** The classifier fields this dialog needs from the model registry. Structural,
  *  so `ctx.modelRegistry` satisfies it and tests pass a plain object. */
 export interface ClassifierSource {
-  readonly getAvailableOfType: (
-    type: "classifier",
-  ) => Promise<readonly ClassifierDescriptor[]>;
+  readonly getAvailableOfType: (type: "classifier") => Promise<readonly ClassifierDescriptor[]>;
   readonly getModelsOfType: (type: "classifier") => readonly ClassifierDescriptor[];
 }
 
@@ -462,11 +460,13 @@ export const makeSettingsUi = (
     const copy = COPY[currentConfig.settingsLanguage];
     body.clear();
 
-    const tabBar = tabs.map((tabName) => {
-      const active = tabName === tab;
-      const label = active ? `[${copy.tabs[tabName]}]` : ` ${copy.tabs[tabName]} `;
-      return active ? theme.fg("accent", label) : theme.fg("dim", label);
-    }).join(" ");
+    const tabBar = tabs
+      .map((tabName) => {
+        const active = tabName === tab;
+        const label = active ? `[${copy.tabs[tabName]}]` : ` ${copy.tabs[tabName]} `;
+        return active ? theme.fg("accent", label) : theme.fg("dim", label);
+      })
+      .join(" ");
     body.addChild(new Text(tabBar, 0, 0));
     body.addChild(new Text(theme.fg("dim", copy.hint), 0, 0));
 

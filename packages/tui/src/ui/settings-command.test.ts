@@ -295,7 +295,10 @@ it("the Compaction tab shows the toggle, classifier, two probability knobs, and 
     "Answer confidence floor",
     "Max candidates",
   ]) {
-    assert.strictEqual(lines.some((line) => line.includes(label)), true);
+    assert.strictEqual(
+      lines.some((line) => line.includes(label)),
+      true,
+    );
   }
 });
 
@@ -364,7 +367,9 @@ it("the needs-context probability row shows the current value with two decimals"
   });
   goToCompaction(ui);
   assert.strictEqual(
-    rendered(ui).some((line) => line.includes("Needs-context probability") && line.includes("0.70")),
+    rendered(ui).some(
+      (line) => line.includes("Needs-context probability") && line.includes("0.70"),
+    ),
     true,
   );
 });
@@ -486,7 +491,10 @@ it("hasTrackerExtension is true when the tracker extension command is registered
 });
 
 it("hasTrackerExtension ignores a non-extension command named tracker", () => {
-  assert.strictEqual(hasTrackerExtension(probe([], [{ name: "tracker", source: "prompt" }])), false);
+  assert.strictEqual(
+    hasTrackerExtension(probe([], [{ name: "tracker", source: "prompt" }])),
+    false,
+  );
 });
 
 it("hasTrackerExtension is false when the tracker is not loaded", () => {
