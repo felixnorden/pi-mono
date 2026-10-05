@@ -1,17 +1,20 @@
 import { Context, Effect, Layer, Option, Predicate, Schema } from "effect";
 import * as FileSystem from "effect/FileSystem";
 import {
-  DEFAULT_KEEP_CONTEXT_MIN_CONFIDENCE,
-  DEFAULT_KEEP_CONTEXT_THRESHOLD,
+  DEFAULT_MIN_ANSWER_CONFIDENCE,
+  DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
   type ClassifierIdentity,
 } from "./classifier.ts";
 
 /**
  * The tracker's reader of the shared TUI settings file. It owns the
- * interpretation of the three keys that smart compaction uses, and it fails open
+ * interpretation of the five keys that smart compaction uses, and it fails open
  * on every read, parse, or shape problem: the feature is active by default, the
  * classifier preference order applies when no identity is chosen, and the
  * default threshold applies when the value is missing or invalid.
+ *
+ * The two probability knobs also accept their pre-rename key as an alias; the
+ * current key wins when both are present.
  *
  * Co-owned with `packages/tui/src/config.ts`; the key names and value shapes
  * are pinned by `test-fixtures/tui-config.contract.json`, read by both suites.
@@ -20,9 +23,13 @@ export const SMART_COMPACTION_CONFIG_FILE = "tui.json";
 export const SMART_COMPACTION_KEY = "smartCompaction";
 export const ENABLED_KEY = "enabled";
 export const CLASSIFIER_KEY = "classifier";
-export const KEEP_CONTEXT_THRESHOLD_KEY = "keepContextThreshold";
-export const KEEP_CONTEXT_MIN_CONFIDENCE_KEY = "keepContextMinConfidence";
+export const NEEDS_CONTEXT_PROBABILITY_THRESHOLD_KEY = "needsContextProbabilityThreshold";
+export const MIN_ANSWER_CONFIDENCE_KEY = "minAnswerConfidence";
 export const MAX_CANDIDATES_KEY = "maxCandidates";
+/** Pre-rename name of `NEEDS_CONTEXT_PROBABILITY_THRESHOLD_KEY`. */
+export const LEGACY_KEEP_CONTEXT_THRESHOLD_KEY = "keepContextThreshold";
+/** Pre-rename name of `MIN_ANSWER_CONFIDENCE_KEY`. */
+export const LEGACY_KEEP_CONTEXT_MIN_CONFIDENCE_KEY = "keepContextMinConfidence";
 
 /** Default number of ready items one classification judges. */
 export const DEFAULT_MAX_CANDIDATES = 8;
@@ -32,23 +39,22 @@ export const MAX_CANDIDATES_LIMIT = 20;
 const FileSchema = Schema.fromJsonString(Schema.Unknown);
 const EnabledSchema = Schema.Boolean;
 const ClassifierSchema = Schema.NullOr(Schema.String);
-const KeepContextThresholdSchema = Schema.Finite;
-const KeepContextMinConfidenceSchema = Schema.Finite;
+const UnitIntervalSchema = Schema.Finite;
 const MaxCandidatesSchema = Schema.Int;
 
 export interface SmartCompactionSettings {
   readonly enabled: boolean;
   readonly chosen: Option.Option<ClassifierIdentity>;
-  readonly keepContextThreshold: number;
-  readonly keepContextMinConfidence: number;
+  readonly needsContextProbabilityThreshold: number;
+  readonly minAnswerConfidence: number;
   readonly maxCandidates: number;
 }
 
 export const defaultSmartCompactionSettings = (): SmartCompactionSettings => ({
   enabled: true,
   chosen: Option.none(),
-  keepContextThreshold: DEFAULT_KEEP_CONTEXT_THRESHOLD,
-  keepContextMinConfidence: DEFAULT_KEEP_CONTEXT_MIN_CONFIDENCE,
+  needsContextProbabilityThreshold: DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
+  minAnswerConfidence: DEFAULT_MIN_ANSWER_CONFIDENCE,
   maxCandidates: DEFAULT_MAX_CANDIDATES,
 });
 
@@ -69,6 +75,28 @@ const smartSection = (parsed: unknown): Record<string, unknown> | undefined => {
   if (!Predicate.hasProperty(SMART_COMPACTION_KEY)(parsed)) return undefined;
   const section = parsed[SMART_COMPACTION_KEY];
   return Predicate.isObject(section) ? section : undefined;
+};
+
+/**
+ * Read one of the two probability knobs. The current key wins; a config that
+ * still carries only the legacy alias resolves the same way. The value must
+ * stay strictly inside (0, 1), and anything else falls back to the default
+ * alone, so a bad value cannot disable the whole feature.
+ */
+const readUnitInterval = (
+  section: Record<string, unknown> | undefined,
+  key: string,
+  legacyKey: string,
+  fallback: number,
+): number => {
+  const raw = section === undefined ? undefined : (section[key] ?? section[legacyKey]);
+  return Option.getOrElse(
+    Option.filter(
+      Schema.decodeUnknownOption(UnitIntervalSchema)(raw),
+      (value) => value > 0 && value < 1,
+    ),
+    () => fallback,
+  );
 };
 
 export class SmartCompactionSettingsService extends Context.Service<
@@ -105,25 +133,19 @@ export class SmartCompactionSettingsService extends Context.Service<
             ),
             (value) => (value === null ? Option.none() : parseClassifierIdentity(value)),
           );
-          // A threshold must stay strictly inside (0, 1); anything else falls
-          // back alone, so a bad value cannot disable the whole feature.
-          const keepContextThreshold = Option.getOrElse(
-            Option.filter(
-              Schema.decodeUnknownOption(KeepContextThresholdSchema)(
-                section === undefined ? undefined : section[KEEP_CONTEXT_THRESHOLD_KEY],
-              ),
-              (value) => value > 0 && value < 1,
-            ),
-            () => DEFAULT_KEEP_CONTEXT_THRESHOLD,
+          // Each probability knob resolves independently: the current key, then
+          // the legacy alias, then the default.
+          const needsContextProbabilityThreshold = readUnitInterval(
+            section,
+            NEEDS_CONTEXT_PROBABILITY_THRESHOLD_KEY,
+            LEGACY_KEEP_CONTEXT_THRESHOLD_KEY,
+            DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
           );
-          const keepContextMinConfidence = Option.getOrElse(
-            Option.filter(
-              Schema.decodeUnknownOption(KeepContextMinConfidenceSchema)(
-                section === undefined ? undefined : section[KEEP_CONTEXT_MIN_CONFIDENCE_KEY],
-              ),
-              (value) => value > 0 && value < 1,
-            ),
-            () => DEFAULT_KEEP_CONTEXT_MIN_CONFIDENCE,
+          const minAnswerConfidence = readUnitInterval(
+            section,
+            MIN_ANSWER_CONFIDENCE_KEY,
+            LEGACY_KEEP_CONTEXT_MIN_CONFIDENCE_KEY,
+            DEFAULT_MIN_ANSWER_CONFIDENCE,
           );
           // The cap must be an integer in [1, MAX_CANDIDATES_LIMIT]; anything
           // else falls back alone.
@@ -139,8 +161,8 @@ export class SmartCompactionSettingsService extends Context.Service<
           return {
             enabled,
             chosen,
-            keepContextThreshold,
-            keepContextMinConfidence,
+            needsContextProbabilityThreshold,
+            minAnswerConfidence,
             maxCandidates,
           } satisfies SmartCompactionSettings;
         }).pipe(

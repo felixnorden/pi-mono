@@ -7,15 +7,17 @@ import {
   CLASSIFIER_KEY,
   DEFAULT_MAX_CANDIDATES,
   ENABLED_KEY,
-  KEEP_CONTEXT_MIN_CONFIDENCE_KEY,
-  KEEP_CONTEXT_THRESHOLD_KEY,
+  MIN_ANSWER_CONFIDENCE_KEY,
+  NEEDS_CONTEXT_PROBABILITY_THRESHOLD_KEY,
+  LEGACY_KEEP_CONTEXT_MIN_CONFIDENCE_KEY,
+  LEGACY_KEEP_CONTEXT_THRESHOLD_KEY,
   MAX_CANDIDATES_KEY,
   SMART_COMPACTION_KEY,
   SmartCompactionSettingsService,
   parseClassifierIdentity,
   type SmartCompactionSettings,
 } from "./settings.ts";
-import { DEFAULT_KEEP_CONTEXT_MIN_CONFIDENCE, DEFAULT_KEEP_CONTEXT_THRESHOLD } from "./classifier.ts";
+import { DEFAULT_MIN_ANSWER_CONFIDENCE, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD } from "./classifier.ts";
 
 const TEST_PATH = "/tmp/tracker-settings-test/tui.json";
 const FIXTURE_PATH = fileURLToPath(
@@ -83,7 +85,7 @@ it.effect("load returns the fail-open defaults when the file is missing", () =>
     const settings = yield* runWithMem(mem, load());
     assert.strictEqual(settings.enabled, true);
     assert.strictEqual(Option.isNone(settings.chosen), true);
-    assert.strictEqual(settings.keepContextThreshold, DEFAULT_KEEP_CONTEXT_THRESHOLD);
+    assert.strictEqual(settings.needsContextProbabilityThreshold, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD);
   }),
 );
 
@@ -93,7 +95,7 @@ it.effect("load returns the fail-open defaults when the file is not JSON", () =>
     const settings = yield* runWithMem(mem, load());
     assert.strictEqual(settings.enabled, true);
     assert.strictEqual(Option.isNone(settings.chosen), true);
-    assert.strictEqual(settings.keepContextThreshold, DEFAULT_KEEP_CONTEXT_THRESHOLD);
+    assert.strictEqual(settings.needsContextProbabilityThreshold, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD);
   }),
 );
 
@@ -103,7 +105,7 @@ it.effect("load returns the fail-open defaults when the section has the wrong sh
     const settings = yield* runWithMem(mem, load());
     assert.strictEqual(settings.enabled, true);
     assert.strictEqual(Option.isNone(settings.chosen), true);
-    assert.strictEqual(settings.keepContextThreshold, DEFAULT_KEEP_CONTEXT_THRESHOLD);
+    assert.strictEqual(settings.needsContextProbabilityThreshold, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD);
   }),
 );
 
@@ -120,59 +122,93 @@ it.effect("load ignores an unrecognized enabled value and keeps a valid chosen c
       provider: "typesafe",
       modelId: "jev-latest",
     });
-    assert.strictEqual(settings.keepContextThreshold, DEFAULT_KEEP_CONTEXT_THRESHOLD);
+    assert.strictEqual(settings.needsContextProbabilityThreshold, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD);
   }),
 );
 
-it.effect("load reads a valid keep-context threshold from the section", () =>
+it.effect("load reads a valid needs-context probability threshold from the section", () =>
   Effect.gen(function* () {
     const mem = makeMemFs({
-      [TEST_PATH]: JSON.stringify({ smartCompaction: { keepContextThreshold: 0.72 } }),
+      [TEST_PATH]: JSON.stringify({ smartCompaction: { needsContextProbabilityThreshold: 0.72 } }),
     });
     const settings = yield* runWithMem(mem, load());
-    assert.strictEqual(settings.keepContextThreshold, 0.72);
+    assert.strictEqual(settings.needsContextProbabilityThreshold, 0.72);
   }),
 );
 
-it.effect("load falls back alone when a threshold is outside the open unit interval", () =>
+it.effect("load falls back alone when the probability threshold is outside the open unit interval", () =>
   Effect.gen(function* () {
     for (const invalid of [0, 1, -0.1, 1.5, "0.5"]) {
       const mem = makeMemFs({
         [TEST_PATH]: JSON.stringify({
-          smartCompaction: { enabled: false, keepContextThreshold: invalid },
+          smartCompaction: { enabled: false, needsContextProbabilityThreshold: invalid },
         }),
       });
       const settings = yield* runWithMem(mem, load());
-      assert.strictEqual(settings.keepContextThreshold, DEFAULT_KEEP_CONTEXT_THRESHOLD);
+      assert.strictEqual(settings.needsContextProbabilityThreshold, DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD);
       // The bad value must not discard the rest of the section.
       assert.strictEqual(settings.enabled, false);
     }
   }),
 );
 
-it.effect("load reads a valid keep-context min confidence from the section", () =>
+it.effect("load reads a valid min answer confidence from the section", () =>
   Effect.gen(function* () {
     const mem = makeMemFs({
-      [TEST_PATH]: JSON.stringify({ smartCompaction: { keepContextMinConfidence: 0.72 } }),
+      [TEST_PATH]: JSON.stringify({ smartCompaction: { minAnswerConfidence: 0.72 } }),
     });
     const settings = yield* runWithMem(mem, load());
-    assert.strictEqual(settings.keepContextMinConfidence, 0.72);
+    assert.strictEqual(settings.minAnswerConfidence, 0.72);
   }),
 );
 
-it.effect("load falls back alone when the min confidence is outside the open unit interval", () =>
+it.effect("load falls back alone when the min answer confidence is outside the open unit interval", () =>
   Effect.gen(function* () {
     for (const invalid of [0, 1, -0.1, 1.5, "0.5"]) {
       const mem = makeMemFs({
         [TEST_PATH]: JSON.stringify({
-          smartCompaction: { enabled: false, keepContextMinConfidence: invalid },
+          smartCompaction: { enabled: false, minAnswerConfidence: invalid },
         }),
       });
       const settings = yield* runWithMem(mem, load());
-      assert.strictEqual(settings.keepContextMinConfidence, DEFAULT_KEEP_CONTEXT_MIN_CONFIDENCE);
+      assert.strictEqual(settings.minAnswerConfidence, DEFAULT_MIN_ANSWER_CONFIDENCE);
       // The bad value must not discard the rest of the section.
       assert.strictEqual(settings.enabled, false);
     }
+  }),
+);
+
+it.effect("load reads the legacy probability keys when the current keys are absent", () =>
+  Effect.gen(function* () {
+    const mem = makeMemFs({
+      [TEST_PATH]: JSON.stringify({
+        smartCompaction: {
+          [LEGACY_KEEP_CONTEXT_THRESHOLD_KEY]: 0.72,
+          [LEGACY_KEEP_CONTEXT_MIN_CONFIDENCE_KEY]: 0.31,
+        },
+      }),
+    });
+    const settings = yield* runWithMem(mem, load());
+    assert.strictEqual(settings.needsContextProbabilityThreshold, 0.72);
+    assert.strictEqual(settings.minAnswerConfidence, 0.31);
+  }),
+);
+
+it.effect("load prefers the current probability keys over their legacy aliases", () =>
+  Effect.gen(function* () {
+    const mem = makeMemFs({
+      [TEST_PATH]: JSON.stringify({
+        smartCompaction: {
+          [NEEDS_CONTEXT_PROBABILITY_THRESHOLD_KEY]: 0.72,
+          [LEGACY_KEEP_CONTEXT_THRESHOLD_KEY]: 0.31,
+          [MIN_ANSWER_CONFIDENCE_KEY]: 0.41,
+          [LEGACY_KEEP_CONTEXT_MIN_CONFIDENCE_KEY]: 0.21,
+        },
+      }),
+    });
+    const settings = yield* runWithMem(mem, load());
+    assert.strictEqual(settings.needsContextProbabilityThreshold, 0.72);
+    assert.strictEqual(settings.minAnswerConfidence, 0.41);
   }),
 );
 
@@ -210,13 +246,13 @@ it.effect("load resolves every value from the shared contract fixture", () =>
       provider: "typesafe",
       modelId: "jev-latest",
     });
-    assert.strictEqual(settings.keepContextThreshold, 0.5);
-    assert.strictEqual(settings.keepContextMinConfidence, 0.5);
+    assert.strictEqual(settings.needsContextProbabilityThreshold, 0.5);
+    assert.strictEqual(settings.minAnswerConfidence, 0.5);
     assert.strictEqual(settings.maxCandidates, 8);
   }),
 );
 
-it.effect("load reads the enabled, classifier, and threshold keys the contract names", () =>
+it.effect("load reads the enabled, classifier, and probability keys the contract names", () =>
   Effect.gen(function* () {
     const parsed = JSON.parse(yield* readFixture) as {
       smartCompaction: Record<string, unknown>;
@@ -224,13 +260,15 @@ it.effect("load reads the enabled, classifier, and threshold keys the contract n
     assert.strictEqual(SMART_COMPACTION_KEY in parsed, true);
     assert.strictEqual(ENABLED_KEY in parsed.smartCompaction, true);
     assert.strictEqual(CLASSIFIER_KEY in parsed.smartCompaction, true);
-    assert.strictEqual(KEEP_CONTEXT_THRESHOLD_KEY in parsed.smartCompaction, true);
-    assert.strictEqual(KEEP_CONTEXT_MIN_CONFIDENCE_KEY in parsed.smartCompaction, true);
+    assert.strictEqual(NEEDS_CONTEXT_PROBABILITY_THRESHOLD_KEY in parsed.smartCompaction, true);
+    assert.strictEqual(MIN_ANSWER_CONFIDENCE_KEY in parsed.smartCompaction, true);
+    assert.strictEqual(LEGACY_KEEP_CONTEXT_THRESHOLD_KEY in parsed.smartCompaction, false);
+    assert.strictEqual(LEGACY_KEEP_CONTEXT_MIN_CONFIDENCE_KEY in parsed.smartCompaction, false);
     assert.strictEqual(MAX_CANDIDATES_KEY in parsed.smartCompaction, true);
     assert.strictEqual(parsed.smartCompaction[ENABLED_KEY], true);
     assert.strictEqual(parsed.smartCompaction[CLASSIFIER_KEY], "typesafe/jev-latest");
-    assert.strictEqual(parsed.smartCompaction[KEEP_CONTEXT_THRESHOLD_KEY], 0.5);
-    assert.strictEqual(parsed.smartCompaction[KEEP_CONTEXT_MIN_CONFIDENCE_KEY], 0.5);
+    assert.strictEqual(parsed.smartCompaction[NEEDS_CONTEXT_PROBABILITY_THRESHOLD_KEY], 0.5);
+    assert.strictEqual(parsed.smartCompaction[MIN_ANSWER_CONFIDENCE_KEY], 0.5);
     assert.strictEqual(parsed.smartCompaction[MAX_CANDIDATES_KEY], 8);
   }),
 );

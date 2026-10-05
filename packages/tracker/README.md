@@ -194,16 +194,20 @@ The feature reads five keys from `tui.json`, under `smartCompaction`:
 | -------------------------- | ---------------- | ------- | ---------------------------------------------------------------------------------------- |
 | `enabled`                  | boolean          | `true`  | Turn smart compaction on or off.                                                          |
 | `classifier`               | string or null   | `null`  | A `provider/modelId` classifier. `null` uses the preference order: Clef Flash, then TypeSafe Jev, then OpenCode Jev. |
-| `keepContextThreshold`     | number in (0, 1) | `0.5`   | The probability of `needs-context` at or above which the context is kept.                  |
-| `keepContextMinConfidence` | number in (0, 1) | `0.5`   | The answer confidence below which the context is kept.                                     |
+| `needsContextProbabilityThreshold` | number in (0, 1) | `0.5`   | The `needs-context` probability at or above which the context is kept.                     |
+| `minAnswerConfidence`      | number in (0, 1) | `0.5`   | The answer's self-reported confidence below which the context is kept.                     |
 | `maxCandidates`            | integer 1..20    | `8`     | How many ready items one classification judges.                                            |
 
-`keepContextThreshold` is the probability knob: raise it to compact less often,
-lower it to compact more often. `keepContextMinConfidence` is the second guard:
-when the model's answer is less confident than the floor, pi-tracker keeps the
-context. The gate only adds keeping, so it can never cause a premature
-compaction. `maxCandidates` bounds the classifier input; when more items are
-ready than the cap, the first `maxCandidates` are judged, dependents first.
+`needsContextProbabilityThreshold` is the probability knob: raise it to compact
+more often, lower it to keep context more often. It cuts on the probability the
+classifier assigns to `needs-context`, not on its confidence. `minAnswerConfidence`
+is a separate guard on the answer's self-reported confidence: when the model is
+less confident than the floor, pi-tracker keeps the context. This guard only
+adds keeping, so it can never cause a premature compaction. Both keys still
+accept their pre-rename names (`keepContextThreshold`, `keepContextMinConfidence`)
+as aliases; the current key wins when both are present. `maxCandidates` bounds the
+classifier input; when more items are ready than the cap, the first
+`maxCandidates` are judged, dependents first.
 
 A value outside the range in the table falls back to the default. The feature
 fails open. A disabled feature, no credential-available classifier, a classifier
@@ -212,9 +216,9 @@ context. The classifier input is the item list only. The transcript never leaves
 the session.
 
 The `/tui` command edits all five on a **Compaction** tab: `Smart compaction`
-(toggle), `Compaction classifier` (picker), `Keep-context confidence`, `Min
-confidence`, and `Max candidates` (`+` and `-` adjust the numeric rows). The
-Compaction tab appears only while the tracker extension is loaded.
+(toggle), `Compaction classifier` (picker), `Needs-context probability`, `Answer
+confidence floor`, and `Max candidates` (`+` and `-` adjust the numeric rows).
+The Compaction tab appears only while the tracker extension is loaded.
 
 ## Persistence
 

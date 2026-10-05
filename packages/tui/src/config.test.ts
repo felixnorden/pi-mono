@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
-  adjustKeepContextThreshold,
+  adjustSmartCompactionProbability,
   adjustMaxCandidates,
   applyDefaults,
   ConfigParseError,
@@ -489,8 +489,8 @@ it.effect("the shared contract fixture decodes into the smart-compaction section
     const config = applyDefaults(decodeConfig(raw));
     assert.strictEqual(config.smartCompaction.enabled, true);
     assert.strictEqual(config.smartCompaction.classifier, "typesafe/jev-latest");
-    assert.strictEqual(config.smartCompaction.keepContextThreshold, 0.5);
-    assert.strictEqual(config.smartCompaction.keepContextMinConfidence, 0.5);
+    assert.strictEqual(config.smartCompaction.needsContextProbabilityThreshold, 0.5);
+    assert.strictEqual(config.smartCompaction.minAnswerConfidence, 0.5);
     assert.strictEqual(config.smartCompaction.maxCandidates, 8);
   }).pipe(Effect.provide(NodeFileSystem.layer)),
 );
@@ -500,8 +500,8 @@ it("a config file without the smart-compaction section applies the smart-compact
   assert.deepStrictEqual(config.smartCompaction, {
     enabled: true,
     classifier: null,
-    keepContextThreshold: 0.5,
-    keepContextMinConfidence: 0.5,
+    needsContextProbabilityThreshold: 0.5,
+    minAnswerConfidence: 0.5,
     maxCandidates: 8,
   });
 });
@@ -513,41 +513,74 @@ it("an encoded default config carries all smart-compaction keys", () => {
   assert.deepStrictEqual(encoded.smartCompaction, {
     enabled: true,
     classifier: null,
-    keepContextThreshold: 0.5,
-    keepContextMinConfidence: 0.5,
+    needsContextProbabilityThreshold: 0.5,
+    minAnswerConfidence: 0.5,
     maxCandidates: 8,
   });
 });
 
-it("a config file keeps a valid keep-context threshold", () => {
-  const config = applyDefaults({ smartCompaction: { keepContextThreshold: 0.72 } });
-  assert.strictEqual(config.smartCompaction.keepContextThreshold, 0.72);
+it("an encoded default config omits the legacy probability aliases", () => {
+  const encoded = JSON.parse(encodeConfig(DEFAULT_CONFIG)) as {
+    smartCompaction: Record<string, unknown>;
+  };
+  assert.strictEqual("keepContextThreshold" in encoded.smartCompaction, false);
+  assert.strictEqual("keepContextMinConfidence" in encoded.smartCompaction, false);
 });
 
-it("an out-of-range keep-context threshold falls back to the default", () => {
+it("a config file keeps a valid needs-context probability threshold", () => {
+  const config = applyDefaults({ smartCompaction: { needsContextProbabilityThreshold: 0.72 } });
+  assert.strictEqual(config.smartCompaction.needsContextProbabilityThreshold, 0.72);
+});
+
+it("an out-of-range needs-context probability threshold falls back to the default", () => {
   for (const invalid of [0, 1, -0.1, 1.5]) {
-    const config = applyDefaults({ smartCompaction: { keepContextThreshold: invalid } });
-    assert.strictEqual(config.smartCompaction.keepContextThreshold, 0.5);
+    const config = applyDefaults({ smartCompaction: { needsContextProbabilityThreshold: invalid } });
+    assert.strictEqual(config.smartCompaction.needsContextProbabilityThreshold, 0.5);
   }
 });
 
-it("a config file keeps a valid keep-context min confidence", () => {
-  const config = applyDefaults({ smartCompaction: { keepContextMinConfidence: 0.72 } });
-  assert.strictEqual(config.smartCompaction.keepContextMinConfidence, 0.72);
+it("a config file keeps a valid min answer confidence", () => {
+  const config = applyDefaults({ smartCompaction: { minAnswerConfidence: 0.72 } });
+  assert.strictEqual(config.smartCompaction.minAnswerConfidence, 0.72);
 });
 
-it("an out-of-range keep-context min confidence falls back to the default", () => {
+it("an out-of-range min answer confidence falls back to the default", () => {
   for (const invalid of [0, 1, -0.1, 1.5]) {
-    const config = applyDefaults({ smartCompaction: { keepContextMinConfidence: invalid } });
-    assert.strictEqual(config.smartCompaction.keepContextMinConfidence, 0.5);
+    const config = applyDefaults({ smartCompaction: { minAnswerConfidence: invalid } });
+    assert.strictEqual(config.smartCompaction.minAnswerConfidence, 0.5);
   }
 });
 
-it("adjustKeepContextThreshold steps by 0.05 and clamps inside the open interval", () => {
-  assert.strictEqual(adjustKeepContextThreshold(0.5, 0.05), 0.55);
-  assert.strictEqual(adjustKeepContextThreshold(0.5, -0.05), 0.45);
-  assert.strictEqual(adjustKeepContextThreshold(0.95, 0.05), 0.95);
-  assert.strictEqual(adjustKeepContextThreshold(0.05, -0.05), 0.05);
+it("a config file with only the legacy probability keys decodes and resolves", () => {
+  const config = applyDefaults(
+    decodeConfig(
+      JSON.stringify({
+        smartCompaction: { keepContextThreshold: 0.72, keepContextMinConfidence: 0.31 },
+      }),
+    ),
+  );
+  assert.strictEqual(config.smartCompaction.needsContextProbabilityThreshold, 0.72);
+  assert.strictEqual(config.smartCompaction.minAnswerConfidence, 0.31);
+});
+
+it("the current probability keys win over their legacy aliases", () => {
+  const config = applyDefaults({
+    smartCompaction: {
+      needsContextProbabilityThreshold: 0.72,
+      keepContextThreshold: 0.31,
+      minAnswerConfidence: 0.41,
+      keepContextMinConfidence: 0.21,
+    },
+  });
+  assert.strictEqual(config.smartCompaction.needsContextProbabilityThreshold, 0.72);
+  assert.strictEqual(config.smartCompaction.minAnswerConfidence, 0.41);
+});
+
+it("adjustSmartCompactionProbability steps by 0.05 and clamps inside the open interval", () => {
+  assert.strictEqual(adjustSmartCompactionProbability(0.5, 0.05), 0.55);
+  assert.strictEqual(adjustSmartCompactionProbability(0.5, -0.05), 0.45);
+  assert.strictEqual(adjustSmartCompactionProbability(0.95, 0.05), 0.95);
+  assert.strictEqual(adjustSmartCompactionProbability(0.05, -0.05), 0.05);
 });
 
 it("a config file keeps a valid max-candidates cap", () => {
@@ -581,8 +614,8 @@ it.effect("save keeps a chosen classifier through a load round trip", () =>
           smartCompaction: {
             enabled: false,
             classifier: "typesafe/jev-latest",
-            keepContextThreshold: 0.8,
-            keepContextMinConfidence: 0.8,
+            needsContextProbabilityThreshold: 0.8,
+            minAnswerConfidence: 0.8,
             maxCandidates: 3,
           },
         });
@@ -592,8 +625,8 @@ it.effect("save keeps a chosen classifier through a load round trip", () =>
     assert.deepStrictEqual(config.smartCompaction, {
       enabled: false,
       classifier: "typesafe/jev-latest",
-      keepContextThreshold: 0.8,
-      keepContextMinConfidence: 0.8,
+      needsContextProbabilityThreshold: 0.8,
+      minAnswerConfidence: 0.8,
       maxCandidates: 3,
     });
   }),

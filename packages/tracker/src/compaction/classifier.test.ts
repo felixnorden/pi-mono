@@ -11,8 +11,8 @@ import type {
 } from "@earendil-works/pi-ai";
 import {
   CLASSIFY_TIMEOUT_MILLIS,
-  DEFAULT_KEEP_CONTEXT_MIN_CONFIDENCE,
-  DEFAULT_KEEP_CONTEXT_THRESHOLD,
+  DEFAULT_MIN_ANSWER_CONFIDENCE,
+  DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
   NEEDS_CONTEXT_LABEL,
   NEEDS_NONE_LABEL,
   ClassifierGateway,
@@ -74,17 +74,17 @@ const choiceResult = (needsMass: number, confidence = 1, key = QUESTION_KEY): Cl
 const verdict = (
   result: ClassifierResult,
   questionKeys: readonly string[],
-  keepContextThreshold = DEFAULT_KEEP_CONTEXT_THRESHOLD,
-  keepContextMinConfidence = DEFAULT_KEEP_CONTEXT_MIN_CONFIDENCE,
-) => classifyVerdict(result, questionKeys, keepContextThreshold, keepContextMinConfidence);
+  needsContextProbabilityThreshold = DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
+  minAnswerConfidence = DEFAULT_MIN_ANSWER_CONFIDENCE,
+) => classifyVerdict(result, questionKeys, needsContextProbabilityThreshold, minAnswerConfidence);
 
 const input = (
   registry: ClassifierRegistry,
   overrides: {
     enabled?: boolean;
     chosen?: Option.Option<ClassifierIdentity>;
-    keepContextThreshold?: number;
-    keepContextMinConfidence?: number;
+    needsContextProbabilityThreshold?: number;
+    minAnswerConfidence?: number;
     digest?: JsonObject;
     questions?: readonly CompactionQuestion[];
     signal?: AbortSignal;
@@ -93,9 +93,9 @@ const input = (
   registry,
   enabled: overrides.enabled ?? true,
   chosen: overrides.chosen ?? Option.none(),
-  keepContextThreshold: overrides.keepContextThreshold ?? DEFAULT_KEEP_CONTEXT_THRESHOLD,
-  keepContextMinConfidence:
-    overrides.keepContextMinConfidence ?? DEFAULT_KEEP_CONTEXT_MIN_CONFIDENCE,
+  needsContextProbabilityThreshold:
+    overrides.needsContextProbabilityThreshold ?? DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD,
+  minAnswerConfidence: overrides.minAnswerConfidence ?? DEFAULT_MIN_ANSWER_CONFIDENCE,
   digest: overrides.digest ?? DIGEST,
   questions: overrides.questions ?? [question],
   signal: overrides.signal,
@@ -179,7 +179,7 @@ it("resolveClassifier returns none when no classifier is credential-available", 
 // ---------------------------------------------------------------------------
 
 it("classifyVerdict keeps context at the threshold", () => {
-  assert.deepStrictEqual(verdict(choiceResult(DEFAULT_KEEP_CONTEXT_THRESHOLD), [QUESTION_KEY]), {
+  assert.deepStrictEqual(verdict(choiceResult(DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD), [QUESTION_KEY]), {
     kind: "keep",
   });
 });
@@ -210,7 +210,7 @@ it("classifyVerdict keeps context when an answer is below the confidence floor",
 
 it("classifyVerdict compacts when the answer reaches the confidence floor", () => {
   assert.deepStrictEqual(
-    verdict(choiceResult(0.1, DEFAULT_KEEP_CONTEXT_MIN_CONFIDENCE), [QUESTION_KEY]),
+    verdict(choiceResult(0.1, DEFAULT_MIN_ANSWER_CONFIDENCE), [QUESTION_KEY]),
     { kind: "compact" },
   );
 });

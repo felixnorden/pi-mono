@@ -559,10 +559,10 @@ describe("tracker smart-compaction bridge", () => {
     expect(harness.compacts).toHaveLength(0);
   });
 
-  it("a raised keepContextThreshold compacts an answer the default would keep", async () => {
+  it("a raised needsContextProbabilityThreshold compacts an answer the default would keep", async () => {
     const harness = await makeHarness({
       registry: compactRegistry(0.6),
-      config: { smartCompaction: { keepContextThreshold: 0.9 } },
+      config: { smartCompaction: { needsContextProbabilityThreshold: 0.9 } },
     });
     await completeFirst(harness);
 
@@ -571,10 +571,10 @@ describe("tracker smart-compaction bridge", () => {
     expect(harness.compacts).toHaveLength(1);
   });
 
-  it("a lowered keepContextThreshold keeps an answer the default would compact", async () => {
+  it("a lowered needsContextProbabilityThreshold keeps an answer the default would compact", async () => {
     const harness = await makeHarness({
       registry: compactRegistry(0.45),
-      config: { smartCompaction: { keepContextThreshold: 0.2 } },
+      config: { smartCompaction: { needsContextProbabilityThreshold: 0.2 } },
     });
     await completeFirst(harness);
 
@@ -586,7 +586,7 @@ describe("tracker smart-compaction bridge", () => {
   it("keeps context when the classifier answer is below the confidence floor", async () => {
     const harness = await makeHarness({
       registry: compactRegistry(0.1, undefined, 0.2),
-      config: { smartCompaction: { keepContextMinConfidence: 0.9 } },
+      config: { smartCompaction: { minAnswerConfidence: 0.9 } },
     });
     await completeFirst(harness);
 
@@ -598,7 +598,7 @@ describe("tracker smart-compaction bridge", () => {
   it("compacts when the classifier answer reaches the confidence floor", async () => {
     const harness = await makeHarness({
       registry: compactRegistry(0.1, undefined, 0.9),
-      config: { smartCompaction: { keepContextMinConfidence: 0.5 } },
+      config: { smartCompaction: { minAnswerConfidence: 0.5 } },
     });
     await completeFirst(harness);
 

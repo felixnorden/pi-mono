@@ -79,8 +79,8 @@ const config: TuiConfig = {
   smartCompaction: {
     enabled: true,
     classifier: null,
-    keepContextThreshold: 0.5,
-    keepContextMinConfidence: 0.5,
+    needsContextProbabilityThreshold: 0.5,
+    minAnswerConfidence: 0.5,
     maxCandidates: 8,
   },
 };

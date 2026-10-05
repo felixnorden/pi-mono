@@ -10,9 +10,9 @@ import {
 } from "@earendil-works/pi-tui";
 import { makeBorderedBox } from "../components/bordered-box.ts";
 import {
-  adjustKeepContextThreshold,
+  adjustSmartCompactionProbability,
   adjustMaxCandidates,
-  KEEP_CONTEXT_THRESHOLD_STEP,
+  SMART_COMPACTION_PROBABILITY_STEP,
   MAX_CANDIDATES_STEP,
   type IconMode,
   type TuiConfig,
@@ -48,7 +48,7 @@ const COPY = {
       segments: "Footer",
       telemetry: "Telemetry",
     },
-    hint: "Tab/Shift+Tab/←/→/h/l: tabs · ↑/↓/j/k: move · Enter/Space: change · +/−: threshold · Esc/q: close",
+    hint: "Tab/Shift+Tab/←/→/h/l: tabs · ↑/↓/j/k: move · Enter/Space: change · +/−: step value · Esc/q: close",
     labels: {
       enabled: "Enabled",
       vim: "Vim mode",
@@ -69,8 +69,8 @@ const COPY = {
       costRate: "Cost rate",
       smartCompactionEnabled: "Smart compaction",
       smartCompactionClassifier: "Compaction classifier",
-      smartCompactionKeepContextThreshold: "Keep-context confidence",
-      smartCompactionKeepContextMinConfidence: "Min confidence",
+      smartCompactionNeedsContextProbability: "Needs-context probability",
+      smartCompactionMinAnswerConfidence: "Answer confidence floor",
       smartCompactionMaxCandidates: "Max candidates",
     },
     values: {
@@ -210,8 +210,8 @@ function cycleClassifier(config: TuiConfig, choices: readonly ClassifierChoice[]
   return { ...config, smartCompaction: { ...config.smartCompaction, classifier: next.value } };
 }
 
-/** Two-decimal display for the keep-context threshold row. */
-const formatKeepContextThreshold = (value: number): string => value.toFixed(2);
+/** Two-decimal display for the probability rows. */
+const formatProbability = (value: number): string => value.toFixed(2);
 
 function buildFeaturesItems(config: TuiConfig, copy: SettingsCopy): SettingItem[] {
   return [
@@ -253,14 +253,14 @@ function buildCompactionItems(
       currentValue: classifierLabel(choices, config.smartCompaction.classifier),
     },
     {
-      id: "smartCompactionKeepContextThreshold",
-      label: copy.labels.smartCompactionKeepContextThreshold,
-      currentValue: formatKeepContextThreshold(config.smartCompaction.keepContextThreshold),
+      id: "smartCompactionNeedsContextProbability",
+      label: copy.labels.smartCompactionNeedsContextProbability,
+      currentValue: formatProbability(config.smartCompaction.needsContextProbabilityThreshold),
     },
     {
-      id: "smartCompactionKeepContextMinConfidence",
-      label: copy.labels.smartCompactionKeepContextMinConfidence,
-      currentValue: formatKeepContextThreshold(config.smartCompaction.keepContextMinConfidence),
+      id: "smartCompactionMinAnswerConfidence",
+      label: copy.labels.smartCompactionMinAnswerConfidence,
+      currentValue: formatProbability(config.smartCompaction.minAnswerConfidence),
     },
     {
       id: "smartCompactionMaxCandidates",
@@ -389,34 +389,34 @@ export const makeSettingsUi = (
   let cachedLines: string[] | undefined;
   let compact = false;
 
-  const adjustThreshold = (delta: number): void => {
+  const adjustNeedsContextProbability = (delta: number): void => {
     currentConfig = {
       ...currentConfig,
       smartCompaction: {
         ...currentConfig.smartCompaction,
-        keepContextThreshold: adjustKeepContextThreshold(
-          currentConfig.smartCompaction.keepContextThreshold,
+        needsContextProbabilityThreshold: adjustSmartCompactionProbability(
+          currentConfig.smartCompaction.needsContextProbabilityThreshold,
           delta,
         ),
       },
     };
     onChange(currentConfig);
-    rebuild("smartCompactionKeepContextThreshold");
+    rebuild("smartCompactionNeedsContextProbability");
   };
 
-  const adjustMinConfidenceBy = (delta: number): void => {
+  const adjustMinAnswerConfidence = (delta: number): void => {
     currentConfig = {
       ...currentConfig,
       smartCompaction: {
         ...currentConfig.smartCompaction,
-        keepContextMinConfidence: adjustKeepContextThreshold(
-          currentConfig.smartCompaction.keepContextMinConfidence,
+        minAnswerConfidence: adjustSmartCompactionProbability(
+          currentConfig.smartCompaction.minAnswerConfidence,
           delta,
         ),
       },
     };
     onChange(currentConfig);
-    rebuild("smartCompactionKeepContextMinConfidence");
+    rebuild("smartCompactionMinAnswerConfidence");
   };
 
   const adjustMaxCandidatesBy = (delta: number): void => {
@@ -435,12 +435,12 @@ export const makeSettingsUi = (
     selectedItemByTab[tab] = itemId;
     // The numeric rows have no enumerated value: Enter/Space steps them up, and
     // the +/− keys step them either way.
-    if (itemId === "smartCompactionKeepContextThreshold") {
-      adjustThreshold(KEEP_CONTEXT_THRESHOLD_STEP);
+    if (itemId === "smartCompactionNeedsContextProbability") {
+      adjustNeedsContextProbability(SMART_COMPACTION_PROBABILITY_STEP);
       return;
     }
-    if (itemId === "smartCompactionKeepContextMinConfidence") {
-      adjustMinConfidenceBy(KEEP_CONTEXT_THRESHOLD_STEP);
+    if (itemId === "smartCompactionMinAnswerConfidence") {
+      adjustMinAnswerConfidence(SMART_COMPACTION_PROBABILITY_STEP);
       return;
     }
     if (itemId === "smartCompactionMaxCandidates") {
@@ -556,10 +556,10 @@ export const makeSettingsUi = (
     } else if (data === "+" || data === "=" || data === "-" || data === "_") {
       const selected = selectList.getSelectedItem()?.value;
       const sign = data === "+" || data === "=" ? 1 : -1;
-      if (selected === "smartCompactionKeepContextThreshold") {
-        adjustThreshold(sign * KEEP_CONTEXT_THRESHOLD_STEP);
-      } else if (selected === "smartCompactionKeepContextMinConfidence") {
-        adjustMinConfidenceBy(sign * KEEP_CONTEXT_THRESHOLD_STEP);
+      if (selected === "smartCompactionNeedsContextProbability") {
+        adjustNeedsContextProbability(sign * SMART_COMPACTION_PROBABILITY_STEP);
+      } else if (selected === "smartCompactionMinAnswerConfidence") {
+        adjustMinAnswerConfidence(sign * SMART_COMPACTION_PROBABILITY_STEP);
       } else if (selected === "smartCompactionMaxCandidates") {
         adjustMaxCandidatesBy(sign * MAX_CANDIDATES_STEP);
       } else {

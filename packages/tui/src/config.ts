@@ -40,8 +40,8 @@ export class TuiConfig extends Schema.Class<TuiConfig>("tui/config/TuiConfig")({
   smartCompaction: Schema.Struct({
     enabled: Schema.Boolean,
     classifier: Schema.NullOr(Schema.String),
-    keepContextThreshold: Schema.Number,
-    keepContextMinConfidence: Schema.Number,
+    needsContextProbabilityThreshold: Schema.Number,
+    minAnswerConfidence: Schema.Number,
     maxCandidates: Schema.Number,
   }),
 }) {}
@@ -76,34 +76,31 @@ export const DEFAULT_CONFIG: TuiConfig = {
   smartCompaction: {
     enabled: true,
     classifier: null,
-    keepContextThreshold: 0.5,
-    keepContextMinConfidence: 0.5,
+    needsContextProbabilityThreshold: 0.5,
+    minAnswerConfidence: 0.5,
     maxCandidates: 8,
   },
 };
 
 /**
- * Step and bounds for the settings dialog's threshold editor. The value must
- * stay strictly inside (0, 1); the dialog clamps to this open interval so a
- * user cannot write a value the tracker would reject.
+ * Step and bounds for the settings dialog's two probability editors. The value
+ * must stay strictly inside (0, 1); the dialog clamps to this open interval so
+ * a user cannot write a value the tracker would reject.
  */
-export const KEEP_CONTEXT_THRESHOLD_STEP = 0.05;
-export const KEEP_CONTEXT_THRESHOLD_MIN = 0.05;
-export const KEEP_CONTEXT_THRESHOLD_MAX = 0.95;
+export const SMART_COMPACTION_PROBABILITY_STEP = 0.05;
+export const SMART_COMPACTION_PROBABILITY_MIN = 0.05;
+export const SMART_COMPACTION_PROBABILITY_MAX = 0.95;
 
-/** True when `value` is a usable keep-context threshold: strictly inside (0, 1). */
-export const isKeepContextThreshold = (value: number): boolean => value > 0 && value < 1;
+/** True when `value` is a usable probability knob: strictly inside (0, 1). */
+export const isSmartCompactionProbability = (value: number): boolean => value > 0 && value < 1;
 
-/**
- * True when `value` is a usable confidence floor: strictly inside (0, 1). The
- * tracker applies the same open-interval rule to both knobs.
- */
-export const isKeepContextMinConfidence = isKeepContextThreshold;
-
-/** Nudge a threshold by `delta`, rounded to two decimals and kept inside the bounds. */
-export const adjustKeepContextThreshold = (value: number, delta: number): number => {
+/** Nudge a probability knob by `delta`, rounded to two decimals and kept inside the bounds. */
+export const adjustSmartCompactionProbability = (value: number, delta: number): number => {
   const next = Math.round((value + delta) * 100) / 100;
-  return Math.min(KEEP_CONTEXT_THRESHOLD_MAX, Math.max(KEEP_CONTEXT_THRESHOLD_MIN, next));
+  return Math.min(
+    SMART_COMPACTION_PROBABILITY_MAX,
+    Math.max(SMART_COMPACTION_PROBABILITY_MIN, next),
+  );
 };
 
 /**
@@ -168,6 +165,10 @@ const FileSchema = Schema.fromJsonString(
       Schema.Struct({
         enabled: OptionalBoolean,
         classifier: Schema.optional(Schema.NullOr(Schema.String)),
+        needsContextProbabilityThreshold: Schema.optional(Schema.Finite),
+        minAnswerConfidence: Schema.optional(Schema.Finite),
+        // Pre-rename names. They stay declared and read as aliases, so an
+        // existing tui.json keeps working.
         keepContextThreshold: Schema.optional(Schema.Finite),
         keepContextMinConfidence: Schema.optional(Schema.Finite),
         maxCandidates: Schema.optional(Schema.Int),
@@ -183,6 +184,19 @@ export const encodeConfig = Schema.encodeSync(FileSchema);
 export const decodeConfig = Schema.decodeSync(FileSchema);
 
 export const decodeConfigEffect = Schema.decodeEffect(FileSchema);
+
+/**
+ * Resolve one probability knob: the current key, then its legacy alias, then the
+ * default. The current key wins when present; a value outside (0, 1) is ignored.
+ */
+const probabilityValue = (
+  current: number | undefined,
+  legacy: number | undefined,
+  fallback: number,
+): number => {
+  const raw = current ?? legacy;
+  return raw !== undefined && isSmartCompactionProbability(raw) ? raw : fallback;
+};
 
 export function applyDefaults(partial: TuiConfigFile): TuiConfig {
   return {
@@ -217,16 +231,16 @@ export function applyDefaults(partial: TuiConfigFile): TuiConfig {
     smartCompaction: {
       enabled: partial.smartCompaction?.enabled ?? DEFAULT_CONFIG.smartCompaction.enabled,
       classifier: partial.smartCompaction?.classifier ?? DEFAULT_CONFIG.smartCompaction.classifier,
-      keepContextThreshold:
-        partial.smartCompaction?.keepContextThreshold !== undefined &&
-        isKeepContextThreshold(partial.smartCompaction.keepContextThreshold)
-          ? partial.smartCompaction.keepContextThreshold
-          : DEFAULT_CONFIG.smartCompaction.keepContextThreshold,
-      keepContextMinConfidence:
-        partial.smartCompaction?.keepContextMinConfidence !== undefined &&
-        isKeepContextMinConfidence(partial.smartCompaction.keepContextMinConfidence)
-          ? partial.smartCompaction.keepContextMinConfidence
-          : DEFAULT_CONFIG.smartCompaction.keepContextMinConfidence,
+      needsContextProbabilityThreshold: probabilityValue(
+        partial.smartCompaction?.needsContextProbabilityThreshold,
+        partial.smartCompaction?.keepContextThreshold,
+        DEFAULT_CONFIG.smartCompaction.needsContextProbabilityThreshold,
+      ),
+      minAnswerConfidence: probabilityValue(
+        partial.smartCompaction?.minAnswerConfidence,
+        partial.smartCompaction?.keepContextMinConfidence,
+        DEFAULT_CONFIG.smartCompaction.minAnswerConfidence,
+      ),
       maxCandidates:
         partial.smartCompaction?.maxCandidates !== undefined &&
         isMaxCandidates(partial.smartCompaction.maxCandidates)

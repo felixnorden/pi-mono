@@ -258,12 +258,12 @@ const goToCompaction = (ui: SettingsUiHandle): void => {
   ui.handleInput("\t");
 };
 
-type CompactionRow = "toggle" | "classifier" | "threshold" | "minConfidence" | "cap";
+type CompactionRow = "toggle" | "classifier" | "probability" | "answerConfidence" | "cap";
 const ROW_OFFSET: Record<CompactionRow, number> = {
   toggle: 0,
   classifier: 1,
-  threshold: 2,
-  minConfidence: 3,
+  probability: 2,
+  answerConfidence: 3,
   cap: 4,
 };
 
@@ -284,15 +284,15 @@ it("the Compaction tab is hidden when the tracker extension is not loaded", () =
   );
 });
 
-it("the Compaction tab shows the toggle, classifier, threshold, min confidence, and cap", () => {
+it("the Compaction tab shows the toggle, classifier, two probability knobs, and cap", () => {
   const { ui } = makeUi();
   goToCompaction(ui);
   const lines = rendered(ui);
   for (const label of [
     "Smart compaction",
     "Compaction classifier",
-    "Keep-context confidence",
-    "Min confidence",
+    "Needs-context probability",
+    "Answer confidence floor",
     "Max candidates",
   ]) {
     assert.strictEqual(lines.some((line) => line.includes(label)), true);
@@ -358,72 +358,72 @@ it("the Compaction tab adds exactly the five smart-compaction rows", () => {
   assert.strictEqual(selectedShows(ui, "Smart compaction"), true);
 });
 
-it("the threshold row shows the current value with two decimals", () => {
+it("the needs-context probability row shows the current value with two decimals", () => {
   const { ui } = makeUi({
-    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, keepContextThreshold: 0.7 },
+    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, needsContextProbabilityThreshold: 0.7 },
   });
   goToCompaction(ui);
   assert.strictEqual(
-    rendered(ui).some((line) => line.includes("Keep-context confidence") && line.includes("0.70")),
+    rendered(ui).some((line) => line.includes("Needs-context probability") && line.includes("0.70")),
     true,
   );
 });
 
-it("Enter on the threshold row steps the value up by 0.05", () => {
+it("Enter on the needs-context probability row steps the value up by 0.05", () => {
   const { ui, changes } = makeUi();
-  selectCompactionRow(ui, "threshold");
-  assert.strictEqual(selectedShows(ui, "Keep-context confidence"), true);
+  selectCompactionRow(ui, "probability");
+  assert.strictEqual(selectedShows(ui, "Needs-context probability"), true);
 
   ui.handleInput("\r");
 
   assert.strictEqual(changes.length, 1);
-  assert.strictEqual(changes[0]!.smartCompaction.keepContextThreshold, 0.55);
+  assert.strictEqual(changes[0]!.smartCompaction.needsContextProbabilityThreshold, 0.55);
 });
 
-it("the +/- keys adjust the threshold row and clamp inside the open interval", () => {
+it("the +/- keys adjust the needs-context probability row and clamp inside the open interval", () => {
   const { ui, changes } = makeUi({
-    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, keepContextThreshold: 0.95 },
+    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, needsContextProbabilityThreshold: 0.95 },
   });
-  selectCompactionRow(ui, "threshold");
+  selectCompactionRow(ui, "probability");
 
   ui.handleInput("+");
-  assert.strictEqual(changes.at(-1)?.smartCompaction.keepContextThreshold, 0.95);
+  assert.strictEqual(changes.at(-1)?.smartCompaction.needsContextProbabilityThreshold, 0.95);
   ui.handleInput("-");
-  assert.strictEqual(changes.at(-1)?.smartCompaction.keepContextThreshold, 0.9);
+  assert.strictEqual(changes.at(-1)?.smartCompaction.needsContextProbabilityThreshold, 0.9);
 });
 
-it("the min-confidence row shows the current value with two decimals", () => {
+it("the answer confidence floor row shows the current value with two decimals", () => {
   const { ui } = makeUi({
-    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, keepContextMinConfidence: 0.7 },
+    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, minAnswerConfidence: 0.7 },
   });
   goToCompaction(ui);
   assert.strictEqual(
-    rendered(ui).some((line) => line.includes("Min confidence") && line.includes("0.70")),
+    rendered(ui).some((line) => line.includes("Answer confidence floor") && line.includes("0.70")),
     true,
   );
 });
 
-it("Enter on the min-confidence row steps the value up by 0.05", () => {
+it("Enter on the answer confidence floor row steps the value up by 0.05", () => {
   const { ui, changes } = makeUi();
-  selectCompactionRow(ui, "minConfidence");
-  assert.strictEqual(selectedShows(ui, "Min confidence"), true);
+  selectCompactionRow(ui, "answerConfidence");
+  assert.strictEqual(selectedShows(ui, "Answer confidence floor"), true);
 
   ui.handleInput("\r");
 
   assert.strictEqual(changes.length, 1);
-  assert.strictEqual(changes[0]!.smartCompaction.keepContextMinConfidence, 0.55);
+  assert.strictEqual(changes[0]!.smartCompaction.minAnswerConfidence, 0.55);
 });
 
-it("the +/- keys adjust the min-confidence row and clamp inside the open interval", () => {
+it("the +/- keys adjust the answer confidence floor row and clamp inside the open interval", () => {
   const { ui, changes } = makeUi({
-    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, keepContextMinConfidence: 0.95 },
+    smartCompaction: { ...DEFAULT_CONFIG.smartCompaction, minAnswerConfidence: 0.95 },
   });
-  selectCompactionRow(ui, "minConfidence");
+  selectCompactionRow(ui, "answerConfidence");
 
   ui.handleInput("+");
-  assert.strictEqual(changes.at(-1)?.smartCompaction.keepContextMinConfidence, 0.95);
+  assert.strictEqual(changes.at(-1)?.smartCompaction.minAnswerConfidence, 0.95);
   ui.handleInput("-");
-  assert.strictEqual(changes.at(-1)?.smartCompaction.keepContextMinConfidence, 0.9);
+  assert.strictEqual(changes.at(-1)?.smartCompaction.minAnswerConfidence, 0.9);
 });
 
 it("the cap row shows the integer value", () => {

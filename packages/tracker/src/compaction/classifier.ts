@@ -63,18 +63,19 @@ export const PREFERRED_CLASSIFIERS: readonly ClassifierIdentity[] = [
 ];
 
 /**
- * The default probability at or above which the candidate is judged to need
- * the prior context. A user overrides it with
- * `smartCompaction.keepContextThreshold`; the default keeps context on an
- * uncertain answer.
+ * The default `P(needs-context)` at or above which the candidate is judged to
+ * need the prior context. A user overrides it with
+ * `smartCompaction.needsContextProbabilityThreshold`. Raise it to compact more
+ * often.
  */
-export const DEFAULT_KEEP_CONTEXT_THRESHOLD = 0.5;
+export const DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD = 0.5;
 
 /**
- * The default `confidence` below which the answer is distrusted and the context
- * is kept. A user overrides it with `smartCompaction.keepContextMinConfidence`.
+ * The default floor on the answer's self-reported `confidence`. A lower answer
+ * is distrusted and the context is kept. A user overrides it with
+ * `smartCompaction.minAnswerConfidence`. Raise it to keep context more often.
  */
-export const DEFAULT_KEEP_CONTEXT_MIN_CONFIDENCE = 0.5;
+export const DEFAULT_MIN_ANSWER_CONFIDENCE = 0.5;
 
 /** The `choice` label that means the candidate needs the completed context. */
 export const NEEDS_CONTEXT_LABEL = "needs-context";
@@ -104,28 +105,29 @@ export const resolveClassifier = (
 };
 
 /**
- * The verdict over every judged candidate. Keep context when any candidate
- * needs the completed detail, or when an answer is below the confidence floor.
- * Compact only when every answer is above the floor and self-contained. A
- * non-stop or malformed answer, or an empty question set, keeps the context.
+ * The verdict over every judged candidate. Keep context when any candidate's
+ * `P(needs-context)` reaches `needsContextProbabilityThreshold`, or when an
+ * answer is below the `minAnswerConfidence` floor. Compact only when every
+ * answer is above the floor and self-contained. A non-stop or malformed answer,
+ * or an empty question set, keeps the context.
  */
 export const classifyVerdict = (
   result: ClassifierResult,
   questionKeys: readonly string[],
-  keepContextThreshold: number,
-  keepContextMinConfidence: number,
+  needsContextProbabilityThreshold: number,
+  minAnswerConfidence: number,
 ): ClassificationVerdict => {
   if (result.stopReason !== "stop") return CLASSIFICATION_VERDICT.disabled;
   if (questionKeys.length === 0) return CLASSIFICATION_VERDICT.disabled;
   for (const questionKey of questionKeys) {
     const answer = result.answers[questionKey];
     if (answer === undefined || answer.type !== "choice") return CLASSIFICATION_VERDICT.disabled;
-    if ((answer.probabilities[NEEDS_CONTEXT_LABEL] ?? 0) >= keepContextThreshold) {
+    if ((answer.probabilities[NEEDS_CONTEXT_LABEL] ?? 0) >= needsContextProbabilityThreshold) {
       return CLASSIFICATION_VERDICT.keep;
     }
     // A provider that omits or mangles confidence keeps the context.
     const confidence = Number.isFinite(answer.confidence) ? answer.confidence : 0;
-    if (confidence < keepContextMinConfidence) return CLASSIFICATION_VERDICT.keep;
+    if (confidence < minAnswerConfidence) return CLASSIFICATION_VERDICT.keep;
   }
   return CLASSIFICATION_VERDICT.compact;
 };
@@ -138,8 +140,8 @@ export class ClassifierGateway extends Context.Service<
       readonly registry: ClassifierRegistry;
       readonly enabled: boolean;
       readonly chosen: Option.Option<ClassifierIdentity>;
-      readonly keepContextThreshold: number;
-      readonly keepContextMinConfidence: number;
+      readonly needsContextProbabilityThreshold: number;
+      readonly minAnswerConfidence: number;
       readonly digest: JsonObject;
       readonly questions: readonly CompactionQuestion[];
       readonly signal?: AbortSignal | undefined;
@@ -151,8 +153,8 @@ export class ClassifierGateway extends Context.Service<
       readonly registry: ClassifierRegistry;
       readonly enabled: boolean;
       readonly chosen: Option.Option<ClassifierIdentity>;
-      readonly keepContextThreshold: number;
-      readonly keepContextMinConfidence: number;
+      readonly needsContextProbabilityThreshold: number;
+      readonly minAnswerConfidence: number;
       readonly digest: JsonObject;
       readonly questions: readonly CompactionQuestion[];
       readonly signal?: AbortSignal | undefined;
@@ -187,8 +189,8 @@ export class ClassifierGateway extends Context.Service<
         : classifyVerdict(
             result.value,
             input.questions.map((question) => question.key),
-            input.keepContextThreshold,
-            input.keepContextMinConfidence,
+            input.needsContextProbabilityThreshold,
+            input.minAnswerConfidence,
           );
     });
     return ClassifierGateway.of({ verdict });
