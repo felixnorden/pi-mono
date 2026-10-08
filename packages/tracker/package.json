@@ -37,6 +37,9 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:harvest": "bun evals/harvest.ts",
+    "eval:review": "bun evals/review.ts",
+    "eval:label": "bun evals/label.ts",
     "lint": "oxlint && oxlint --type-aware -A all -D typescript/unbound-method",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
