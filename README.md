@@ -71,27 +71,38 @@ that records its bump type (`patch` / `minor` / `major`) and notes:
 bun changeset   # create a changeset for the current change
 ```
 
-On release, apply the pending changesets (bumps versions, updates internal
-`@ftrdotdev/*` dependency ranges, and writes each package's `CHANGELOG.md`):
+Apply the pending changesets (bumps versions, updates internal
+`@ftrdotdev/*` dependency ranges, and writes each package's `CHANGELOG.md`),
+refresh the lockfile, then commit the bump before you publish:
 
 ```bash
 bun run version:packages
+bun install
+git add -A
+git commit -m "chore(release): pi-tui X.Y.Z, pi-tracker X.Y.Z, pi-inquiry X.Y.Z, pi-qrspi X.Y.Z"
 ```
 
-Review the bumps, then publish and tag:
+Publish the bumped packages in dependency order, then tag the bump commit and
+push:
 
 ```bash
-bun run release    # version:packages + publish + git tag
+bun run publish:packages    # tui -> tracker -> inquiry -> qrspi
+bunx changeset git-tag
+git push -u origin HEAD
+git push --tags
 ```
 
-The `release` script runs `changeset version`, then the existing `bun publish`
-steps in dependency order, then `changeset git-tag` to create the
-`@ftrdotdev/<pkg>@x.y.z` tags. Each published package gets its own
-`CHANGELOG.md`.
+Tag after the commit: `changeset git-tag` tags `HEAD`, so an uncommitted
+version bump would put the tags on the previous commit. The one-shot
+`bun run release` script skips the commit and the `bun install` step; run the
+steps above for a real release.
 
-> `@ftrdotdev/pi-qrspi` ships skills that are fetched at `prepack` time
-> (`bun run prepack`), so `publish:qrspi` runs that fetch before `bun publish`.
-> It versions independently of the fixed group.
+Each published package gets its own `CHANGELOG.md`.
+
+> `@ftrdotdev/pi-qrspi` ships skills fetched at `prepack` time
+> (`bun run fetch:skills`), so `publish:qrspi` runs the fetch before
+> `bun publish`. It versions independently of the fixed group; add a changeset
+> when the bundled skills change.
 
 ## License
 
