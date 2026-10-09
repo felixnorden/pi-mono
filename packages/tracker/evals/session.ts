@@ -1,4 +1,9 @@
 import { Effect } from "effect";
+import {
+  DECISION_CUSTOM_TYPE,
+  decodeDecisionRecord,
+  type DecisionRecord,
+} from "../src/compaction/decision-record.ts";
 import { decodeStateEffect, migrateState } from "../src/core/domain.ts";
 import type { TimedSnapshot } from "./derive.ts";
 
@@ -74,6 +79,35 @@ export const parseSession = (text: string, onSkipped: () => void): ParsedSession
     }
   }
   return { snapshots, snapshotLines, entries };
+};
+
+/** One decision record with the session line that holds it, in file order. */
+export interface TimedDecision {
+  readonly line: number;
+  readonly record: DecisionRecord;
+}
+
+/**
+ * Every `tracker/reliance-decision` entry, decoded through the product codec.
+ * A malformed entry is skipped and reported, never guessed at.
+ */
+export const decisionsIn = (
+  entries: readonly (unknown | undefined)[],
+  onSkipped: () => void,
+): readonly TimedDecision[] => {
+  const found: TimedDecision[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const raw = entries[index];
+    if (raw === undefined) continue;
+    const entry = asRecord(raw) as RawEntry;
+    if (entry.type !== "custom" || entry.customType !== DECISION_CUSTOM_TYPE) continue;
+    try {
+      found.push({ line: index, record: Effect.runSync(decodeDecisionRecord(entry.data)) });
+    } catch {
+      onSkipped();
+    }
+  }
+  return found;
 };
 
 /**

@@ -1,4 +1,5 @@
 import { dependentsOf, formatItemRef, readiness } from "../core/deps.ts";
+import type { DeclaredProduct, DeclaredReference } from "../core/domain.ts";
 import type { PendingCompletion } from "./completion.ts";
 
 /** Why the candidate was chosen; the classifier question is keyed by this. */
@@ -8,6 +9,8 @@ export type CandidateClass = "dependent-successor" | "ready-queue";
 export interface CompletedItem {
   readonly ref: string;
   readonly text: string;
+  /** The item's description, when it carries one. Part of the batch text. */
+  readonly description?: string;
 }
 
 /** The single next unfinished item, with the batch as referenced prior work. */
@@ -15,9 +18,16 @@ export interface CompactionCandidate {
   readonly class: CandidateClass;
   readonly listName: string;
   readonly id: number;
+  /** The item's title. */
   readonly text: string;
+  /** The item's description, when it carries one. */
+  readonly description?: string;
   /** Every item completed since the last decision. Never the subject. */
   readonly completed: readonly CompletedItem[];
+  /** The item's declared references, when it carries any. */
+  readonly refs?: readonly DeclaredReference[];
+  /** The item's declared products, when it carries any. */
+  readonly produces?: readonly DeclaredProduct[];
 }
 
 /**
@@ -40,7 +50,16 @@ export const selectCandidates = (
   const completedIds = new Set(completion.completedItemIds);
   const completed: CompletedItem[] = completion.completedItemIds.flatMap((id) => {
     const item = list.items.find((candidate) => candidate.id === id);
-    return item === undefined ? [] : [{ ref: formatItemRef(list.name, id), text: item.text }];
+    if (item === undefined) return [];
+    return [
+      {
+        ref: formatItemRef(list.name, id),
+        text: item.title,
+        ...(item.description === undefined || item.description.length === 0
+          ? {}
+          : { description: item.description }),
+      },
+    ];
   });
 
   // The completed items were selected because the candidate depends on one of
@@ -55,7 +74,18 @@ export const selectCandidates = (
 
   const make = (index: number, cls: CandidateClass): CompactionCandidate => {
     const item = list.items[index]!;
-    return { class: cls, listName: list.name, id: item.id, text: item.text, completed };
+    return {
+      class: cls,
+      listName: list.name,
+      id: item.id,
+      text: item.title,
+      ...(item.description === undefined || item.description.length === 0
+        ? {}
+        : { description: item.description }),
+      completed,
+      ...(item.refs.length === 0 ? {} : { refs: item.refs }),
+      ...(item.produces.length === 0 ? {} : { produces: item.produces }),
+    };
   };
 
   const ordered: CompactionCandidate[] = [];

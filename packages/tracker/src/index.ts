@@ -7,6 +7,8 @@ import { Effect, Layer, ManagedRuntime, Option, Result } from "effect";
 import { join } from "node:path";
 import { ClassifierGateway } from "./compaction/classifier.ts";
 import { CompletionObserver } from "./compaction/completion.ts";
+import { DECISION_CUSTOM_TYPE, encodeDecisionRecord } from "./compaction/decision-record.ts";
+import { FootprintRecorder, productionProbe, type ToolEvent } from "./compaction/footprint.ts";
 import {
   formatItemRef,
   parseItemRef,
@@ -27,9 +29,11 @@ import {
   blockedDoneNote,
   doneMarkReminder,
   validateTrackerCall,
+  type TrackerItemSpec,
   type TrackerToolAction,
   type TrackerToolDetails,
   type TrackerToolParams,
+  type TrackerUpdatePatch,
 } from "./presentation/tool-metadata.ts";
 import {
   displayList,
@@ -66,24 +70,45 @@ const withSettleDecider = <A, E>(
   f: (decider: SettleDecider["Service"]) => Effect.Effect<A, E>,
 ): Effect.Effect<A, E, SettleDecider> => Effect.flatMap(SettleDecider, f);
 
+const withFootprintRecorder = <A, E>(
+  f: (recorder: FootprintRecorder["Service"]) => Effect.Effect<A, E>,
+): Effect.Effect<A, E, FootprintRecorder> => Effect.flatMap(FootprintRecorder, f);
+
+/** The bounded `path`/`command` projection of a tool call's arguments. */
+const boundedArgsOf = (value: unknown): ToolEvent["args"] => {
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as { readonly path?: unknown; readonly command?: unknown };
+  const path = typeof record.path === "string" && record.path.length > 0 ? record.path : undefined;
+  const command =
+    typeof record.command === "string" && record.command.length > 0 ? record.command : undefined;
+  if (path === undefined && command === undefined) return undefined;
+  return {
+    ...(path === undefined ? {} : { path }),
+    ...(command === undefined ? {} : { command }),
+  };
+};
+
+/** The tool result's `details`, which carries a write's or edit's unified patch. */
+const detailsOf = (result: unknown): unknown =>
+  typeof result === "object" && result !== null
+    ? (result as { readonly details?: unknown }).details
+    : undefined;
+
 /** Throw for a missing required tool parameter; caught in `execute`. */
 const requireParam = <T>(value: T | undefined, name: string): T => {
   if (value === undefined) throw new Error(`${name} is required for this tracker action`);
   return value;
 };
 
-/**
- * Normalize the tool's item shapes (a text string, an item object, or an array
- * of either) into the store's item specs.
- */
-const toItemSpecs = (raw: NonNullable<TrackerToolParams["text"]>): ItemSpec[] => {
-  const entries = Array.isArray(raw) ? raw : [raw];
-  return entries.map((entry) =>
-    typeof entry === "string"
-      ? entry
-      : { text: entry.text, ...(entry.deps === undefined ? {} : { deps: entry.deps }) },
-  );
-};
+/** Project the tool's item objects onto the store's item specs. */
+const toItemSpecs = (items: readonly TrackerItemSpec[]): ItemSpec[] =>
+  items.map((item) => ({
+    title: item.title,
+    ...(item.description === undefined ? {} : { description: item.description }),
+    ...(item.refs === undefined ? {} : { refs: item.refs }),
+    ...(item.produces === undefined ? {} : { produces: item.produces }),
+    ...(item.deps === undefined ? {} : { deps: item.deps }),
+  }));
 
 // --------------------------------------------------------------------------
 // Extension
@@ -92,14 +117,16 @@ const toItemSpecs = (raw: NonNullable<TrackerToolParams["text"]>): ItemSpec[] =>
 export default function (pi: ExtensionAPI): void {
   // The settings path is resolved inside the factory, so a test can point
   // ENV_AGENT_DIR at a temp directory before `tracker(api)` runs.
+  const probe = productionProbe();
   const decisionServices = Layer.mergeAll(
     CompletionObserver.layer,
     ClassifierGateway.layer,
+    FootprintRecorder.layer(probe),
     SmartCompactionSettingsService.make(join(getAgentDir(), SMART_COMPACTION_CONFIG_FILE)),
   );
 
   const runtime = ManagedRuntime.make(
-    SettleDecider.layer.pipe(
+    SettleDecider.layer(probe).pipe(
       Layer.provideMerge(Layer.mergeAll(TrackerStore.layer, decisionServices)),
       Layer.provideMerge(
         TrackerPersistence.layer((encoded) => pi.appendEntry(CUSTOM_TYPE, encoded)),
@@ -130,31 +157,42 @@ export default function (pi: ExtensionAPI): void {
         return withStore((store) => store.deleteList(requireParam(params.list_id, "list_id")));
       case "set_active":
         return withStore((store) => store.setActiveList(params.list_id ?? null));
-      case "add_item": {
-        const specs = toItemSpecs(requireParam(params.text, "text"));
+      case "add_items": {
+        // Validation guarantees every entry is an item object; the shared
+        // `items` field also carries update_items patches, which are rejected
+        // for this action.
+        const specs = toItemSpecs(
+          requireParam(params.items, "items") as readonly TrackerItemSpec[],
+        );
         return withStore((store) => store.addItems(requireParam(params.list_id, "list_id"), specs));
       }
-      case "update_item": {
+      case "update_items": {
         if (params.items !== undefined) {
           // Batch form: list_id + item-id patches within one list (mirrors
-          // add_item's list_id + text[]). The store resolves each id against
+          // add_items' list_id + items). The store resolves each id against
           // that single list, so the reference's list name must match it.
           const listId = requireParam(params.list_id, "list_id");
-          const batch = params.items.map((patch) => ({
+          const batch = (params.items as readonly TrackerUpdatePatch[]).map((patch) => ({
             itemId: patch.item_id,
-            ...(patch.text !== undefined ? { text: patch.text } : {}),
+            ...(patch.title !== undefined ? { title: patch.title } : {}),
+            ...(patch.description !== undefined ? { description: patch.description } : {}),
+            ...(patch.refs !== undefined ? { refs: patch.refs } : {}),
+            ...(patch.produces !== undefined ? { produces: patch.produces } : {}),
             ...(patch.done !== undefined ? { done: patch.done } : {}),
             ...(patch.deps !== undefined ? { deps: patch.deps } : {}),
           }));
           return withStore((store) => store.updateItems(listId, batch));
         }
         const patch: UpdateItemPatch = {
-          ...(typeof params.text === "string" ? { text: params.text } : {}),
+          ...(typeof params.title === "string" ? { title: params.title } : {}),
+          ...(params.description !== undefined ? { description: params.description } : {}),
+          ...(params.refs !== undefined ? { refs: params.refs } : {}),
+          ...(params.produces !== undefined ? { produces: params.produces } : {}),
           ...(params.done !== undefined ? { done: params.done } : {}),
           ...(params.deps !== undefined ? { deps: params.deps } : {}),
         };
-        // Both update_item forms return an affected-items array, so the
-        // result contract matches add_item and the renderer/reminder can
+        // Both update_items forms return an affected-items array, so the
+        // result contract matches add_items and the renderer/reminder can
         // treat every result the same way.
         return withStore((store) =>
           store.updateItem(requireParam(params.item_id, "item_id"), patch),
@@ -176,7 +214,7 @@ export default function (pi: ExtensionAPI): void {
       case "setActive":
         return withStore((store) => store.setActiveList(action.listId));
       case "addItem":
-        return withStore((store) => store.addItem(action.listId, action.text));
+        return withStore((store) => store.addItem(action.listId, action.title));
       case "updateItem":
         return withStore((store) => store.updateItem(action.itemId, action.patch));
       case "removeItem":
@@ -310,6 +348,39 @@ export default function (pi: ExtensionAPI): void {
     compactionAborted = event.aborted;
   });
 
+  /**
+   * The args of in-flight tool calls, so a `tool_execution_end` event can name
+   * the path its `tool_execution_start` carried. pi's end event has no args.
+   */
+  const toolCallArgs = new Map<string, ToolEvent["args"]>();
+
+  pi.on("tool_execution_start", async (event) => {
+    const args = boundedArgsOf(event.args);
+    if (args === undefined) return;
+    toolCallArgs.set(event.toolCallId, args);
+    await runtime.runPromise(
+      withFootprintRecorder((recorder) =>
+        recorder.capture({ phase: "start", toolName: event.toolName, args }),
+      ),
+    );
+  });
+
+  pi.on("tool_execution_end", async (event) => {
+    const args = toolCallArgs.get(event.toolCallId);
+    toolCallArgs.delete(event.toolCallId);
+    const details = detailsOf(event.result);
+    await runtime.runPromise(
+      withFootprintRecorder((recorder) =>
+        recorder.capture({
+          phase: "end",
+          toolName: event.toolName,
+          ...(args === undefined ? {} : { args }),
+          ...(details === undefined ? {} : { details }),
+        }),
+      ),
+    );
+  });
+
   pi.on("agent_before_settle", async (event, ctx) => {
     const decision = await runtime.runPromise(
       withSettleDecider((decider) =>
@@ -320,6 +391,11 @@ export default function (pi: ExtensionAPI): void {
         }),
       ),
     );
+    // The decision record is written before the pointer delivery, so the
+    // harvest can see the raw row and the resolved states for every decision.
+    if (decision.record !== undefined) {
+      pi.appendEntry(DECISION_CUSTOM_TYPE, encodeDecisionRecord(decision.record));
+    }
     if (decision.kind !== "compact") return;
     // The run signal can fire after the verdict, while the classifier is the
     // last thing between here and compaction. An abort keeps the context.
@@ -396,7 +472,7 @@ export default function (pi: ExtensionAPI): void {
             : annotations.items
                 .map(
                   (item, index) =>
-                    `  [${item.done ? "x" : " "}] #${list.name}:${item.id}: ${item.text}` +
+                    `  [${item.done ? "x" : " "}] #${list.name}:${item.id}: ${item.title}` +
                     `${annotations.suffixByIndex[index]}`,
                 )
                 .join("\n");
@@ -469,7 +545,7 @@ export default function (pi: ExtensionAPI): void {
         }
         break;
       }
-      case "add_item": {
+      case "add_items": {
         const items = value as TodoItem[];
         const list = current.lists.find((l) => l.id === params.list_id);
         details.list = list;
@@ -479,33 +555,36 @@ export default function (pi: ExtensionAPI): void {
         const ids = items.map((item) => `${listName}:${item.id}`);
         text =
           items.length === 1
-            ? `Added item #${ids[0]} to ${listName}: ${items[0]!.text}`
-            : `Added ${items.length} items to ${listName}: ${ids.map((id, i) => `#${id}: ${items[i]!.text}`).join(", ")}`;
+            ? `Added item #${ids[0]} to ${listName}: ${items[0]!.title}`
+            : `Added ${items.length} items to ${listName}: ${ids.map((id, i) => `#${id}: ${items[i]!.title}`).join(", ")}`;
         break;
       }
-      case "update_item": {
+      case "update_items": {
         const items = value as TodoItem[];
         details.items = items;
         // Normalize both forms into patch records the renderer and reminder
-        // share: each has a display id plus optional text/done.
-        const batch = params.items;
+        // share: each has a display id plus optional title/description/done.
+        const batch = params.items as readonly TrackerUpdatePatch[] | undefined;
         const patches: Array<{
           id: string;
-          text?: string;
+          title?: string;
+          description?: string;
           done?: boolean;
           deps?: readonly string[];
         }> =
           batch !== undefined
             ? batch.map((p) => ({
                 id: p.item_id,
-                text: p.text,
+                title: p.title,
+                description: p.description,
                 done: p.done,
                 deps: p.deps,
               }))
             : [
                 {
                   id: params.item_id ?? "?",
-                  text: typeof params.text === "string" ? params.text : undefined,
+                  title: typeof params.title === "string" ? params.title : undefined,
+                  description: params.description,
                   done: params.done,
                   deps: params.deps,
                 },
@@ -514,7 +593,8 @@ export default function (pi: ExtensionAPI): void {
           const patch = patches[i]!;
           const changes: string[] = [];
           if (patch.done !== undefined) changes.push(item.done ? "completed" : "uncompleted");
-          if (patch.text !== undefined) changes.push(`text: ${item.text}`);
+          if (patch.title !== undefined) changes.push(`title: ${item.title}`);
+          if (patch.description !== undefined) changes.push("description updated");
           if (patch.deps !== undefined) {
             changes.push(depsChange(patch.id, patch.deps, before));
           }
@@ -561,7 +641,7 @@ export default function (pi: ExtensionAPI): void {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const action = params.action;
       // Error-nudging gate: reject incorrect calls (missing required fields,
-      // unknown fields, mixed update_item forms) with a precise message that
+      // unknown fields, mixed update_items forms) with a precise message that
       // tells the agent exactly what to fix, before any state is touched.
       const validation = validateTrackerCall(params);
       if (!validation.ok) {
@@ -577,7 +657,7 @@ export default function (pi: ExtensionAPI): void {
       // The state as this call finds it, so a result can name what a change
       // replaced. Only the actions that report a diff read it.
       const before =
-        action === "update_item"
+        action === "update_items"
           ? await runtime.runPromise(withStore((store) => store.state))
           : state;
 
@@ -601,13 +681,31 @@ export default function (pi: ExtensionAPI): void {
       let text =
         theme.style("tracker ", { fg: "toolTitle", bold: true }) + theme.fg("muted", action);
       if (typeof raw.name === "string") text += ` ${theme.fg("dim", `"${raw.name}"`)}`;
-      if (typeof raw.text === "string") {
-        text += ` ${theme.fg("dim", `"${raw.text}"`)}`;
-      } else if (Array.isArray(raw.text)) {
-        text += ` ${theme.fg("dim", raw.text.map((t) => `"${t}"`).join(" "))}`;
+      if (typeof raw.title === "string") {
+        text += ` ${theme.fg("dim", `"${raw.title}"`)}`;
+      } else if (Array.isArray(raw.title)) {
+        text += ` ${theme.fg(
+          "dim",
+          raw.title
+            .map((entry) =>
+              typeof entry === "string"
+                ? `"${entry}"`
+                : `"${String((entry as { title?: unknown }).title ?? "")}"`,
+            )
+            .join(" "),
+        )}`;
       }
       if (Array.isArray(raw.initial_items)) {
-        text += ` ${theme.fg("dim", raw.initial_items.map((t) => `"${t}"`).join(" "))}`;
+        text += ` ${theme.fg(
+          "dim",
+          raw.initial_items
+            .map((entry) =>
+              typeof entry === "string"
+                ? `"${entry}"`
+                : `"${String((entry as { title?: unknown }).title ?? "")}"`,
+            )
+            .join(" "),
+        )}`;
       }
       if (Array.isArray(raw.items)) text += ` ${theme.fg("accent", `${raw.items.length} items`)}`;
       if (raw.activate === false) text += ` ${theme.fg("muted", "(no auto-switch)")}`;
@@ -642,11 +740,14 @@ export default function (pi: ExtensionAPI): void {
           const display = expanded ? annotations.items : annotations.items.slice(0, 5);
           for (const [index, item] of display.entries()) {
             const check = item.done ? theme.fg("success", "✓") : theme.fg("dim", "○");
-            const itemText = item.done ? theme.fg("dim", item.text) : item.text;
+            const itemText = item.done ? theme.fg("dim", item.title) : item.title;
             const blocked = theme.fg("dim", annotations.suffixByIndex[index] ?? "");
             parts.push(
               `  ${check} ${theme.fg("accent", `#${list.name}:${item.id}`)} ${itemText}${blocked}`,
             );
+            if (expanded && (item.description ?? "").length > 0) {
+              parts.push(`    ${theme.fg("dim", item.description ?? "")}`);
+            }
           }
           if (!expanded && annotations.items.length > 5) {
             parts.push(theme.fg("dim", `  ... ${annotations.items.length - 5} more`));

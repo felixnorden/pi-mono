@@ -1,6 +1,13 @@
 import { Context, Effect, Layer, Ref, Result, Schema } from "effect";
 import { blockersOf, cyclePath, dependentsOf, formatItemRef, parseItemRef } from "./deps.ts";
-import { TodoItem, TodoList, TrackerState, emptyState } from "./domain.ts";
+import {
+  TodoItem,
+  TodoList,
+  TrackerState,
+  emptyState,
+  type DeclaredProduct,
+  type DeclaredReference,
+} from "./domain.ts";
 
 // --------------------------------------------------------------------------
 // Errors
@@ -158,17 +165,40 @@ const withItems = (list: TodoList, items: readonly TodoItem[]): TodoList =>
 // --------------------------------------------------------------------------
 
 /**
- * How a caller declares an item to create: the bare text, or an object that
- * also carries the ids of the same-list items this one waits for.
+ * How a caller declares an item to create: the bare title, or an object that
+ * also carries a description, the declared references and products, and the
+ * ids of the same-list items this one waits for.
  */
-export type ItemSpec = string | { readonly text: string; readonly deps?: readonly string[] };
+export type ItemSpec =
+  | string
+  | {
+      readonly title: string;
+      readonly description?: string;
+      readonly refs?: readonly DeclaredReference[];
+      readonly produces?: readonly DeclaredProduct[];
+      readonly deps?: readonly string[];
+    };
 
-/** Trim a spec's text and settle its dependency refs. */
+/** Trim a spec's title and settle its description, declarations, and deps. */
 const normalizeSpec = (
   spec: ItemSpec,
-): { readonly text: string; readonly deps: readonly string[] } => {
-  if (typeof spec === "string") return { text: spec.trim(), deps: [] };
-  return { text: spec.text.trim(), deps: spec.deps ?? [] };
+): {
+  readonly title: string;
+  readonly description: string;
+  readonly refs: readonly DeclaredReference[];
+  readonly produces: readonly DeclaredProduct[];
+  readonly deps: readonly string[];
+} => {
+  if (typeof spec === "string") {
+    return { title: spec.trim(), description: "", refs: [], produces: [], deps: [] };
+  }
+  return {
+    title: spec.title.trim(),
+    description: spec.description ?? "",
+    refs: spec.refs ?? [],
+    produces: spec.produces ?? [],
+    deps: spec.deps ?? [],
+  };
 };
 
 /**
@@ -260,7 +290,12 @@ const dependedOnError = (list: TodoList, index: number, itemId: string): Tracker
 };
 
 export interface UpdateItemPatch {
-  readonly text?: string;
+  readonly title?: string;
+  readonly description?: string;
+  /** Replacement declaration list; `[]` clears it. */
+  readonly refs?: readonly DeclaredReference[];
+  /** Replacement product list; `[]` clears it. */
+  readonly produces?: readonly DeclaredProduct[];
   readonly done?: boolean;
   /** Replacement dependency set (same-list `listName:id` refs); `[]` clears it. */
   readonly deps?: readonly string[];
@@ -268,7 +303,7 @@ export interface UpdateItemPatch {
 
 /**
  * An `UpdateItemPatch` that targets an item by id within a single list
- * (mirrors `add_item`'s `list_id + text[]` shape: the list is factored out,
+ * (mirrors `add_items`'s `list_id + items` shape: the list is factored out,
  * the patches name their item).
  */
 export interface UpdateItemInListPatch extends UpdateItemPatch {
@@ -297,7 +332,7 @@ export class TrackerStore extends Context.Service<
     readonly setActiveList: (listId: number | null) => Effect.Effect<void, TrackerError>;
     readonly addItem: (
       listId: number,
-      text: string,
+      spec: ItemSpec,
       deps?: readonly string[],
     ) => Effect.Effect<TodoItem, TrackerError>;
     readonly addItems: (
@@ -348,10 +383,10 @@ export class TrackerStore extends Context.Service<
           });
         }
         const initialSpecs = (options.initialItems ?? []).map(normalizeSpec);
-        if (initialSpecs.some((spec) => spec.text === "")) {
+        if (initialSpecs.some((spec) => spec.title === "")) {
           return yield* new TrackerError({
             reason: "EmptyText",
-            message: "Item text must not be empty",
+            message: "Item title must not be empty",
           });
         }
         const activate = options.activate ?? true;
@@ -370,7 +405,15 @@ export class TrackerStore extends Context.Service<
             }
             const items = initialSpecs.map(
               (spec, index) =>
-                new TodoItem({ id: index + 1, text: spec.text, done: false, deps: [...spec.deps] }),
+                new TodoItem({
+                  id: index + 1,
+                  title: spec.title,
+                  description: spec.description,
+                  refs: [...spec.refs],
+                  produces: [...spec.produces],
+                  done: false,
+                  deps: [...spec.deps],
+                }),
             );
             const list = new TodoList({
               id: s.nextListId,
@@ -444,19 +487,19 @@ export class TrackerStore extends Context.Service<
       });
 
       /**
-       * Append items to a list, assigning ids from the list counter. Accepts
-       * bare text or `{ text, deps }` objects; a dependency may name an item
-       * created by this same call.
+       * Append items to a list, assigning ids from the list counter. Accepts a
+       * bare title or item objects `{title, description?, refs?, produces?,
+       * deps?}`; a dependency may name an item created by this same call.
        */
       const addItems = Effect.fn("TrackerStore.addItems")(function* (
         listId: number,
         items: readonly ItemSpec[],
       ) {
         const specs = items.map(normalizeSpec);
-        if (specs.some((spec) => spec.text === "")) {
+        if (specs.some((spec) => spec.title === "")) {
           return yield* new TrackerError({
             reason: "EmptyText",
-            message: "Item text must not be empty",
+            message: "Item title must not be empty",
           });
         }
         return yield* mutate(
@@ -478,7 +521,10 @@ export class TrackerStore extends Context.Service<
             const added = specs.map((spec) => {
               const item = new TodoItem({
                 id: nextId,
-                text: spec.text,
+                title: spec.title,
+                description: spec.description,
+                refs: [...spec.refs],
+                produces: [...spec.produces],
                 done: false,
                 deps: [...spec.deps],
               });
@@ -500,10 +546,11 @@ export class TrackerStore extends Context.Service<
 
       const addItem = Effect.fn("TrackerStore.addItem")(function* (
         listId: number,
-        text: string,
+        spec: ItemSpec,
         deps: readonly string[] = [],
       ) {
-        const [item] = yield* addItems(listId, [{ text, deps }]);
+        const resolved: ItemSpec = typeof spec === "string" ? { title: spec, deps } : spec;
+        const [item] = yield* addItems(listId, [resolved]);
         return item!;
       });
 
@@ -511,11 +558,11 @@ export class TrackerStore extends Context.Service<
         itemId: string,
         patch: UpdateItemPatch,
       ) {
-        const trimmed = patch.text === undefined ? undefined : patch.text.trim();
-        if (patch.text !== undefined && trimmed === "") {
+        const trimmed = patch.title === undefined ? undefined : patch.title.trim();
+        if (patch.title !== undefined && trimmed === "") {
           return yield* new TrackerError({
             reason: "EmptyText",
-            message: "Item text must not be empty",
+            message: "Item title must not be empty",
           });
         }
         return yield* mutate(
@@ -532,13 +579,23 @@ export class TrackerStore extends Context.Service<
               const blocked = blockedError(list, resolved.index);
               if (blocked !== null) return [Result.fail(blocked), s];
             }
-            if (patch.text === undefined && patch.done === undefined && patch.deps === undefined) {
+            if (
+              patch.title === undefined &&
+              patch.description === undefined &&
+              patch.refs === undefined &&
+              patch.produces === undefined &&
+              patch.done === undefined &&
+              patch.deps === undefined
+            ) {
               // No-op patch: return the current item, leave state untouched.
               return [Result.succeed(item), s];
             }
             const next = new TodoItem({
               id: item.id,
-              text: trimmed ?? item.text,
+              title: trimmed ?? item.title,
+              description: patch.description ?? item.description,
+              refs: patch.refs === undefined ? item.refs : [...patch.refs],
+              produces: patch.produces === undefined ? item.produces : [...patch.produces],
               done: patch.done ?? item.done,
               deps: patch.deps === undefined ? item.deps : [...patch.deps],
             });
@@ -567,13 +624,13 @@ export class TrackerStore extends Context.Service<
         listId: number,
         patches: readonly UpdateItemInListPatch[],
       ) {
-        // Reject empty replacement texts up front so the whole batch fails
+        // Reject empty replacement titles up front so the whole batch fails
         // before touching the state (atomicity).
         for (const patch of patches) {
-          if (patch.text !== undefined && patch.text.trim() === "") {
+          if (patch.title !== undefined && patch.title.trim() === "") {
             return yield* new TrackerError({
               reason: "EmptyText",
-              message: "Item text must not be empty",
+              message: "Item title must not be empty",
             });
           }
         }
@@ -649,7 +706,11 @@ export class TrackerStore extends Context.Service<
                 at === target
                   ? new TodoItem({
                       id: current.id,
-                      text: patch.text === undefined ? current.text : patch.text.trim(),
+                      title: patch.title === undefined ? current.title : patch.title.trim(),
+                      description: patch.description ?? current.description,
+                      refs: patch.refs === undefined ? current.refs : [...patch.refs],
+                      produces:
+                        patch.produces === undefined ? current.produces : [...patch.produces],
                       done: patch.done ?? current.done,
                       deps: patch.deps === undefined ? current.deps : [...patch.deps],
                     })

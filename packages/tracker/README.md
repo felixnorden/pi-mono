@@ -6,9 +6,10 @@ pi-tracker is an extension for Pi. It manages todolists in your session.
 
 - Create and delete todolists.
 - Add, update, and remove items in a todolist.
+- Give an item a short title, a longer description, and optional declarations.
 - Mark an item as complete or incomplete.
-- Change the task text of an item.
 - Declare dependencies between items, so work happens in order.
+- Declare the references and products an item needs, so the next step survives compaction.
 - Persist todolists with the session.
 - Show the active todolist in a widget above the editor.
 - Start Pi's compaction when a completed item's detail is no longer needed.
@@ -27,38 +28,40 @@ The snapshot does not enter the LLM context.
 Ask Pi to manage your todolists. Pi calls the `tracker` tool. The tool
 supports these actions:
 
-| Action        | Purpose                                   | Parameters                                                  |
-| ------------- | ----------------------------------------- | ----------------------------------------------------------- |
-| `list`        | Show all lists and items                  | None                                                        |
-| `create_list` | Create a list (becomes active by default) | `name`, `initial_items?`, `activate?`                       |
-| `delete_list` | Delete a list                             | `list_id`                                                   |
-| `set_active`  | Set or clear the active list              | `list_id` (optional)                                        |
-| `add_item`    | Add one or more items                     | `list_id`, `text` (string, item object, or array)           |
-| `update_item` | Update one or more items                  | `item_id` + `text?`/`done?`/`deps?`, or `list_id` + `items` |
-| `remove_item` | Remove an item                            | `item_id`                                                   |
+| Action         | Purpose                                   | Parameters                                 |
+| -------------- | ----------------------------------------- | ------------------------------------------ |
+| `list`         | Show all lists and items                  | None                                       |
+| `create_list`  | Create a list (becomes active by default) | `name`, `initial_items?`, `activate?`      |
+| `delete_list`  | Delete a list                             | `list_id`                                  |
+| `set_active`   | Set or clear the active list              | `list_id` (optional)                       |
+| `add_items`    | Add one or more items                     | `list_id`, `items` (array of item objects) |
+| `update_items` | Update one or more items                  | `item_id` + fields, or `list_id` + `items` |
+| `remove_item`  | Remove an item                            | `item_id`                                  |
 
 `create_list` accepts `initial_items` to create the list with its first
-items in one call, so the list and its items are created atomically. Each
-item is either a text string or an object `{text, deps?}`. `add_item`
-accepts the same shapes, plus an array of them, to add several items in one
-call.
+items in one call, so the list and its items are created atomically. Every
+item is an object `{title, description?, refs?, produces?, deps?}`, and
+`add_items` takes the same objects in its `items` array, so an item is
+always declared the same way. A title is one short action line, at most 200
+characters; put the longer detail in `description`.
 
 Item ids are `listName:id`, as the `list` action shows them (e.g. `Work:2`).
 An id is permanent: it is stored on the item, it is unique within its list,
 and it is never reused. Removing an item leaves a gap in the numbering
 instead of shifting the items after it, so a reference you already hold stays
-valid. `update_item` accepts the scalar form (`item_id` with optional
-`text`/`done`/`deps`) or a per-list batched form: `list_id` plus an `items`
-array (`[{item_id, text?, done?, deps?}, ...]`), mirroring `add_item`'s
-`list_id + text[]` shape, so one batch stays within a single list. Creating a
-list makes it the active list (the widget switches to it); pass
-`activate: false` to keep the current active list.
+valid. `update_items` accepts the scalar form (`item_id` with optional
+`title`/`description`/`refs`/`produces`/`done`/`deps`) or a per-list batched
+form: `list_id` plus an `items`
+array (`[{item_id, title?, description?, refs?, produces?, done?, deps?}, ...]`),
+mirroring `add_items`' `list_id + items` shape, so one batch stays within a
+single list. Creating a list makes it the active list (the widget switches to
+it); pass `activate: false` to keep the current active list.
 
 The tool validates every call and returns an error that names exactly what to
 fix: each action accepts only its own parameters, required fields are
-enforced, and the two `update_item` forms never mix. Read the error and retry
+enforced, and the two `update_items` forms never mix. Read the error and retry
 with corrected parameters. Not-found errors also list the available ids.
-`update_item` also appends a reminder when one call marks two or more items
+`update_items` also appends a reminder when one call marks two or more items
 done and leaves no open items behind (the terminal batch): the working
 rhythm is to mark each item done in the same turn it completes, never batch
 the marking at the end.
@@ -70,10 +73,29 @@ Example prompt:
 Call `set_active` without `list_id` to deselect. The widget hides when no
 list is active.
 
+### Titles, descriptions, and declarations
+
+Every item has a required `title`: one short action line, at most 200
+characters. An item may also carry a `description` with the longer detail. The
+widget shows the title, with the description dimmed on the line below; the
+`/tracker` items pane shows the full description.
+
+An item may declare two optional lists:
+
+- `refs`: what the item must read after the completed work. Each entry is
+  `{kind: "path", path, symbol?, span?}` or `{kind: "decision", topic}`.
+- `produces`: every document the item will write. Each entry is `{path}`.
+
+Declarations tell the tracker what the next step needs. At the settle boundary
+the tracker resolves a declared path against disk. If the detail is readable
+there, the rule table can compact the completed work and keep the next step
+moving without a classifier call. After a session restore there is no tool
+footprint, so references resolve as unresolved and only products check disk.
+
 ### Dependencies and readiness
 
 An item can wait for other items. Pass `deps` on the item object when you
-create it, or through `update_item`, as a list of `listName:id` references to
+create it, or through `update_items`, as a list of `listName:id` references to
 items in the same list. `deps` replaces the whole dependency set, so pass `[]`
 to clear it. The result names the set before and after whenever the two
 differ, so a dependency the call dropped does not disappear silently.
@@ -105,7 +127,7 @@ keeps the output it had before dependencies existed. A dependency reference
 that does not resolve counts as a blocker, so a hand-edited snapshot cannot
 silently unblock work.
 
-An `update_item` batch applies its patches in order, so it behaves like the
+An `update_items` batch applies its patches in order, so it behaves like the
 same calls in sequence: one call can complete a chain, and a completion that
 comes before its blocker in the array is refused.
 
@@ -119,8 +141,8 @@ action, the widget, and the `/tracker` items pane all use that order.
 The intended rhythm: break multi-step work into items up front (one item per
 deliverable), work through them one at a time, and mark each done as it
 completes. The list in the widget always shows current progress. The agent
-reads it with `list` before starting and after finishing, and updates item text
-with `update_item` when scope changes.
+reads it with `list` before starting and after finishing, and updates an item's
+title or description with `update_items` when scope changes.
 
 Failed calls are recoverable: the tool's errors say what to fix, and
 not-found errors name the available ids. The agent corrects the call and
@@ -144,7 +166,7 @@ pane for editing.
 | `d`     | Delete a list                          |
 | `a`     | Add an item                            |
 | `x`     | Toggle an item complete or incomplete  |
-| `e`     | Edit the item text                     |
+| `e`     | Edit the item title                    |
 | `r`     | Remove an item                         |
 | `esc`   | Close the view                         |
 
@@ -180,13 +202,15 @@ output and the `/tracker` items pane, which have room for it.
 
 ### Smart compaction
 
-When you complete an item in the active list, pi-tracker asks a small
-classifier whether the **ready items** need the completed work. It judges the
-whole ready frontier in one call, up to `maxCandidates` entries, dependents
-first. Each candidate gets one two-label choice question: `needs-context` or
-`stands-alone`. The answer carries a probability and a `confidence`. When no
-ready item needs the detail, pi-tracker starts Pi's compaction at the settle
-boundary and then resumes the session with a pointer to the next ready item.
+When you complete an item in the active list, pi-tracker decides whether the
+**ready items** need the completed work. A measured rule row runs first. When
+an accepted row fires, it decides the whole ready frontier on its own. Every
+other row reports its name and hands the frontier to the classifier, which
+judges up to `maxCandidates` entries, dependents first. Each candidate gets one
+two-label choice question: `needs-context` or `stands-alone`. The answer carries
+a probability and a `confidence`. When no ready item needs the detail,
+pi-tracker starts Pi's compaction at the settle boundary and then resumes the
+session with a pointer to the next ready item.
 
 The feature reads five keys from `tui.json`, under `smartCompaction`:
 
@@ -213,7 +237,15 @@ A value outside the range in the table falls back to the default. The feature
 fails open. A disabled feature, no credential-available classifier, a classifier
 error or timeout, an aborted run, or a list with no ready item keeps the full
 context. The classifier input is the item list only. The transcript never leaves
-the session.
+the session. An unaccepted rule row abstains, so it never compacts on its own.
+
+The rule table lives in `src/compaction/rules.ts`. Only rows in
+`ACCEPTED_RULES` compact on their own. A row enters that set only when the eval
+gate accepts it on labeled decisions: at least 10 labeled firings, at least 95%
+agreement, above the pass base rate, in at least two passes. Every decision on
+an item with declarations records the fired row and the resolved states as a
+`tracker/reliance-decision` session entry, which the eval reads back.
+`bun run eval:rules` prints the tables and the gate.
 
 The `/tui` command edits all five on a **Compaction** tab: `Smart compaction`
 (toggle), `Compaction classifier` (picker), `Needs-context probability`, `Answer
@@ -228,7 +260,9 @@ and written in order, and each result reports the state its own call produced
 instead of a value another surface cached.
 
 A snapshot saved before item ids existed loads with each item id equal to its
-position, so references in that format still resolve.
+position, so references in that format still resolve. A snapshot written before
+the title/description split loads with the first line as the title and the rest
+as the description.
 
 ## Installation
 
@@ -262,12 +296,15 @@ Registration lives in `package.json` under the `pi` field:
 
 ## Development
 
-| Command             | Purpose                                      |
-| ------------------- | -------------------------------------------- |
-| `bun test`          | Run the test suite (vitest + @effect/vitest) |
-| `bun test:watch`    | Run the test suite in watch mode             |
-| `bunx tsc --noEmit` | Type check                                   |
-| `bun lint`          | Lint with oxlint                             |
+| Command                | Purpose                                      |
+| ---------------------- | -------------------------------------------- |
+| `bun run test`         | Run the test suite (vitest + @effect/vitest) |
+| `bun run test:watch`   | Run the test suite in watch mode             |
+| `bun run typecheck`    | Type check with `tsc --noEmit`               |
+| `bun run lint`         | Lint with oxlint                             |
+| `bun run eval:harvest` | Harvest the eval corpus from local sessions  |
+| `bun run eval:rules`   | Print the rule tables and the promotion gate |
+| `bun run eval:promote` | Align `ACCEPTED_RULES` with the measured set |
 
 ## Project structure
 
@@ -277,7 +314,15 @@ Registration lives in `package.json` under the `pi` field:
 | `src/core/deps.ts`                  | Dependency references, cycle detection, readiness, derived order |
 | `src/core/store.ts`                 | `TrackerStore` service with `Effect.Ref` state                   |
 | `src/core/persistence.ts`           | `TrackerPersistence` service (save and restore snapshots)        |
-| `src/compaction/*.ts`               | Smart compaction: classifier, settle, digest, pointer, settings  |
+| `src/compaction/observations.ts`    | Resolves declared references and products against disk           |
+| `src/compaction/rules.ts`           | The rule table, `ACCEPTED_RULES`, and the gate constants         |
+| `src/compaction/footprint.ts`       | Records what each batch wrote, read, and ran                     |
+| `src/compaction/settle.ts`          | The settle decision: rules first, then the classifier            |
+| `src/compaction/digest.ts`          | The bounded classifier input                                     |
+| `src/compaction/decision-record.ts` | The `tracker/reliance-decision` session entry                    |
+| `src/compaction/classifier.ts`      | The classifier gateway                                           |
+| `src/compaction/pointer.ts`         | The resume pointer and its custom entry                          |
+| `src/compaction/settings.ts`        | The `tui.json` reader                                            |
 | `src/presentation/ui.ts`            | Widget pane and interactive `/tracker` component                 |
 | `src/presentation/tool-metadata.ts` | Tool parameters, result details, and display labels              |
 | `src/index.ts`                      | Pi bridge: tool, command, session hooks, widget refresh          |

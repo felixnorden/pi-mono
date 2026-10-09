@@ -4,7 +4,8 @@ import { deriveEvents, type TimedSnapshot } from "./derive.ts";
 
 interface ItemSpec {
   readonly id: number;
-  readonly text: string;
+  readonly title: string;
+  readonly description?: string;
   readonly done: boolean;
   readonly deps?: readonly string[];
 }
@@ -16,7 +17,13 @@ const listWith = (items: readonly ItemSpec[], name = "Work", id = 1): TodoList =
     nextItemId: items.length + 1,
     items: items.map(
       (item) =>
-        new TodoItem({ id: item.id, text: item.text, done: item.done, deps: item.deps ?? [] }),
+        new TodoItem({
+          id: item.id,
+          title: item.title,
+          description: item.description ?? "",
+          done: item.done,
+          deps: item.deps ?? [],
+        }),
     ),
   });
 
@@ -28,14 +35,14 @@ const at = (snapshot: TrackerState, time: string): TimedSnapshot => ({ at: time,
 it("derives one event per open to done transition", () => {
   const before = stateOf([
     listWith([
-      { id: 1, text: "first", done: false },
-      { id: 2, text: "second", done: false },
+      { id: 1, title: "first", done: false },
+      { id: 2, title: "second", done: false },
     ]),
   ]);
   const after = stateOf([
     listWith([
-      { id: 1, text: "first", done: true },
-      { id: 2, text: "second", done: false },
+      { id: 1, title: "first", done: true },
+      { id: 2, title: "second", done: false },
     ]),
   ]);
   const events = deriveEvents([at(before, "t0"), at(after, "t1")], 16);
@@ -54,17 +61,35 @@ it("derives one event per open to done transition", () => {
   ]);
 });
 
+it("carries an item description through the event and the completed batch", () => {
+  const before = stateOf([
+    listWith([{ id: 1, title: "first", description: "detail", done: false }]),
+  ]);
+  const after = stateOf([listWith([{ id: 1, title: "first", description: "detail", done: true }])]);
+  const events = deriveEvents([at(before, "t0"), at(after, "t1")], 16);
+  assert.deepStrictEqual(events[0]!.completed, [
+    { ref: "Work:1", text: "first", description: "detail" },
+  ]);
+  assert.deepStrictEqual(events[0]!.items[0], {
+    id: 1,
+    text: "first",
+    description: "detail",
+    done: true,
+    deps: [],
+  });
+});
+
 it("emits no event when nothing completes", () => {
-  const before = stateOf([listWith([{ id: 1, text: "first", done: false }])]);
-  const after = stateOf([listWith([{ id: 1, text: "first", done: false }])]);
+  const before = stateOf([listWith([{ id: 1, title: "first", done: false }])]);
+  const after = stateOf([listWith([{ id: 1, title: "first", done: false }])]);
   assert.deepStrictEqual(deriveEvents([at(before, "t0"), at(after, "t1")], 16), []);
 });
 
 it("emits no event for a completion in a list that is not active", () => {
-  const work = listWith([{ id: 1, text: "first", done: false }], "Work", 1);
-  const side = listWith([{ id: 1, text: "side", done: false }], "Side", 2);
+  const work = listWith([{ id: 1, title: "first", done: false }], "Work", 1);
+  const side = listWith([{ id: 1, title: "side", done: false }], "Side", 2);
   const before = stateOf([work, side], 1);
-  const sideDone = listWith([{ id: 1, text: "side", done: true }], "Side", 2);
+  const sideDone = listWith([{ id: 1, title: "side", done: true }], "Side", 2);
   const after = stateOf([work, sideDone], 1);
   assert.deepStrictEqual(deriveEvents([at(before, "t0"), at(after, "t1")], 16), []);
 });
@@ -72,16 +97,16 @@ it("emits no event for a completion in a list that is not active", () => {
 it("orders a dependent successor before the ready queue", () => {
   const before = stateOf([
     listWith([
-      { id: 1, text: "root", done: false },
-      { id: 2, text: "independent", done: false },
-      { id: 3, text: "dependent", done: false, deps: ["Work:1"] },
+      { id: 1, title: "root", done: false },
+      { id: 2, title: "independent", done: false },
+      { id: 3, title: "dependent", done: false, deps: ["Work:1"] },
     ]),
   ]);
   const after = stateOf([
     listWith([
-      { id: 1, text: "root", done: true },
-      { id: 2, text: "independent", done: false },
-      { id: 3, text: "dependent", done: false, deps: ["Work:1"] },
+      { id: 1, title: "root", done: true },
+      { id: 2, title: "independent", done: false },
+      { id: 3, title: "dependent", done: false, deps: ["Work:1"] },
     ]),
   ]);
   const event = deriveEvents([at(before, "t0"), at(after, "t1")], 16)[0]!;
@@ -99,14 +124,14 @@ it("orders a dependent successor before the ready queue", () => {
 it("asks a dependent successor about the item it depends on", () => {
   const before = stateOf([
     listWith([
-      { id: 1, text: "root", done: false },
-      { id: 2, text: "dependent", done: false, deps: ["Work:1"] },
+      { id: 1, title: "root", done: false },
+      { id: 2, title: "dependent", done: false, deps: ["Work:1"] },
     ]),
   ]);
   const after = stateOf([
     listWith([
-      { id: 1, text: "root", done: true },
-      { id: 2, text: "dependent", done: false, deps: ["Work:1"] },
+      { id: 1, title: "root", done: true },
+      { id: 2, title: "dependent", done: false, deps: ["Work:1"] },
     ]),
   ]);
   const event = deriveEvents([at(before, "t0"), at(after, "t1")], 16)[0]!;
@@ -121,14 +146,14 @@ it("asks a dependent successor about the item it depends on", () => {
 it("asks an independent item about the completed batch", () => {
   const before = stateOf([
     listWith([
-      { id: 1, text: "root", done: false },
-      { id: 2, text: "independent", done: false },
+      { id: 1, title: "root", done: false },
+      { id: 2, title: "independent", done: false },
     ]),
   ]);
   const after = stateOf([
     listWith([
-      { id: 1, text: "root", done: true },
-      { id: 2, text: "independent", done: false },
+      { id: 1, title: "root", done: true },
+      { id: 2, title: "independent", done: false },
     ]),
   ]);
   const event = deriveEvents([at(before, "t0"), at(after, "t1")], 16)[0]!;
@@ -138,7 +163,7 @@ it("asks an independent item about the completed batch", () => {
 
 it("caps the stored candidates but reports the full frontier", () => {
   const items = (done: readonly number[]): ItemSpec[] =>
-    [1, 2, 3, 4].map((id) => ({ id, text: `item ${id}`, done: done.includes(id) }));
+    [1, 2, 3, 4].map((id) => ({ id, title: `item ${id}`, done: done.includes(id) }));
   const event = deriveEvents(
     [at(stateOf([listWith(items([]))]), "t0"), at(stateOf([listWith(items([1]))]), "t1")],
     2,
@@ -155,14 +180,14 @@ it("caps the stored candidates but reports the full frontier", () => {
 it("keeps the completed batch when the frontier is empty", () => {
   const before = stateOf([
     listWith([
-      { id: 1, text: "first", done: false },
-      { id: 2, text: "second", done: false },
+      { id: 1, title: "first", done: false },
+      { id: 2, title: "second", done: false },
     ]),
   ]);
   const after = stateOf([
     listWith([
-      { id: 1, text: "first", done: true },
-      { id: 2, text: "second", done: true },
+      { id: 1, title: "first", done: true },
+      { id: 2, title: "second", done: true },
     ]),
   ]);
   const event = deriveEvents([at(before, "t0"), at(after, "t1")], 16)[0]!;
@@ -179,16 +204,16 @@ it("keeps the completed batch when the frontier is empty", () => {
 it("reports the list shape at the event", () => {
   const before = stateOf([
     listWith([
-      { id: 1, text: "first", done: false },
-      { id: 2, text: "second", done: true },
-      { id: 3, text: "third", done: false, deps: ["Work:2"] },
+      { id: 1, title: "first", done: false },
+      { id: 2, title: "second", done: true },
+      { id: 3, title: "third", done: false, deps: ["Work:2"] },
     ]),
   ]);
   const after = stateOf([
     listWith([
-      { id: 1, text: "first", done: true },
-      { id: 2, text: "second", done: true },
-      { id: 3, text: "third", done: false, deps: ["Work:2"] },
+      { id: 1, title: "first", done: true },
+      { id: 2, title: "second", done: true },
+      { id: 3, title: "third", done: false, deps: ["Work:2"] },
     ]),
   ]);
   const event = deriveEvents([at(before, "t0"), at(after, "t1")], 16)[0]!;
@@ -200,8 +225,8 @@ it("reports the list shape at the event", () => {
 });
 
 it("emits no event when only the active list changes", () => {
-  const work = listWith([{ id: 1, text: "open", done: false }], "Work", 1);
-  const side = listWith([{ id: 1, text: "already done", done: true }], "Side", 2);
+  const work = listWith([{ id: 1, title: "open", done: false }], "Work", 1);
+  const side = listWith([{ id: 1, title: "already done", done: true }], "Side", 2);
   const before = stateOf([work, side], 1);
   const after = stateOf([work, side], 2);
   // `completedInActiveList` reads the *new* active list's previous state, so a
@@ -212,16 +237,16 @@ it("emits no event when only the active list changes", () => {
 it("carries every list item in list order", () => {
   const before = stateOf([
     listWith([
-      { id: 1, text: "first", done: false },
-      { id: 2, text: "second", done: true },
-      { id: 3, text: "third", done: false, deps: ["Work:2"] },
+      { id: 1, title: "first", done: false },
+      { id: 2, title: "second", done: true },
+      { id: 3, title: "third", done: false, deps: ["Work:2"] },
     ]),
   ]);
   const after = stateOf([
     listWith([
-      { id: 1, text: "first", done: true },
-      { id: 2, text: "second", done: true },
-      { id: 3, text: "third", done: false, deps: ["Work:2"] },
+      { id: 1, title: "first", done: true },
+      { id: 2, title: "second", done: true },
+      { id: 3, title: "third", done: false, deps: ["Work:2"] },
     ]),
   ]);
   const event = deriveEvents([at(before, "t0"), at(after, "t1")], 16)[0]!;
@@ -236,8 +261,8 @@ it("numbers events in time order", () => {
   const open = (done: readonly number[]): TrackerState =>
     stateOf([
       listWith([
-        { id: 1, text: "a", done: done.includes(1) },
-        { id: 2, text: "b", done: done.includes(2) },
+        { id: 1, title: "a", done: done.includes(1) },
+        { id: 2, title: "b", done: done.includes(2) },
       ]),
     ]);
   const events = deriveEvents(

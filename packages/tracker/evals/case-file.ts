@@ -12,6 +12,8 @@ import type { EvidenceEntry } from "./evidence.ts";
 export interface StoredItem {
   readonly id: number;
   readonly text: string;
+  /** The item's description, when it carried one. Part of the batch text. */
+  readonly description?: string;
   readonly done: boolean;
   readonly deps: readonly string[];
 }
@@ -22,6 +24,35 @@ export interface StoredCandidate {
   readonly text: string;
   readonly class: string;
   readonly relationship: string;
+}
+
+/** One resolved reference, as the decision record carries it. */
+export interface StoredDecisionReference {
+  readonly kind: string;
+  readonly path?: string;
+  readonly symbol?: string;
+  readonly span?: string;
+  readonly topic?: string;
+  readonly state: string;
+}
+
+/** One resolved product, as the decision record carries it. */
+export interface StoredDecisionProduct {
+  readonly path: string;
+  readonly state: string;
+}
+
+/**
+ * The live decision record for one case, read from the session's
+ * `tracker/reliance-decision` custom entry. Present only when the candidate
+ * declared a reference or a product.
+ */
+export interface StoredDecision {
+  readonly rule: string;
+  readonly verdict: string;
+  readonly candidateRef: string;
+  readonly references: readonly StoredDecisionReference[];
+  readonly products: readonly StoredDecisionProduct[];
 }
 
 /** One decision, as written to `cases.jsonl`. */
@@ -35,7 +66,11 @@ export interface StoredCase {
     readonly name: string;
     readonly items: readonly StoredItem[];
   };
-  readonly completed: readonly { readonly ref: string; readonly text: string }[];
+  readonly completed: readonly {
+    readonly ref: string;
+    readonly text: string;
+    readonly description?: string;
+  }[];
   readonly candidates: readonly StoredCandidate[];
   readonly questions: readonly {
     readonly key: string;
@@ -47,6 +82,14 @@ export interface StoredCase {
   readonly openCount: number;
   readonly doneCount: number;
   readonly declaredDeps: number;
+  /**
+   * The rule row the live settle path fired for the pointer candidate, present
+   * only for a decision that carried declarations. A corpus harvested before
+   * the decision record existed lacks it.
+   */
+  readonly decision?: StoredDecision;
+  /** True for the checked-in synthetic fixture, never for a real session. */
+  readonly synthetic?: boolean;
   /**
    * How large the conversation was at the decision. Optional so a corpus
    * harvested before the context pass still parses.

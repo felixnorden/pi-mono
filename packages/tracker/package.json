@@ -40,6 +40,8 @@
     "eval:harvest": "bun evals/harvest.ts",
     "eval:review": "bun evals/review.ts",
     "eval:label": "bun evals/label.ts",
+    "eval:rules": "bun evals/rules.ts",
+    "eval:promote": "bun evals/promote.ts",
     "lint": "oxlint && oxlint --type-aware -A all -D typescript/unbound-method",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",

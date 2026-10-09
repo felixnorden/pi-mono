@@ -33,14 +33,14 @@ const twoListState = (): TrackerState =>
         id: 1,
         name: "Work",
         items: [
-          new TodoItem({ text: "write plan", done: true }),
-          new TodoItem({ text: "implement tracker", done: false }),
+          new TodoItem({ title: "write plan", done: true }),
+          new TodoItem({ title: "implement tracker", done: false }),
         ],
       }),
       new TodoList({
         id: 2,
         name: "Home",
-        items: [new TodoItem({ text: "water plants", done: false })],
+        items: [new TodoItem({ title: "water plants", done: false })],
       }),
     ],
     activeListId: 1,
@@ -92,6 +92,25 @@ const flushAsync = (): Promise<void> => new Promise((resolve) => setTimeout(reso
 // --------------------------------------------------------------------------
 // Interactive overlay: items pane follows the focused list
 // --------------------------------------------------------------------------
+
+it("overlay renders a multi-line description as separate lines", () => {
+  const list = new TodoList({
+    id: 1,
+    name: "Work",
+    items: [
+      new TodoItem({ id: 1, title: "multi", description: "first line\nsecond line", done: false }),
+    ],
+  });
+  const h = makeOverlay(new TrackerState({ lists: [list], activeListId: 1, nextListId: 2 }));
+  const lines = h.overlay.render(80);
+  assert.equal(
+    lines.some((line) => line.includes("\n")),
+    false,
+  );
+  const text = lines.join("\n");
+  assert.include(text, "first line");
+  assert.include(text, "second line");
+});
 
 it("previews the focused list's items while navigating the lists pane", () => {
   const h = makeOverlay(twoListState());
@@ -192,6 +211,41 @@ it("widget renders nothing when no list is active (bridge hides it)", () => {
   assert.deepStrictEqual(renderTrackerWidget(state, identityTheme, 40), []);
 });
 
+it("widget shows a dimmed description line truncated to the width", () => {
+  const description = "x".repeat(120);
+  const list = new TodoList({
+    id: 1,
+    name: "Work",
+    items: [new TodoItem({ id: 1, title: "long item", description, done: false })],
+  });
+  const state = new TrackerState({ lists: [list], activeListId: 1, nextListId: 2 });
+  const width = 40;
+  const lines = renderTrackerWidget(state, identityTheme, width);
+  const text = lines.join("\n");
+  assert.include(text, "long item");
+  notContain(text, description);
+  const descriptionLine = lines.find((line) => line.includes("x"));
+  assert.isDefined(descriptionLine);
+  assert.isAtMost(visibleWidth(descriptionLine!), width);
+});
+
+it("widget collapses a multi-line description into one line", () => {
+  const list = new TodoList({
+    id: 1,
+    name: "Work",
+    items: [
+      new TodoItem({ id: 1, title: "multi", description: "first line\nsecond line", done: false }),
+    ],
+  });
+  const state = new TrackerState({ lists: [list], activeListId: 1, nextListId: 2 });
+  const lines = renderTrackerWidget(state, identityTheme, 60);
+  assert.equal(
+    lines.some((line) => line.includes("\n")),
+    false,
+  );
+  assert.include(lines.join("\n"), "first line second line");
+});
+
 it("widget survives the setWidget bridge wrapper (render/invalidate handed off by reference)", () => {
   // Mirrors the tracker bridge: `return { render: widget.render, invalidate: widget.invalidate }`.
   // pi calls render as a method of the wrapper; closure components carry no
@@ -220,7 +274,7 @@ const listOfCount = (count: number, done: number): TodoList =>
     nextItemId: count + 1,
     items: Array.from(
       { length: count },
-      (_, index) => new TodoItem({ id: index + 1, text: `item ${index + 1}`, done: index < done }),
+      (_, index) => new TodoItem({ id: index + 1, title: `item ${index + 1}`, done: index < done }),
     ),
   });
 
@@ -240,7 +294,7 @@ const listWithDeps = (
       (itemDeps, index) =>
         new TodoItem({
           id: index + 1,
-          text: `item ${index + 1}`,
+          title: `item ${index + 1}`,
           done: done.includes(index),
           deps: itemDeps,
         }),
@@ -431,7 +485,7 @@ it("planner anchors on the first ready item, not the first open item", () => {
       (_, index) =>
         new TodoItem({
           id: index + 1,
-          text: `item ${index + 1}`,
+          title: `item ${index + 1}`,
           done: index === 0,
           deps: index === 1 ? ["Work:30"] : [],
         }),

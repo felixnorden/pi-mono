@@ -5,6 +5,7 @@ import {
   TOOL_ACTIONS,
   TRACKER_TOOL_METADATA,
   TRACKER_TOOL_NAME,
+  TITLE_LIMIT,
   TrackerToolParams,
   doneMarkReminder,
   blockedDoneNote,
@@ -18,21 +19,30 @@ describe("tracker tool parameter schema", () => {
       { action: "create_list", name: "Work" },
       { action: "create_list", name: "Work", activate: true },
       { action: "create_list", name: "Work", activate: false },
-      { action: "create_list", name: "Work", initial_items: ["Fix bug", "Write test"] },
-      { action: "create_list", name: "Work", initial_items: ["Fix bug"], activate: false },
+      {
+        action: "create_list",
+        name: "Work",
+        initial_items: [{ title: "Fix bug" }, { title: "Write test" }],
+      },
+      {
+        action: "create_list",
+        name: "Work",
+        initial_items: [{ title: "Fix bug" }],
+        activate: false,
+      },
       { action: "delete_list", list_id: 1 },
       { action: "set_active", list_id: 1 },
       { action: "set_active" },
-      { action: "add_item", list_id: 1, text: "Fix bug" },
-      { action: "add_item", list_id: 1, text: ["Fix bug", "Write test"] },
-      { action: "update_item", item_id: "Work:2", text: "New text", done: true },
-      { action: "update_item", item_id: "Work:2" },
+      { action: "add_items", list_id: 1, items: [{ title: "Fix bug" }] },
+      { action: "add_items", list_id: 1, items: [{ title: "Fix bug" }, { title: "Write test" }] },
+      { action: "update_items", item_id: "Work:2", title: "New text", done: true },
+      { action: "update_items", item_id: "Work:2" },
       {
-        action: "update_item",
+        action: "update_items",
         list_id: 1,
         items: [
           { item_id: "Work:1", done: true },
-          { item_id: "Work:2", text: "New text" },
+          { item_id: "Work:2", title: "New text" },
         ],
       },
       { action: "remove_item", item_id: "Work:2" },
@@ -48,18 +58,22 @@ describe("tracker tool parameter schema", () => {
   });
 
   it("rejects wrong parameter types", () => {
-    expect(Value.Check(TrackerToolParams, { action: "add_item", list_id: "one", text: "x" })).toBe(
-      false,
-    );
-    expect(Value.Check(TrackerToolParams, { action: "create_list", name: 42 })).toBe(false);
-    expect(Value.Check(TrackerToolParams, { action: "create_list", activate: "yes" })).toBe(false);
-    expect(Value.Check(TrackerToolParams, { action: "update_item", done: "yes" })).toBe(false);
-    expect(Value.Check(TrackerToolParams, { action: "add_item", list_id: 1, text: [1, "x"] })).toBe(
-      false,
-    );
     expect(
       Value.Check(TrackerToolParams, {
-        action: "update_item",
+        action: "add_items",
+        list_id: "one",
+        items: [{ title: "x" }],
+      }),
+    ).toBe(false);
+    expect(Value.Check(TrackerToolParams, { action: "create_list", name: 42 })).toBe(false);
+    expect(Value.Check(TrackerToolParams, { action: "create_list", activate: "yes" })).toBe(false);
+    expect(Value.Check(TrackerToolParams, { action: "update_items", done: "yes" })).toBe(false);
+    expect(
+      Value.Check(TrackerToolParams, { action: "add_items", list_id: 1, items: [1, "x"] }),
+    ).toBe(false);
+    expect(
+      Value.Check(TrackerToolParams, {
+        action: "update_items",
         list_id: 1,
         items: [{ item_id: 1, done: "yes" }],
       }),
@@ -67,19 +81,19 @@ describe("tracker tool parameter schema", () => {
     expect(
       Value.Check(TrackerToolParams, {
         // index inside the batch is the old positional field; patch objects are strict.
-        action: "update_item",
+        action: "update_items",
         list_id: 1,
         items: [{ index: 1, done: true }],
       }),
     ).toBe(false);
-    expect(Value.Check(TrackerToolParams, { action: "update_item", item_id: 2 })).toBe(false); // ids are strings
+    expect(Value.Check(TrackerToolParams, { action: "update_items", item_id: 2 })).toBe(false); // ids are strings
   });
 
   it("rejects empty batch arrays", () => {
-    expect(Value.Check(TrackerToolParams, { action: "add_item", list_id: 1, text: [] })).toBe(
+    expect(Value.Check(TrackerToolParams, { action: "add_items", list_id: 1, items: [] })).toBe(
       false,
     );
-    expect(Value.Check(TrackerToolParams, { action: "update_item", items: [] })).toBe(false);
+    expect(Value.Check(TrackerToolParams, { action: "update_items", items: [] })).toBe(false);
     expect(
       Value.Check(TrackerToolParams, { action: "create_list", name: "Work", initial_items: [] }),
     ).toBe(false);
@@ -95,15 +109,20 @@ describe("validateTrackerCall (error-nudging layer)", () => {
     const valid: Array<Record<string, unknown>> = [
       { action: "list" },
       { action: "create_list", name: "Work" },
-      { action: "create_list", name: "Work", initial_items: ["a", "b"], activate: false },
+      {
+        action: "create_list",
+        name: "Work",
+        initial_items: [{ title: "a" }, { title: "b" }],
+        activate: false,
+      },
       { action: "delete_list", list_id: 1 },
       { action: "set_active" },
       { action: "set_active", list_id: 1 },
-      { action: "add_item", list_id: 1, text: "x" },
-      { action: "add_item", list_id: 1, text: ["a", "b"] },
-      { action: "update_item", item_id: "Work:2" },
-      { action: "update_item", item_id: "Work:2", text: "x", done: true },
-      { action: "update_item", list_id: 1, items: [{ item_id: "Work:2", done: true }] },
+      { action: "add_items", list_id: 1, items: [{ title: "x" }] },
+      { action: "add_items", list_id: 1, items: [{ title: "a" }, { title: "b" }] },
+      { action: "update_items", item_id: "Work:2" },
+      { action: "update_items", item_id: "Work:2", title: "x", done: true },
+      { action: "update_items", list_id: 1, items: [{ item_id: "Work:2", done: true }] },
       { action: "remove_item", item_id: "Work:2" },
     ];
     for (const call of valid) {
@@ -130,7 +149,7 @@ describe("validateTrackerCall (error-nudging layer)", () => {
     // schema (item_id must be a string), not here; the mixed-form and
     // missing-list_id nudges below cover the batch contract.
     const batch = validateTrackerCall({
-      action: "update_item",
+      action: "update_items",
       list_id: 1,
       items: [{ item_id: "Work:2", done: true }],
     });
@@ -141,9 +160,9 @@ describe("validateTrackerCall (error-nudging layer)", () => {
     const cases: Array<[Record<string, unknown>, string]> = [
       [{ action: "create_list" }, "'name'"],
       [{ action: "delete_list" }, "'list_id'"],
-      [{ action: "add_item", list_id: 1 }, "'text'"],
-      [{ action: "add_item", text: "x" }, "'list_id'"],
-      [{ action: "update_item" }, "'item_id'"],
+      [{ action: "add_items", list_id: 1 }, "'items'"],
+      [{ action: "add_items", items: [{ title: "x" }] }, "'list_id'"],
+      [{ action: "update_items" }, "'item_id'"],
       [{ action: "remove_item" }, "'item_id'"],
     ];
     for (const [call, expected] of cases) {
@@ -153,9 +172,9 @@ describe("validateTrackerCall (error-nudging layer)", () => {
     }
   });
 
-  it("nudges on mixed update_item forms and array text", () => {
+  it("nudges on mixed update_items forms and an array title", () => {
     const mixed = validateTrackerCall({
-      action: "update_item",
+      action: "update_items",
       item_id: "Work:2",
       items: [{ item_id: "Work:3" }],
     });
@@ -163,19 +182,211 @@ describe("validateTrackerCall (error-nudging layer)", () => {
     if (!mixed.ok) expect(mixed.message).toContain("not both");
 
     const missingList = validateTrackerCall({
-      action: "update_item",
+      action: "update_items",
       items: [{ item_id: "Work:1", done: true }],
     });
     expect(missingList.ok).toBe(false);
     if (!missingList.ok) expect(missingList.message).toContain("list_id");
 
     const arrayText = validateTrackerCall({
-      action: "update_item",
+      action: "update_items",
       item_id: "Work:2",
-      text: ["a"],
+      title: ["a"],
     });
     expect(arrayText.ok).toBe(false);
     if (!arrayText.ok) expect(arrayText.message).toContain("single string");
+  });
+
+  it("rejects top-level refs and produces on the update_items batch form", () => {
+    // The batch form carries refs/produces inside each item. A top-level
+    // refs/produces alongside `items` used to pass validation and was then
+    // dropped, so the call reported success without the declaration.
+    const extras = [
+      { refs: [{ kind: "path", path: "src/a.ts" }] },
+      { produces: [{ path: "out.md" }] },
+    ] as const;
+    for (const extra of extras) {
+      const result = validateTrackerCall({
+        action: "update_items",
+        list_id: 1,
+        items: [{ item_id: "Work:2", done: true }],
+        ...extra,
+      });
+      expect(result.ok, JSON.stringify(extra)).toBe(false);
+      if (!result.ok) expect(result.message).toContain("not both");
+    }
+  });
+
+  it("accepts add_items item objects and rejects a bare string or the old title container", () => {
+    expect(
+      validateTrackerCall({ action: "add_items", list_id: 1, items: [{ title: "Wire it" }] }).ok,
+    ).toBe(true);
+    expect(
+      validateTrackerCall({
+        action: "add_items",
+        list_id: 1,
+        items: [
+          {
+            title: "Wire it",
+            description: "detail",
+            refs: [{ kind: "path", path: "src/a.ts" }],
+            produces: [{ path: "out.md" }],
+            deps: ["Work:1"],
+          },
+        ],
+      }).ok,
+    ).toBe(true);
+
+    // Every entry is an item object with a title.
+    expect(validateTrackerCall({ action: "add_items", list_id: 1, items: ["a"] }).ok).toBe(false);
+    // The old title container is an unknown parameter now.
+    const old = validateTrackerCall({ action: "add_items", list_id: 1, title: "Wire it" });
+    expect(old.ok).toBe(false);
+    if (!old.ok) expect(old.message).toContain("items");
+  });
+
+  it("rejects an add_items entry that carries an item_id", () => {
+    const result = validateTrackerCall({
+      action: "add_items",
+      list_id: 1,
+      items: [{ item_id: "Work:1", title: "a" }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain("item_id");
+  });
+
+  it("rejects an update_items entry without an item_id", () => {
+    const result = validateTrackerCall({
+      action: "update_items",
+      list_id: 1,
+      items: [{ title: "a" }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain("item_id");
+  });
+
+  it("requires a title string in each add_items entry and points at the description", () => {
+    const result = validateTrackerCall({
+      action: "add_items",
+      list_id: 1,
+      items: [{ description: "x" }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain("title");
+      expect(result.message).toContain("description");
+    }
+  });
+
+  it("rejects a bare string in create_list's initial_items", () => {
+    const result = validateTrackerCall({
+      action: "create_list",
+      name: "Work",
+      initial_items: ["a"],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain("item object");
+  });
+
+  it("rejects a title over the cap and names the description", () => {
+    const result = validateTrackerCall({
+      action: "add_items",
+      list_id: 1,
+      items: [{ title: "a".repeat(TITLE_LIMIT + 1) }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain(String(TITLE_LIMIT));
+      expect(result.message).toContain("description");
+    }
+    // The cap is inclusive: a title at the limit passes.
+    expect(
+      validateTrackerCall({
+        action: "add_items",
+        list_id: 1,
+        items: [{ title: "a".repeat(TITLE_LIMIT) }],
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("rejects an over-cap title in create_list's initial_items", () => {
+    const result = validateTrackerCall({
+      action: "create_list",
+      name: "Work",
+      initial_items: [{ title: "a".repeat(TITLE_LIMIT + 1) }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain(String(TITLE_LIMIT));
+      expect(result.message).toContain("description");
+    }
+  });
+
+  it("rejects a reference without a kind, naming the accepted kinds", () => {
+    const result = validateTrackerCall({
+      action: "add_items",
+      list_id: 1,
+      items: [{ title: "x", refs: [{ path: "src/a.ts" }] }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain("kind");
+      expect(result.message).toContain("path");
+      expect(result.message).toContain("decision");
+    }
+  });
+
+  it("rejects a path reference without a path", () => {
+    const result = validateTrackerCall({
+      action: "add_items",
+      list_id: 1,
+      items: [{ title: "x", refs: [{ kind: "path", symbol: "route" }] }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain("path");
+  });
+
+  it("accepts declared references and products in every shape", () => {
+    const calls: Array<Record<string, unknown>> = [
+      {
+        action: "add_items",
+        list_id: 1,
+        items: [{ title: "x", refs: [{ kind: "path", path: "src/a.ts" }] }],
+      },
+      {
+        action: "add_items",
+        list_id: 1,
+        items: [{ title: "x", refs: [{ kind: "decision", topic: "t" }] }],
+      },
+      {
+        action: "add_items",
+        list_id: 1,
+        items: [{ title: "x", produces: [{ path: "docs/a.md" }] }],
+      },
+      {
+        action: "create_list",
+        name: "W",
+        initial_items: [{ title: "a", refs: [{ kind: "decision", topic: "t" }] }],
+      },
+      { action: "update_items", item_id: "W:1", refs: [{ kind: "path", path: "src/a.ts" }] },
+      {
+        action: "update_items",
+        list_id: 1,
+        items: [{ item_id: "W:1", produces: [{ path: "a.md" }] }],
+      },
+    ];
+    for (const call of calls) {
+      expect(Value.Check(TrackerToolParams, call), JSON.stringify(call)).toBe(true);
+      expect(validateTrackerCall(call).ok, JSON.stringify(call)).toBe(true);
+    }
+  });
+
+  it("carries the declaration guidance in the tool description", () => {
+    const description = TRACKER_TOOL_METADATA.description;
+    expect(description).toContain("one short action line");
+    expect(description).toMatch(/Declare a reference/);
+    expect(description).toMatch(/declare a product/i);
+    expect(description).toMatch(/Both are optional/);
   });
 
   it("nudges on unknown actions and non-object args", () => {
@@ -192,17 +403,21 @@ describe("validateTrackerCall (error-nudging layer)", () => {
 
   it("accepts dependency declarations in every shape that supports them", () => {
     const valid: Array<Record<string, unknown>> = [
-      { action: "create_list", name: "Work", initial_items: [{ text: "a", deps: ["Work:1"] }] },
+      { action: "create_list", name: "Work", initial_items: [{ title: "a", deps: ["Work:1"] }] },
       {
         action: "create_list",
         name: "Work",
-        initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+        initial_items: [{ title: "a" }, { title: "b", deps: ["Work:1"] }],
       },
-      { action: "add_item", list_id: 1, text: { text: "b", deps: ["Work:1"] } },
-      { action: "add_item", list_id: 1, text: ["a", { text: "b", deps: ["Work:1"] }] },
-      { action: "update_item", item_id: "Work:2", deps: ["Work:1"] },
-      { action: "update_item", item_id: "Work:2", deps: [] },
-      { action: "update_item", list_id: 1, items: [{ item_id: "Work:2", deps: ["Work:1"] }] },
+      { action: "add_items", list_id: 1, items: [{ title: "b", deps: ["Work:1"] }] },
+      {
+        action: "add_items",
+        list_id: 1,
+        items: [{ title: "a" }, { title: "b", deps: ["Work:1"] }],
+      },
+      { action: "update_items", item_id: "Work:2", deps: ["Work:1"] },
+      { action: "update_items", item_id: "Work:2", deps: [] },
+      { action: "update_items", list_id: 1, items: [{ item_id: "Work:2", deps: ["Work:1"] }] },
     ];
     for (const call of valid) {
       expect(Value.Check(TrackerToolParams, call), JSON.stringify(call)).toBe(true);
@@ -220,11 +435,11 @@ describe("validateTrackerCall (error-nudging layer)", () => {
     }
   });
 
-  it("rejects a deps list on add_item, which takes deps inside the item object", () => {
+  it("rejects a top-level deps list on add_items", () => {
     const result = validateTrackerCall({
-      action: "add_item",
+      action: "add_items",
       list_id: 1,
-      text: "a",
+      items: [{ title: "a" }],
       deps: ["Work:1"],
     });
     expect(result.ok).toBe(false);
@@ -234,7 +449,7 @@ describe("validateTrackerCall (error-nudging layer)", () => {
   it("rejects a batch entry that carries both an item_id and a stray index", () => {
     expect(
       Value.Check(TrackerToolParams, {
-        action: "update_item",
+        action: "update_items",
         list_id: 1,
         items: [{ item_id: "Work:1", index: 1, deps: [] }],
       }),
@@ -286,7 +501,7 @@ describe("blockedDoneNote (advisory done-blocked guard)", () => {
             (itemDeps, index) =>
               new TodoItem({
                 id: index + 1,
-                text: `item ${index + 1}`,
+                title: `item ${index + 1}`,
                 done: done.includes(index),
                 deps: itemDeps,
               }),
@@ -309,7 +524,7 @@ describe("blockedDoneNote (advisory done-blocked guard)", () => {
     const state = stateWith([[], ["Work:1"]], [1]);
 
     expect(blockedDoneNote([{ id: "Work:1", done: true }], state)).toBeNull();
-    expect(blockedDoneNote([{ id: "Work:1", text: "new" }], state)).toBeNull();
+    expect(blockedDoneNote([{ id: "Work:1", title: "new" }], state)).toBeNull();
     expect(blockedDoneNote([], state)).toBeNull();
   });
 

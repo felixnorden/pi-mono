@@ -29,6 +29,47 @@ const itemDeps = Schema.Array(Schema.String).pipe(
   Schema.withConstructorDefault(Effect.succeed([])),
 );
 
+/** The optional longer explanation of an item; defaults to empty. */
+const itemDescription = Schema.String.pipe(
+  Schema.withDecodingDefaultType(Effect.succeed("")),
+  Schema.withConstructorDefault(Effect.succeed("")),
+);
+
+/**
+ * A declared reference: a path the item must read (optionally narrowed to a
+ * symbol or a line span), or a decision topic it depends on.
+ */
+const declaredReference = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("path"),
+    path: Schema.String,
+    symbol: Schema.optional(Schema.String),
+    span: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("decision"),
+    topic: Schema.String,
+  }),
+]);
+
+/** A document the item will write. */
+const declaredProduct = Schema.Struct({ path: Schema.String });
+
+/** Declared references; defaults to empty, so an old item decodes without them. */
+const itemRefs = Schema.Array(declaredReference).pipe(
+  Schema.withDecodingDefaultType(Effect.succeed([])),
+  Schema.withConstructorDefault(Effect.succeed([])),
+);
+
+/** Declared products; defaults to empty, so an old item decodes without them. */
+const itemProduces = Schema.Array(declaredProduct).pipe(
+  Schema.withDecodingDefaultType(Effect.succeed([])),
+  Schema.withConstructorDefault(Effect.succeed([])),
+);
+
+export type DeclaredReference = Schema.Schema.Type<typeof declaredReference>;
+export type DeclaredProduct = Schema.Schema.Type<typeof declaredProduct>;
+
 /**
  * Sentinel for a list that stored no item id counter, which means the snapshot
  * was written before item ids existed. `normalizeSnapshot` stamps it so
@@ -44,7 +85,10 @@ const itemCounter = Schema.Int.pipe(
 
 export class TodoItem extends Schema.Class<TodoItem>("tracker/TodoItem")({
   id: itemId,
-  text: Schema.String,
+  title: Schema.String,
+  description: itemDescription,
+  refs: itemRefs,
+  produces: itemProduces,
   done: Schema.Boolean,
   deps: itemDeps,
 }) {}
@@ -81,7 +125,15 @@ export const emptyState = (): TrackerState =>
 
 /** A copy of `item` with a replaced id. */
 const withId = (item: TodoItem, id: number): TodoItem =>
-  new TodoItem({ id, text: item.text, done: item.done, deps: item.deps });
+  new TodoItem({
+    id,
+    title: item.title,
+    description: item.description,
+    refs: item.refs,
+    produces: item.produces,
+    done: item.done,
+    deps: item.deps,
+  });
 
 /**
  * Reassign ids for one list and return it with a counter above every id.
@@ -127,16 +179,29 @@ export const migrateState = (state: TrackerState): TrackerState =>
 
 /**
  * Drop a legacy `listName:index` string item id so the item decodes as
- * unassigned. An older format stored the id as a string; the schema now
- * stores an integer, and rejecting the snapshot would lose the whole session.
+ * unassigned, and split a legacy `text` into a title and a description. An
+ * older format stored the id as a string and the item content as one `text`
+ * string; the schema now stores an integer id plus separate `title` and
+ * `description` fields, and rejecting the snapshot would lose the whole
+ * session.
  */
 const normalizeItem = (item: unknown): unknown => {
   if (typeof item !== "object" || item === null || Array.isArray(item)) return item;
   const record = item as Record<string, unknown>;
-  if (typeof record.id !== "string") return item;
-  const next = { ...record };
-  delete next.id;
-  return next;
+  const next: Record<string, unknown> = { ...record };
+  let changed = false;
+  if (typeof record.id === "string") {
+    delete next.id;
+    changed = true;
+  }
+  if (record.title === undefined && typeof record.text === "string") {
+    const newline = record.text.indexOf("\n");
+    next.title = newline === -1 ? record.text : record.text.slice(0, newline);
+    next.description = newline === -1 ? "" : record.text.slice(newline + 1);
+    delete next.text;
+    changed = true;
+  }
+  return changed ? next : item;
 };
 
 /**

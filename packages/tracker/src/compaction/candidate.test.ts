@@ -6,7 +6,7 @@ import { TodoItem, TodoList } from "../core/domain.ts";
 interface ItemSpec {
   readonly id: number;
   readonly done: boolean;
-  readonly text?: string;
+  readonly title?: string;
   readonly deps?: readonly string[];
 }
 
@@ -21,7 +21,7 @@ const completion = (
       (item) =>
         new TodoItem({
           id: item.id,
-          text: item.text ?? `item ${item.id}`,
+          title: item.title ?? `item ${item.id}`,
           done: item.done,
           deps: [...(item.deps ?? [])],
         }),
@@ -134,9 +134,9 @@ it("selectCandidates carries the completed batch as prior work", () => {
   const candidate = first(
     completion(
       [
-        { id: 1, done: true, text: "first" },
-        { id: 3, done: true, text: "third" },
-        { id: 4, done: false, text: "fourth", deps: ["Work:3"] },
+        { id: 1, done: true, title: "first" },
+        { id: 3, done: true, title: "third" },
+        { id: 4, done: false, title: "fourth", deps: ["Work:3"] },
       ],
       [1, 3],
     ),

@@ -29,7 +29,7 @@ const listWith = (
       (itemDeps, index) =>
         new TodoItem({
           id: index + 1,
-          text: `item ${index + 1}`,
+          title: `item ${index + 1}`,
           done: done.includes(index),
           deps: itemDeps,
         }),

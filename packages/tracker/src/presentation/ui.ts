@@ -202,10 +202,21 @@ const widgetRows =
       const item = view.list.items[row.index]!;
       const blocked = (view.ready[row.index]?.blockers.length ?? 0) > 0;
       const marker = itemMarker(item, blocked, row.index === current, theme);
-      const text = item.done
-        ? theme.style(item.text, { fg: "muted", strikethrough: true })
-        : item.text;
-      rows.push(`  ${marker}${text}`);
+      const title = item.done
+        ? theme.style(item.title, { fg: "muted", strikethrough: true })
+        : item.title;
+      rows.push(`  ${marker}${title}`);
+      if (item.description.length > 0) {
+        // The widget row is one line, so a multi-line description collapses
+        // to single spaces before it is truncated.
+        const description = item.description.replace(/\s+/g, " ").trim();
+        rows.push(
+          truncateToWidth(
+            `${" ".repeat(2 + MARKER_WIDTH)}${theme.fg("dim", description)}`,
+            Math.max(0, _width),
+          ),
+        );
+      }
     }
     return rows;
   };
@@ -251,7 +262,7 @@ export type TrackerUiAction =
   | { readonly type: "createList"; readonly name: string }
   | { readonly type: "deleteList"; readonly listId: number }
   | { readonly type: "setActive"; readonly listId: number | null }
-  | { readonly type: "addItem"; readonly listId: number; readonly text: string }
+  | { readonly type: "addItem"; readonly listId: number; readonly title: string }
   | { readonly type: "updateItem"; readonly itemId: string; readonly patch: UpdateItemPatch }
   | { readonly type: "removeItem"; readonly itemId: string };
 
@@ -444,11 +455,18 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
         const prefix = selected ? theme.fg("accent", "→ ") : "  ";
         const blocker = readinessSuffix(item.done, view.ready[index]?.blockers ?? []);
         const check = itemMarker(item, blocker !== "", false, theme);
-        const text = item.done
-          ? theme.style(item.text, { fg: "muted", strikethrough: true })
-          : item.text;
-        const row = truncateToWidth(`${prefix}${check}${text}${blocker}`, width);
+        const title = item.done
+          ? theme.style(item.title, { fg: "muted", strikethrough: true })
+          : item.title;
+        const row = truncateToWidth(`${prefix}${check}${title}${blocker}`, width);
         lines.push(selected ? theme.style(row, { bg: "selectedBg" }) : row);
+        if (item.description.length > 0) {
+          // The overlay shows the full description; each source line becomes
+          // its own row so no embedded newline reaches the renderer.
+          for (const descriptionLine of item.description.split("\n")) {
+            lines.push(truncateToWidth(`    ${theme.fg("dim", descriptionLine)}`, width));
+          }
+        }
       }
       if (activeListFor.items.length > MAX_ITEMS) {
         lines.push(
@@ -467,8 +485,8 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
         input.kind === "newList"
           ? "New list name"
           : input.kind === "addItem"
-            ? "Item text"
-            : "Edit item text";
+            ? "Item title"
+            : "Edit item title";
       lines.push(truncateToWidth(`  ${theme.fg("accent", `${prompt}:`)} ${input.buffer}▌`, width));
       lines.push(truncateToWidth(`  ${theme.fg("dim", "enter confirm · esc cancel")}`, width));
     } else if (error) {
@@ -624,7 +642,7 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
       input = {
         kind: "editItem",
         itemId: `${list.name}:${item.id}`,
-        buffer: item.text,
+        buffer: item.title,
       };
       return true;
     }
@@ -641,7 +659,7 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
     if (data === "c") {
       const item = items[itemIndex];
       if (!item) return true;
-      copyText(`${list.name}:${item.id} ${item.text}`, `item "${item.text}"`);
+      copyText(`${list.name}:${item.id} ${item.title}`, `item "${item.title}"`);
       return true;
     }
     return false;
@@ -659,11 +677,11 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
         current.kind === "newList"
           ? { type: "createList", name: current.buffer }
           : current.kind === "addItem"
-            ? { type: "addItem", listId: current.listId, text: current.buffer }
+            ? { type: "addItem", listId: current.listId, title: current.buffer }
             : {
                 type: "updateItem",
                 itemId: current.itemId,
-                patch: { text: current.buffer },
+                patch: { title: current.buffer },
               };
       void runAction(action);
     } else if (matchesKey(data, Key.backspace)) {

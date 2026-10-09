@@ -17,7 +17,7 @@ const list = (id: number, name: string, items: readonly ItemSpec[]): TodoList =>
       (item) =>
         new TodoItem({
           id: item.id,
-          text: `item ${item.id}`,
+          title: `item ${item.id}`,
           done: item.done,
           deps: [...(item.deps ?? [])],
         }),

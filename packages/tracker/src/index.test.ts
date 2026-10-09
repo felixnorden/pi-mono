@@ -1,7 +1,7 @@
 /**
  * Bridge tests for `src/index.ts`. The store and the planner have their own
  * suites; these tests pin the thin wiring between them, including the result
- * contract that both `update_item` forms report an affected-items array. That
+ * contract that both `update_items` forms report an affected-items array. That
  * contract broke once: the scalar form returned one `TodoItem`, the renderer
  * called `.map` on it, and the tool failed with `items.map is not a function`.
  */
@@ -11,6 +11,7 @@ import {
   type CompactOptions,
   type ExtensionAPI,
   type ExtensionToolContext,
+  type Theme,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type {
@@ -215,16 +216,40 @@ const textOf = (result: AgentToolResult<TrackerToolDetails>): string => {
   return block?.type === "text" ? block.text : "";
 };
 
+/** Identity theme: styles pass text through, so assertions search plain text. */
+const identityTheme = {
+  fg: (_color: string, text: string): string => text,
+  bold: (text: string): string => text,
+  strikethrough: (text: string): string => text,
+  style: (text: string): string => text,
+} as unknown as Theme;
+
+/** Render a tool result through the registered `renderResult`. */
+const renderList = (
+  harness: Harness,
+  result: AgentToolResult<TrackerToolDetails>,
+  expanded: boolean,
+): string =>
+  harness.tool.renderResult!(
+    result,
+    { expanded, isPartial: false },
+    identityTheme,
+    harness.ctx as never,
+  )
+    .render(400)
+    .join("\n")
+    .replace(/\s+/g, " ");
+
 describe("tracker tool bridge", () => {
-  it("returns an affected-items array for the scalar update_item form", async () => {
+  it("returns an affected-items array for the scalar update_items form", async () => {
     const harness = await makeHarness();
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["write plan", "ship it"],
+      initial_items: [{ title: "write plan" }, { title: "ship it" }],
     });
 
-    const result = await run(harness, { action: "update_item", item_id: "Work:1", done: true });
+    const result = await run(harness, { action: "update_items", item_id: "Work:1", done: true });
 
     expect(result.details?.items).toHaveLength(1);
     expect(result.details?.items?.[0]?.done).toBe(true);
@@ -232,33 +257,37 @@ describe("tracker tool bridge", () => {
     expect(textOf(result)).toContain("Work:1 (completed)");
   });
 
-  it("keeps the text patch for the scalar update_item form", async () => {
+  it("keeps the title patch for the scalar update_items form", async () => {
     const harness = await makeHarness();
-    await run(harness, { action: "create_list", name: "Work", initial_items: ["old"] });
+    await run(harness, { action: "create_list", name: "Work", initial_items: [{ title: "old" }] });
 
-    const result = await run(harness, { action: "update_item", item_id: "Work:1", text: "new" });
+    const result = await run(harness, { action: "update_items", item_id: "Work:1", title: "new" });
 
     expect(result.details?.items).toHaveLength(1);
-    expect(result.details?.items?.[0]?.text).toBe("new");
-    expect(textOf(result)).toContain("Work:1 (text: new)");
+    expect(result.details?.items?.[0]?.title).toBe("new");
+    expect(textOf(result)).toContain("Work:1 (title: new)");
   });
 
-  it("returns one entry per patch for the batch update_item form", async () => {
+  it("returns one entry per patch for the batch update_items form", async () => {
     const harness = await makeHarness();
-    await run(harness, { action: "create_list", name: "Work", initial_items: ["a", "b", "c"] });
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: [{ title: "a" }, { title: "b" }, { title: "c" }],
+    });
 
     const result = await run(harness, {
-      action: "update_item",
+      action: "update_items",
       list_id: 1,
       items: [
         { item_id: "Work:1", done: true },
-        { item_id: "Work:3", text: "cee" },
+        { item_id: "Work:3", title: "cee" },
       ],
     });
 
     expect(result.details?.items).toHaveLength(2);
     expect(textOf(result)).toContain("Updated 2 items");
-    expect(textOf(result)).toContain("Work:3 (text: cee)");
+    expect(textOf(result)).toContain("Work:3 (title: cee)");
   });
 
   it("shows id-based references in the list output", async () => {
@@ -266,10 +295,10 @@ describe("tracker tool bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["write plan", "ship it"],
+      initial_items: [{ title: "write plan" }, { title: "ship it" }],
     });
 
-    await run(harness, { action: "update_item", item_id: "Work:2", done: true });
+    await run(harness, { action: "update_items", item_id: "Work:2", done: true });
     const result = await run(harness, { action: "list" });
 
     expect(textOf(result)).toContain("[x] #Work:2: ship it");
@@ -277,7 +306,11 @@ describe("tracker tool bridge", () => {
 
   it("shows stable ids after a removal", async () => {
     const harness = await makeHarness();
-    await run(harness, { action: "create_list", name: "Work", initial_items: ["a", "b", "c"] });
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: [{ title: "a" }, { title: "b" }, { title: "c" }],
+    });
 
     await run(harness, { action: "remove_item", item_id: "Work:1" });
     const result = await run(harness, { action: "list" });
@@ -288,11 +321,26 @@ describe("tracker tool bridge", () => {
     expect(textOf(result)).not.toContain("#Work:1");
   });
 
+  it("shows the full description in the expanded list view", async () => {
+    const harness = await makeHarness();
+    const description = "detail ".repeat(30).trim();
+    await run(harness, { action: "create_list", name: "Work" });
+    await run(harness, {
+      action: "add_items",
+      list_id: 1,
+      items: [{ title: "big", description }],
+    });
+    const result = await run(harness, { action: "list" });
+
+    expect(renderList(harness, result, true)).toContain(description);
+    expect(renderList(harness, result, false)).not.toContain(description);
+  });
+
   it("reports an error result for a missing item instead of throwing", async () => {
     const harness = await makeHarness();
-    await run(harness, { action: "create_list", name: "Work", initial_items: ["only"] });
+    await run(harness, { action: "create_list", name: "Work", initial_items: [{ title: "only" }] });
 
-    const result = await run(harness, { action: "update_item", item_id: "Work:9", done: true });
+    const result = await run(harness, { action: "update_items", item_id: "Work:9", done: true });
 
     expect(result.details?.error).toContain("Work:9");
     expect(result.content[0]).toMatchObject({ type: "text" });
@@ -303,13 +351,13 @@ describe("tracker tool bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+      initial_items: [{ title: "a" }, { title: "b", deps: ["Work:1"] }],
     });
 
     const added = await run(harness, {
-      action: "add_item",
+      action: "add_items",
       list_id: 1,
-      text: { text: "c", deps: ["Work:2"] },
+      items: [{ title: "c", deps: ["Work:2"] }],
     });
 
     expect(added.details?.error).toBeUndefined();
@@ -317,14 +365,46 @@ describe("tracker tool bridge", () => {
     expect(textOf(added)).toContain("Work:3");
   });
 
+  it("carries every nested object field on add_items", async () => {
+    const harness = await makeHarness();
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: [{ title: "a" }, { title: "b" }],
+    });
+
+    const added = await run(harness, {
+      action: "add_items",
+      list_id: 1,
+      items: [
+        {
+          title: "Wire the promotion script",
+          description: "Add evals/promote.ts.",
+          refs: [{ kind: "path", path: "evals/rules.ts" }],
+          produces: [{ path: "evals/promote.ts" }],
+          deps: ["Work:1"],
+        },
+      ],
+    });
+
+    expect(added.details?.error).toBeUndefined();
+    expect(added.details?.items?.[0]).toMatchObject({
+      title: "Wire the promotion script",
+      description: "Add evals/promote.ts.",
+      refs: [{ kind: "path", path: "evals/rules.ts" }],
+      produces: [{ path: "evals/promote.ts" }],
+      deps: ["Work:1"],
+    });
+  });
+
   it("rejects a malformed dependency reference with an actionable message", async () => {
     const harness = await makeHarness();
-    await run(harness, { action: "create_list", name: "Work", initial_items: ["a"] });
+    await run(harness, { action: "create_list", name: "Work", initial_items: [{ title: "a" }] });
 
     const result = await run(harness, {
-      action: "add_item",
+      action: "add_items",
       list_id: 1,
-      text: { text: "b", deps: ["nonsense"] },
+      items: [{ title: "b", deps: ["nonsense"] }],
     });
 
     expect(result.details?.error).toContain("listName:id");
@@ -335,11 +415,11 @@ describe("tracker tool bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+      initial_items: [{ title: "a" }, { title: "b", deps: ["Work:1"] }],
     });
 
     const result = await run(harness, {
-      action: "update_item",
+      action: "update_items",
       item_id: "Work:1",
       deps: ["Work:2"],
     });
@@ -353,7 +433,11 @@ describe("tracker tool bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["a", { text: "b", deps: ["Work:1"] }, { text: "c", deps: ["Work:2"] }],
+      initial_items: [
+        { title: "a" },
+        { title: "b", deps: ["Work:1"] },
+        { title: "c", deps: ["Work:2"] },
+      ],
     });
 
     const text = textOf(await run(harness, { action: "list" }));
@@ -365,7 +449,11 @@ describe("tracker tool bridge", () => {
 
   it("leaves the list output untouched for a dependency-free list", async () => {
     const harness = await makeHarness();
-    await run(harness, { action: "create_list", name: "Work", initial_items: ["a", "b"] });
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: [{ title: "a" }, { title: "b" }],
+    });
 
     const text = textOf(await run(harness, { action: "list" }));
 
@@ -379,10 +467,10 @@ describe("tracker tool bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+      initial_items: [{ title: "a" }, { title: "b", deps: ["Work:1"] }],
     });
 
-    const result = await run(harness, { action: "update_item", item_id: "Work:2", done: true });
+    const result = await run(harness, { action: "update_items", item_id: "Work:2", done: true });
 
     expect(result.details?.error).toContain("Work:1");
     expect(result.details?.error).toContain("blocked");
@@ -393,13 +481,13 @@ describe("tracker tool bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+      initial_items: [{ title: "a" }, { title: "b", deps: ["Work:1"] }],
     });
-    await run(harness, { action: "update_item", item_id: "Work:1", done: true });
-    await run(harness, { action: "update_item", item_id: "Work:2", done: true });
+    await run(harness, { action: "update_items", item_id: "Work:1", done: true });
+    await run(harness, { action: "update_items", item_id: "Work:2", done: true });
 
     const text = textOf(
-      await run(harness, { action: "update_item", item_id: "Work:1", done: false }),
+      await run(harness, { action: "update_items", item_id: "Work:1", done: false }),
     );
 
     expect(text).toContain("Note:");
@@ -411,12 +499,12 @@ describe("tracker tool bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+      initial_items: [{ title: "a" }, { title: "b", deps: ["Work:1"] }],
     });
-    await run(harness, { action: "update_item", item_id: "Work:1", done: true });
+    await run(harness, { action: "update_items", item_id: "Work:1", done: true });
 
     const text = textOf(
-      await run(harness, { action: "update_item", item_id: "Work:1", done: false }),
+      await run(harness, { action: "update_items", item_id: "Work:1", done: false }),
     );
 
     expect(text).not.toContain("Note:");
@@ -427,11 +515,11 @@ describe("tracker tool bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["a", { text: "b", deps: ["Work:1"] }],
+      initial_items: [{ title: "a" }, { title: "b", deps: ["Work:1"] }],
     });
-    await run(harness, { action: "update_item", item_id: "Work:1", done: true });
-    await run(harness, { action: "update_item", item_id: "Work:2", done: true });
-    await run(harness, { action: "update_item", item_id: "Work:1", done: false });
+    await run(harness, { action: "update_items", item_id: "Work:1", done: true });
+    await run(harness, { action: "update_items", item_id: "Work:2", done: true });
+    await run(harness, { action: "update_items", item_id: "Work:1", done: false });
 
     const text = textOf(await run(harness, { action: "list" }));
 
@@ -443,11 +531,15 @@ describe("tracker tool bridge", () => {
 
   it("notes a done item that a dependency edit left waiting", async () => {
     const harness = await makeHarness();
-    await run(harness, { action: "create_list", name: "Work", initial_items: ["a", "b"] });
-    await run(harness, { action: "update_item", item_id: "Work:2", done: true });
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: [{ title: "a" }, { title: "b" }],
+    });
+    await run(harness, { action: "update_items", item_id: "Work:2", done: true });
 
     const text = textOf(
-      await run(harness, { action: "update_item", item_id: "Work:2", deps: ["Work:1"] }),
+      await run(harness, { action: "update_items", item_id: "Work:2", deps: ["Work:1"] }),
     );
 
     expect(text).toContain("Note: Work:2 is done but now waits on Work:1");
@@ -458,15 +550,15 @@ describe("tracker tool bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["a", { text: "b", deps: ["Work:1"] }, "c"],
+      initial_items: [{ title: "a" }, { title: "b", deps: ["Work:1"] }, { title: "c" }],
     });
 
-    const cleared = await run(harness, { action: "update_item", item_id: "Work:2", deps: [] });
+    const cleared = await run(harness, { action: "update_items", item_id: "Work:2", deps: [] });
     expect(textOf(cleared)).toContain("deps cleared (was Work:1)");
 
-    await run(harness, { action: "update_item", item_id: "Work:2", deps: ["Work:1"] });
+    await run(harness, { action: "update_items", item_id: "Work:2", deps: ["Work:1"] });
     const replaced = await run(harness, {
-      action: "update_item",
+      action: "update_items",
       item_id: "Work:2",
       deps: ["Work:3"],
     });
@@ -475,13 +567,17 @@ describe("tracker tool bridge", () => {
 
   it("persists overlapping mutations in order", async () => {
     const harness = await makeHarness();
-    await run(harness, { action: "create_list", name: "Work", initial_items: ["a", "b"] });
+    await run(harness, {
+      action: "create_list",
+      name: "Work",
+      initial_items: [{ title: "a" }, { title: "b" }],
+    });
 
     // Two calls in flight at once. The last snapshot the session receives must
     // be the state after both, or a later restore resurrects an older one.
     await Promise.all([
-      run(harness, { action: "update_item", item_id: "Work:1", done: true }),
-      run(harness, { action: "update_item", item_id: "Work:2", done: true }),
+      run(harness, { action: "update_items", item_id: "Work:1", done: true }),
+      run(harness, { action: "update_items", item_id: "Work:2", done: true }),
     ]);
 
     const last = harness.appends.at(-1) as {
@@ -499,7 +595,7 @@ describe("tracker tool bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: [{ text: "ship", deps: ["Work:2"] }, "write plan"],
+      initial_items: [{ title: "ship", deps: ["Work:2"] }, { title: "write plan" }],
     });
 
     const text = textOf(await run(harness, { action: "list" }));
@@ -533,9 +629,9 @@ describe("tracker smart-compaction bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["first", { text: "second", deps: ["Work:1"] }],
+      initial_items: [{ title: "first" }, { title: "second", deps: ["Work:1"] }],
     });
-    await run(harness, { action: "update_item", item_id: "Work:1", done: true });
+    await run(harness, { action: "update_items", item_id: "Work:1", done: true });
   };
 
   it("a completed item with a compact verdict starts pi's compaction at the settle boundary", async () => {
@@ -642,9 +738,13 @@ describe("tracker smart-compaction bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["first", { text: "second", deps: ["Work:1"] }, "third"],
+      initial_items: [
+        { title: "first" },
+        { title: "second", deps: ["Work:1"] },
+        { title: "third" },
+      ],
     });
-    await run(harness, { action: "update_item", item_id: "Work:1", done: true });
+    await run(harness, { action: "update_items", item_id: "Work:1", done: true });
 
     await harness.settle();
 
@@ -657,9 +757,13 @@ describe("tracker smart-compaction bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["first", { text: "second", deps: ["Work:1"] }, "third"],
+      initial_items: [
+        { title: "first" },
+        { title: "second", deps: ["Work:1"] },
+        { title: "third" },
+      ],
     });
-    await run(harness, { action: "update_item", item_id: "Work:1", done: true });
+    await run(harness, { action: "update_items", item_id: "Work:1", done: true });
 
     await harness.settle();
 
@@ -711,7 +815,7 @@ describe("tracker smart-compaction bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["first", { text: "second", deps: ["Work:1"] }],
+      initial_items: [{ title: "first" }, { title: "second", deps: ["Work:1"] }],
     });
 
     await harness.settle();
@@ -813,10 +917,10 @@ describe("tracker smart-compaction bridge", () => {
     await run(harness, {
       action: "create_list",
       name: "Work",
-      initial_items: ["first", { text: "second", deps: ["Work:1"] }],
+      initial_items: [{ title: "first" }, { title: "second", deps: ["Work:1"] }],
     });
 
-    const result = await run(harness, { action: "update_item", item_id: "Work:1", done: true });
+    const result = await run(harness, { action: "update_items", item_id: "Work:1", done: true });
     const appendsBefore = harness.appends.length;
 
     await harness.settle();

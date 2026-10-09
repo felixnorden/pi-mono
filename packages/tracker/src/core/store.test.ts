@@ -124,7 +124,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const list = yield* store.createList("Work", { initialItems: ["a", "b"] });
       assert.strictEqual(list.id, 1);
       assert.deepStrictEqual(
-        list.items.map((i) => [i.text, i.done]),
+        list.items.map((i) => [i.title, i.done]),
         [
           ["a", false],
           ["b", false],
@@ -144,7 +144,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
 
       const list = yield* store.createList("Work", { initialItems: ["  a  ", "b"] });
       assert.deepStrictEqual(
-        list.items.map((i) => i.text),
+        list.items.map((i) => i.title),
         ["a", "b"],
       );
     }),
@@ -286,7 +286,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
 
       const list = yield* store.createList("Work");
       const item = yield* store.addItem(list.id, "write plan");
-      assert.strictEqual(item.text, "write plan");
+      assert.strictEqual(item.title, "write plan");
       assert.strictEqual(item.done, false);
 
       const state = yield* store.state;
@@ -301,7 +301,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
 
       const list = yield* store.createList("Work");
       const item = yield* store.addItem(list.id, "  ship  ");
-      assert.strictEqual(item.text, "ship");
+      assert.strictEqual(item.title, "ship");
 
       for (const bad of ["", "   "]) {
         const result = yield* Effect.result(store.addItem(list.id, bad));
@@ -319,7 +319,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const list = yield* store.createList("Work");
       const items = yield* store.addItems(list.id, ["a", "b", "c"]);
       assert.deepStrictEqual(
-        items.map((i) => [i.text, i.done]),
+        items.map((i) => [i.title, i.done]),
         [
           ["a", false],
           ["b", false],
@@ -329,7 +329,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
 
       const state = yield* store.state;
       assert.deepStrictEqual(
-        state.lists[0]?.items.map((i) => i.text),
+        state.lists[0]?.items.map((i) => i.title),
         ["a", "b", "c"],
       );
     }),
@@ -343,7 +343,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const list = yield* store.createList("Work");
       const items = yield* store.addItems(list.id, ["  a  ", "b"]);
       assert.deepStrictEqual(
-        items.map((i) => i.text),
+        items.map((i) => i.title),
         ["a", "b"],
       );
     }),
@@ -396,7 +396,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const list = yield* store.createList("Work");
       const items = yield* store.addItems(list.id, ["write plan"]);
       assert.strictEqual(items.length, 1);
-      assert.strictEqual(items[0]?.text, "write plan");
+      assert.strictEqual(items[0]?.title, "write plan");
       assert.strictEqual(items[0]?.done, false);
     }),
   );
@@ -410,7 +410,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.addItem(list.id, "write plan");
       const updated = yield* store.updateItem("Work:1", { done: true });
       assert.strictEqual(updated.done, true);
-      assert.strictEqual(updated.text, "write plan");
+      assert.strictEqual(updated.title, "write plan");
 
       const state = yield* store.state;
       assert.strictEqual(state.lists[0]?.items[0]?.done, true);
@@ -424,12 +424,12 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
 
       const list = yield* store.createList("Work");
       yield* store.addItem(list.id, "write plan");
-      const updated = yield* store.updateItem("Work:1", { text: "ship it" });
-      assert.strictEqual(updated.text, "ship it");
+      const updated = yield* store.updateItem("Work:1", { title: "ship it" });
+      assert.strictEqual(updated.title, "ship it");
       assert.strictEqual(updated.done, false); // untouched field preserved
 
       const state = yield* store.state;
-      assert.strictEqual(state.lists[0]?.items[0]?.text, "ship it");
+      assert.strictEqual(state.lists[0]?.items[0]?.title, "ship it");
     }),
   );
 
@@ -440,9 +440,75 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
 
       const list = yield* store.createList("Work");
       yield* store.addItem(list.id, "write plan");
-      const updated = yield* store.updateItem("Work:1", { text: "done!", done: true });
-      assert.strictEqual(updated.text, "done!");
+      const updated = yield* store.updateItem("Work:1", { title: "done!", done: true });
+      assert.strictEqual(updated.title, "done!");
       assert.strictEqual(updated.done, true);
+    }),
+  );
+
+  it.effect("keeps the description across a title-only patch", () =>
+    Effect.gen(function* () {
+      const store = yield* TrackerStore;
+      yield* store.reset(emptyState());
+
+      const list = yield* store.createList("Work");
+      yield* store.addItem(list.id, { title: "T", description: "D" });
+      const updated = yield* store.updateItem("Work:1", { title: "T2" });
+      assert.strictEqual(updated.title, "T2");
+      assert.strictEqual(updated.description, "D");
+      const state = yield* store.state;
+      assert.strictEqual(state.lists[0]?.items[0]?.description, "D");
+    }),
+  );
+
+  it.effect("round-trips a path reference with its symbol and span", () =>
+    Effect.gen(function* () {
+      const store = yield* TrackerStore;
+      yield* store.reset(emptyState());
+
+      const list = yield* store.createList("Work");
+      yield* store.addItem(list.id, {
+        title: "route",
+        refs: [{ kind: "path", path: "src/a.ts", symbol: "route", span: "12-14" }],
+      });
+      const item = (yield* store.state).lists[0]!.items[0]!;
+      assert.deepStrictEqual(item.refs, [
+        { kind: "path", path: "src/a.ts", symbol: "route", span: "12-14" },
+      ]);
+    }),
+  );
+
+  it.effect("round-trips a decision reference", () =>
+    Effect.gen(function* () {
+      const store = yield* TrackerStore;
+      yield* store.reset(emptyState());
+
+      const list = yield* store.createList("Work");
+      yield* store.addItem(list.id, {
+        title: "shape",
+        refs: [{ kind: "decision", topic: "storage shape" }],
+      });
+      const item = (yield* store.state).lists[0]!.items[0]!;
+      assert.deepStrictEqual(item.refs, [{ kind: "decision", topic: "storage shape" }]);
+    }),
+  );
+
+  it.effect("an update patch replaces the whole declaration list", () =>
+    Effect.gen(function* () {
+      const store = yield* TrackerStore;
+      yield* store.reset(emptyState());
+
+      const list = yield* store.createList("Work");
+      yield* store.addItem(list.id, {
+        title: "two refs",
+        refs: [
+          { kind: "path", path: "src/a.ts" },
+          { kind: "decision", topic: "old" },
+        ],
+      });
+      yield* store.updateItem("Work:1", { refs: [{ kind: "decision", topic: "new" }] });
+      const item = (yield* store.state).lists[0]!.items[0]!;
+      assert.deepStrictEqual(item.refs, [{ kind: "decision", topic: "new" }]);
     }),
   );
 
@@ -457,7 +523,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const result = yield* store.updateItem("Work:1", {});
       const stateAfter = yield* store.state;
 
-      assert.strictEqual(result.text, "write plan");
+      assert.strictEqual(result.title, "write plan");
       assert.deepStrictEqual(stateAfter, stateBefore);
     }),
   );
@@ -471,7 +537,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.addItem(list.id, "write plan");
       const stateBefore = yield* store.state;
 
-      const result = yield* Effect.result(store.updateItem("Work:1", { text: "  " }));
+      const result = yield* Effect.result(store.updateItem("Work:1", { title: "  " }));
       assert(Result.isFailure(result));
       assert.strictEqual(Option.getOrThrow(Result.getFailure(result)).reason, "EmptyText");
 
@@ -490,12 +556,12 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
 
       const updated = yield* store.updateItems(list.id, [
         { itemId: "Work:1", done: true },
-        { itemId: "Work:2", text: "bee" },
-        { itemId: "Work:3", text: "sea", done: true },
+        { itemId: "Work:2", title: "bee" },
+        { itemId: "Work:3", title: "sea", done: true },
       ]);
       // Returned in patch order, with the final state of each item.
       assert.deepStrictEqual(
-        updated.map((i) => [i.text, i.done]),
+        updated.map((i) => [i.title, i.done]),
         [
           ["a", true],
           ["bee", false],
@@ -503,7 +569,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
         ],
       );
       assert.deepStrictEqual(
-        (yield* store.state).lists[0]?.items.map((i) => [i.text, i.done]),
+        (yield* store.state).lists[0]?.items.map((i) => [i.title, i.done]),
         [
           ["a", true],
           ["bee", false],
@@ -560,7 +626,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const result = yield* Effect.result(
         store.updateItems(list.id, [
           { itemId: "Work:1", done: true },
-          { itemId: "Work:1", text: "  " },
+          { itemId: "Work:1", title: "  " },
         ]),
       );
       assert(Result.isFailure(result));
@@ -578,18 +644,18 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.addItem(list.id, "a");
 
       const updated = yield* store.updateItems(list.id, [
-        { itemId: "Work:1", text: "first" },
-        { itemId: "Work:1", text: "second", done: true },
+        { itemId: "Work:1", title: "first" },
+        { itemId: "Work:1", title: "second", done: true },
       ]);
       assert.deepStrictEqual(
-        updated.map((i) => [i.text, i.done]),
+        updated.map((i) => [i.title, i.done]),
         [
           ["second", true],
           ["second", true],
         ],
       );
       assert.deepStrictEqual(
-        (yield* store.state).lists[0]?.items.map((i) => [i.text, i.done]),
+        (yield* store.state).lists[0]?.items.map((i) => [i.title, i.done]),
         [["second", true]],
       );
     }),
@@ -651,7 +717,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const state = yield* store.state;
       const items = state.lists[0]?.items ?? [];
       assert.deepStrictEqual(
-        items.map((i) => i.text),
+        items.map((i) => i.title),
         ["a", "c"],
       );
     }),
@@ -710,7 +776,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
 
       // Ids are per-list counters, assigned in creation order.
       const first = yield* store.updateItem("B:1", { done: true });
-      assert.strictEqual(first.text, "one");
+      assert.strictEqual(first.title, "one");
       assert.strictEqual(first.done, true);
 
       // Removing "one" leaves a gap: "two" keeps id 2 instead of becoming B:1.
@@ -718,12 +784,12 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const stale = yield* Effect.result(store.updateItem("B:1", { done: true }));
       assert(Result.isFailure(stale));
       const second = yield* store.updateItem("B:2", { done: true });
-      assert.strictEqual(second.text, "two");
+      assert.strictEqual(second.title, "two");
 
       // New items take the next counter value, never the gap.
       yield* store.addItem(b.id, "three");
       const third = yield* store.updateItem("B:3", { done: true });
-      assert.strictEqual(third.text, "three");
+      assert.strictEqual(third.title, "three");
 
       // List ids are still strictly monotonic, never reused after deletes.
       assert.strictEqual(c.id, 3);
@@ -801,11 +867,11 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.createList("Work", { initialItems: ["a", "b", "c"] });
       yield* store.removeItem("Work:1");
 
-      const updated = yield* store.updateItem("Work:3", { text: "cee" });
+      const updated = yield* store.updateItem("Work:3", { title: "cee" });
 
-      assert.strictEqual(updated.text, "cee");
+      assert.strictEqual(updated.title, "cee");
       assert.deepStrictEqual(
-        (yield* store.state).lists[0]?.items.map((i) => [i.id, i.text]),
+        (yield* store.state).lists[0]?.items.map((i) => [i.id, i.title]),
         [
           [2, "b"],
           [3, "cee"],
@@ -820,7 +886,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.reset(emptyState());
 
       yield* store.createList("Work", { initialItems: ["a"] });
-      const updated = yield* store.updateItem("Work:1", { done: true, text: "ay" });
+      const updated = yield* store.updateItem("Work:1", { done: true, title: "ay" });
 
       assert.strictEqual(updated.id, 1);
       assert.strictEqual((yield* store.state).lists[0]?.nextItemId, 2);
@@ -835,7 +901,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const list = yield* store.createList("Work", { initialItems: ["a", "b", "c"] });
       const updated = yield* store.updateItems(list.id, [
         { itemId: "Work:1", done: true },
-        { itemId: "Work:3", text: "cee" },
+        { itemId: "Work:3", title: "cee" },
       ]);
 
       assert.deepStrictEqual(
@@ -879,7 +945,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.addItem(list.id, "a");
 
       const updated = yield* store.updateItem("Work:2024:1", { done: true });
-      assert.strictEqual(updated.text, "a");
+      assert.strictEqual(updated.title, "a");
       assert.strictEqual(updated.done, true);
     }),
   );
@@ -890,7 +956,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.reset(emptyState());
 
       const list = yield* store.createList("Work", {
-        initialItems: ["a", { text: "b", deps: ["Work:1"] }],
+        initialItems: ["a", { title: "b", deps: ["Work:1"] }],
       });
 
       assert.deepStrictEqual(
@@ -907,7 +973,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
 
       const list = yield* store.createList("Work");
       yield* store.addItem(list.id, "a");
-      const items = yield* store.addItems(list.id, ["b", { text: "c", deps: ["Work:2"] }]);
+      const items = yield* store.addItems(list.id, ["b", { title: "c", deps: ["Work:2"] }]);
 
       assert.deepStrictEqual(
         items.map((i) => i.id),
@@ -923,7 +989,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.reset(emptyState());
 
       const list = yield* store.createList("Work");
-      const items = yield* store.addItems(list.id, ["a", { text: "b", deps: ["Work:1"] }]);
+      const items = yield* store.addItems(list.id, ["a", { title: "b", deps: ["Work:1"] }]);
 
       assert.deepStrictEqual(items[1]?.deps, ["Work:1"]);
     }),
@@ -992,7 +1058,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.reset(emptyState());
 
       yield* store.createList("Work", {
-        initialItems: ["a", { text: "b", deps: ["Work:1"] }],
+        initialItems: ["a", { title: "b", deps: ["Work:1"] }],
       });
       const before = yield* store.state;
 
@@ -1068,7 +1134,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.reset(emptyState());
 
       yield* store.createList("Work", {
-        initialItems: ["a", { text: "b", deps: ["Work:1"] }],
+        initialItems: ["a", { title: "b", deps: ["Work:1"] }],
       });
 
       const snapshot = encodeState(yield* store.state);
@@ -1084,7 +1150,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const store = yield* TrackerStore;
       yield* store.reset(emptyState());
 
-      yield* store.createList("Work", { initialItems: ["a", { text: "b", deps: ["Work:1"] }] });
+      yield* store.createList("Work", { initialItems: ["a", { title: "b", deps: ["Work:1"] }] });
       const before = yield* store.state;
 
       const result = yield* Effect.result(store.updateItem("Work:2", { done: true }));
@@ -1105,7 +1171,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
 
       // "b" is done, then its dependency is reopened, so "b" is blocked but
       // must stay reopenable (only completion is gated).
-      yield* store.createList("Work", { initialItems: ["a", { text: "b", deps: ["Work:1"] }] });
+      yield* store.createList("Work", { initialItems: ["a", { title: "b", deps: ["Work:1"] }] });
       yield* store.updateItem("Work:1", { done: true });
       yield* store.updateItem("Work:2", { done: true });
       yield* store.updateItem("Work:1", { done: false });
@@ -1121,7 +1187,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const store = yield* TrackerStore;
       yield* store.reset(emptyState());
 
-      yield* store.createList("Work", { initialItems: ["a", { text: "b", deps: ["Work:1"] }] });
+      yield* store.createList("Work", { initialItems: ["a", { title: "b", deps: ["Work:1"] }] });
       yield* store.updateItem("Work:1", { done: true });
 
       const completed = yield* store.updateItem("Work:2", { done: true });
@@ -1135,7 +1201,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const store = yield* TrackerStore;
       yield* store.reset(emptyState());
 
-      yield* store.createList("Work", { initialItems: ["a", { text: "b", deps: ["Work:1"] }] });
+      yield* store.createList("Work", { initialItems: ["a", { title: "b", deps: ["Work:1"] }] });
       yield* store.updateItem("Work:1", { done: true });
       yield* store.updateItem("Work:2", { done: true });
 
@@ -1154,7 +1220,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       const store = yield* TrackerStore;
       yield* store.reset(emptyState());
 
-      yield* store.createList("Work", { initialItems: ["a", { text: "b", deps: ["Work:1"] }] });
+      yield* store.createList("Work", { initialItems: ["a", { title: "b", deps: ["Work:1"] }] });
       const before = yield* store.state;
 
       const result = yield* Effect.result(store.removeItem("Work:1"));
@@ -1173,7 +1239,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.reset(emptyState());
 
       yield* store.createList("Work", {
-        initialItems: ["a", "b", { text: "c", deps: ["Work:2"] }],
+        initialItems: ["a", "b", { title: "c", deps: ["Work:2"] }],
       });
       yield* store.removeItem("Work:1");
 
@@ -1192,7 +1258,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.reset(emptyState());
 
       const list = yield* store.createList("Work", {
-        initialItems: ["a", { text: "b", deps: ["Work:1"] }, { text: "c", deps: ["Work:2"] }],
+        initialItems: ["a", { title: "b", deps: ["Work:1"] }, { title: "c", deps: ["Work:2"] }],
       });
 
       // Each completion unblocks the next patch, exactly as three sequential
@@ -1216,7 +1282,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.reset(emptyState());
 
       const list = yield* store.createList("Work", {
-        initialItems: ["a", { text: "b", deps: ["Work:1"] }],
+        initialItems: ["a", { title: "b", deps: ["Work:1"] }],
       });
       const before = yield* store.state;
 
@@ -1241,7 +1307,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.reset(emptyState());
 
       const list = yield* store.createList("Work", {
-        initialItems: ["a", { text: "b", deps: ["Work:1"] }],
+        initialItems: ["a", { title: "b", deps: ["Work:1"] }],
       });
 
       // Items are addressed by id and the patches are one per item in the
@@ -1263,7 +1329,7 @@ layer(TrackerStore.layer)("TrackerStore", (it) => {
       yield* store.reset(emptyState());
 
       const list = yield* store.createList("Work", {
-        initialItems: ["a", { text: "b", deps: ["Work:1"] }],
+        initialItems: ["a", { title: "b", deps: ["Work:1"] }],
       });
       yield* store.updateItem("Work:1", { done: true });
 

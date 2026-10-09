@@ -4,6 +4,7 @@ import {
   decodeStateEffect,
   emptyState,
   encodeState,
+  migrateState,
   TodoItem,
   TodoList,
   TrackerState,
@@ -29,15 +30,15 @@ const sampleState = (): TrackerState =>
         name: "Work",
         nextItemId: 3,
         items: [
-          new TodoItem({ id: 1, text: "write plan", done: true }),
-          new TodoItem({ id: 2, text: "implement tracker", done: false }),
+          new TodoItem({ id: 1, title: "write plan", done: true }),
+          new TodoItem({ id: 2, title: "implement tracker", done: false }),
         ],
       }),
       new TodoList({
         id: 2,
         name: "Home",
         nextItemId: 2,
-        items: [new TodoItem({ id: 1, text: "water plants", done: false })],
+        items: [new TodoItem({ id: 1, title: "water plants", done: false })],
       }),
     ],
     activeListId: 1,
@@ -73,8 +74,8 @@ it("item ids and deps round-trip", () => {
         name: "Work",
         nextItemId: 4,
         items: [
-          new TodoItem({ id: 1, text: "a", done: true }),
-          new TodoItem({ id: 3, text: "b", done: false, deps: ["Work:1"] }),
+          new TodoItem({ id: 1, title: "a", done: true }),
+          new TodoItem({ id: 3, title: "b", done: false, deps: ["Work:1"] }),
         ],
       }),
     ],
@@ -118,8 +119,8 @@ it("decoded values are real class instances", () => {
 it("constructors validate their input", () => {
   // Invalid types / missing fields throw at construction time. (The invalid
   // inputs are cast because the constructor signature is already typed.)
-  assert.throws(() => new TodoItem({ text: 42, done: false } as never));
-  assert.throws(() => new TodoItem({ text: "x" } as never));
+  assert.throws(() => new TodoItem({ title: 42, done: false } as never));
+  assert.throws(() => new TodoItem({ title: "x" } as never));
   assert.throws(() => new TrackerState({} as never));
 });
 
@@ -157,7 +158,7 @@ it("rejects a snapshot with the wrong field type", () => {
 
 it("rejects a snapshot with an invalid item field", () => {
   const bad = {
-    lists: [{ id: 1, name: "Work", items: [{ text: "x", done: "yes" }] }],
+    lists: [{ id: 1, name: "Work", items: [{ title: "x", done: "yes" }] }],
     activeListId: null,
     nextListId: 2,
   };
@@ -176,7 +177,39 @@ it("drops a legacy string item id so old sessions stay loadable", () => {
     nextItemId: 9,
   };
   const decoded = decodeOrThrow(legacy);
-  assert.deepStrictEqual(decoded.lists[0]?.items, [new TodoItem({ text: "x", done: false })]);
+  assert.deepStrictEqual(decoded.lists[0]?.items, [new TodoItem({ title: "x", done: false })]);
+});
+
+it("splits a legacy text item into a title and a description", () => {
+  const legacy = {
+    lists: [
+      {
+        id: 1,
+        name: "Work",
+        items: [{ id: 1, text: "Short title\nMore detail", done: false, deps: [] }],
+      },
+    ],
+    activeListId: null,
+    nextListId: 2,
+  };
+  const migrated = migrateState(decodeOrThrow(legacy));
+  const item = migrated.lists[0]!.items[0]!;
+  assert.strictEqual(item.title, "Short title");
+  assert.strictEqual(item.description, "More detail");
+});
+
+it("a single-line legacy text item becomes a title with an empty description", () => {
+  const legacy = {
+    lists: [
+      { id: 1, name: "Work", items: [{ id: 1, text: "Just a title", done: false, deps: [] }] },
+    ],
+    activeListId: null,
+    nextListId: 2,
+  };
+  const migrated = migrateState(decodeOrThrow(legacy));
+  const item = migrated.lists[0]!.items[0]!;
+  assert.strictEqual(item.title, "Just a title");
+  assert.strictEqual(item.description, "");
 });
 
 it("enforces Int list ids (fractional ids are rejected)", () => {

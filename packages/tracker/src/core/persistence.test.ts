@@ -27,15 +27,15 @@ layer(
           name: "Work",
           nextItemId: 3,
           items: [
-            new TodoItem({ id: 1, text: "write plan", done: true }),
-            new TodoItem({ id: 2, text: "implement tracker", done: false }),
+            new TodoItem({ id: 1, title: "write plan", done: true }),
+            new TodoItem({ id: 2, title: "implement tracker", done: false }),
           ],
         }),
         new TodoList({
           id: 2,
           name: "Home",
           nextItemId: 2,
-          items: [new TodoItem({ id: 1, text: "water plants", done: false })],
+          items: [new TodoItem({ id: 1, title: "water plants", done: false })],
         }),
       ],
       activeListId: 1,
@@ -168,7 +168,7 @@ layer(
             id: 1,
             name: "Work",
             nextItemId: 2,
-            items: [new TodoItem({ id: 1, text: "a", done: false })],
+            items: [new TodoItem({ id: 1, title: "a", done: false })],
           }),
         ],
         activeListId: 1,
@@ -176,7 +176,7 @@ layer(
       });
       assert.deepStrictEqual(encodeState(restored), encodeState(expected));
       assert.deepStrictEqual(restored.lists[0]?.items, [
-        new TodoItem({ id: 1, text: "a", done: false }),
+        new TodoItem({ id: 1, title: "a", done: false }),
       ]);
     }),
   );
@@ -262,7 +262,7 @@ layer(
       const restored = yield* persistence.restore(legacy);
 
       assert.deepStrictEqual(
-        restored.lists[0]?.items.map((i) => [i.id, i.text]),
+        restored.lists[0]?.items.map((i) => [i.id, i.title]),
         [[1, "a"]],
       );
     }),
@@ -281,7 +281,7 @@ layer(
       yield* decodeFailureOf({ lists: 42 });
       yield* decodeFailureOf({ lists: [] }); // missing counters + activeListId
       yield* decodeFailureOf({
-        lists: [{ id: 1, name: "Work", items: [{ text: "x", done: "yes" }] }],
+        lists: [{ id: 1, name: "Work", items: [{ title: "x", done: "yes" }] }],
         activeListId: null,
         nextListId: 2,
       });

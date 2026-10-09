@@ -5,7 +5,9 @@
  * `tracker/state` custom entry. Replaying those snapshots reproduces the exact
  * decision the live settle path faced, without a classifier call: this script
  * writes one case per decision to `evals/data/cases.jsonl` and a summary to
- * `evals/data/manifest.json`.
+ * `evals/data/manifest.json`. A `tracker/reliance-decision` entry, when the
+ * candidate declared something, is read back into its case so declared rows
+ * carry live coverage.
  *
  * The corpus holds real session text, so `evals/data/` is git-ignored and every
  * string is passed through `redact.ts` first. The manifest reports what the
@@ -18,10 +20,12 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { DecisionRecord } from "../src/compaction/decision-record.ts";
+import type { StoredCase, StoredEvidence } from "./case-file.ts";
 import { deriveEvents } from "./derive.ts";
-import { buildEvidence, type EvidenceEntry } from "./evidence.ts";
+import { buildEvidence } from "./evidence.ts";
 import { makeRedactionTally, redactPath, redactWith } from "./redact.ts";
-import { contextAt, MARKER, parseSession } from "./session.ts";
+import { contextAt, decisionsIn, MARKER, parseSession } from "./session.ts";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 
@@ -84,100 +88,63 @@ const jsonlFiles = (dir: string): readonly string[] => {
   return found;
 };
 
-/** One stored case: an event with every string redacted. */
-interface StoredCase {
-  readonly caseId: string;
-  readonly session: { readonly dir: string; readonly file: string };
-  readonly at: string;
-  readonly index: number;
-  readonly list: {
-    readonly id: number;
-    readonly name: string;
-    /** Every item of the list at the decision, in list order. */
-    readonly items: readonly {
-      readonly id: number;
-      readonly text: string;
-      readonly done: boolean;
-      readonly deps: readonly string[];
-    }[];
-  };
-  readonly completed: readonly { readonly ref: string; readonly text: string }[];
-  readonly candidates: readonly {
-    readonly ref: string;
-    readonly text: string;
-    readonly class: string;
-    readonly relationship: string;
-  }[];
-  readonly questions: readonly {
-    readonly key: string;
-    readonly instructions: string;
-    readonly criteria: Readonly<Record<string, string>>;
-  }[];
-  readonly frontier: number;
-  readonly itemCount: number;
-  readonly openCount: number;
-  readonly doneCount: number;
-  readonly declaredDeps: number;
-  /** How large the conversation was at the decision. */
-  readonly context: {
-    readonly entries: number;
-    readonly messages: number;
-    readonly chars: number;
-    readonly inputTokens: number;
-  };
+/** The redaction and cap settings one session harvest uses. */
+export interface HarvestOptions {
+  readonly limit: number;
+  readonly redact: (value: string) => string;
 }
 
-interface SessionResult {
-  readonly file: string;
-  readonly dir: string;
+/** One session's stored cases and work records. */
+export interface HarvestedSession {
   readonly snapshots: number;
-  readonly events: readonly StoredCase[];
+  readonly cases: readonly StoredCase[];
+  readonly evidence: readonly StoredEvidence[];
 }
 
-/** The bounded work record for one case, keyed by `caseId`. */
-interface StoredEvidence {
-  readonly caseId: string;
-  readonly entries: readonly EvidenceEntry[];
-  readonly omitted: number;
-}
+/**
+ * Derive one session's cases and work records. Returns undefined when the log
+ * holds no tracker snapshot. Every stored string passes through `redact`, so
+ * the caller decides the policy; the synthetic fixture passes identity.
+ */
+export const harvestSession = (
+  text: string,
+  dir: string,
+  file: string,
+  options: HarvestOptions,
+  onSkipped: () => void,
+): HarvestedSession | undefined => {
+  if (!text.includes(MARKER)) return undefined;
+  const parsed = parseSession(text, onSkipped);
+  if (parsed.snapshots.length === 0) return undefined;
 
-const main = (): void => {
-  const options = parseOptions(process.argv.slice(2));
-  const tally = makeRedactionTally();
-  const redactText = (value: string): string => redactWith(value, tally);
+  const redactText = options.redact;
+  const decisions = decisionsIn(parsed.entries, onSkipped);
+  const events = deriveEvents(parsed.snapshots, options.limit);
+  // Redact the source once, then build every string from the redacted parts, so
+  // the case id cannot carry the raw path that `session.dir` hides.
+  const redactedDir = redactText(dir);
+  const redactedFile = redactText(file);
 
-  const files = jsonlFiles(options.root);
-  const sessions: SessionResult[] = [];
-  const evidence: StoredEvidence[] = [];
-  let snapshotsParsed = 0;
-  let snapshotsSkipped = 0;
-  let sessionsWithTracker = 0;
+  /**
+   * The first decision entry after the case's snapshot that names the same
+   * candidate. A decision from a different completion never attaches.
+   */
+  const decisionFor = (
+    snapshotLine: number,
+    ref: string | undefined,
+  ): DecisionRecord | undefined => {
+    if (ref === undefined) return undefined;
+    return decisions
+      .filter((entry) => entry.line > snapshotLine && entry.record.candidateRef === ref)
+      .map((entry) => entry.record)[0];
+  };
 
-  for (const file of files) {
-    let text: string;
-    try {
-      text = readFileSync(file, "utf8");
-    } catch {
-      continue;
-    }
-    if (!text.includes(MARKER)) continue;
-    const parsed = parseSession(text, () => {
-      snapshotsSkipped += 1;
-    });
-    if (parsed.snapshots.length === 0) continue;
-    sessionsWithTracker += 1;
-    snapshotsParsed += parsed.snapshots.length;
-
-    const relativePath = file.slice(options.root.length).replace(/^\//, "");
-    const slash = relativePath.indexOf("/");
-    const dir = slash === -1 ? "." : relativePath.slice(0, slash);
-    const name = slash === -1 ? relativePath : relativePath.slice(slash + 1);
-    const events = deriveEvents(parsed.snapshots, options.limit);
-    // Redact the source once, then build every string from the redacted parts,
-    // so the case id cannot carry the raw path that `session.dir` hides.
-    const redactedDir = redactText(dir);
-    const redactedFile = redactText(name);
-    const stored = events.map((event): StoredCase => ({
+  const cases = events.map((event): StoredCase => {
+    const decision = decisionFor(
+      parsed.snapshotLines[event.snapshotIndex]!,
+      event.candidates[0]?.ref,
+    );
+    return {
       caseId: `${redactedDir}/${redactedFile}#${event.index}`,
       session: { dir: redactedDir, file: redactedFile },
       at: event.at,
@@ -188,6 +155,7 @@ const main = (): void => {
         items: event.items.map((item) => ({
           id: item.id,
           text: redactText(item.text),
+          ...(item.description === undefined ? {} : { description: redactText(item.description) }),
           done: item.done,
           deps: item.deps.map(redactText),
         })),
@@ -195,6 +163,7 @@ const main = (): void => {
       completed: event.completed.map((item) => ({
         ref: redactText(item.ref),
         text: redactText(item.text),
+        ...(item.description === undefined ? {} : { description: redactText(item.description) }),
       })),
       candidates: event.candidates.map((candidate) => ({
         ref: redactText(candidate.ref),
@@ -217,52 +186,99 @@ const main = (): void => {
       openCount: event.openCount,
       doneCount: event.doneCount,
       declaredDeps: event.declaredDeps,
+      ...(decision === undefined ? {} : { decision }),
       context: contextAt(parsed.entries, parsed.snapshotLines[event.snapshotIndex]!),
-    }));
+    };
+  });
 
-    // The work for a batch runs from the snapshot that produced the previous
-    // decision to this one, so an unrelated mutation in between cannot cut it.
-    const records: StoredEvidence[] = [];
-    let previousEventLine = -1;
-    for (const event of events) {
-      const endLine = parsed.snapshotLines[event.snapshotIndex]!;
-      const window: unknown[] = [];
-      for (let line = previousEventLine + 1; line <= endLine; line += 1) {
-        const entry = parsed.entries[line];
-        if (entry !== undefined) window.push(entry);
-      }
-      const record = buildEvidence(window);
-      records.push({
-        caseId: `${redactedDir}/${redactedFile}#${event.index}`,
-        // The work record is redacted here too. `buildEvidence` renders raw
-        // session text, so nothing else in the pipeline would clean it.
-        entries: record.entries.map((entry) => ({
-          kind: entry.kind,
-          at: entry.at,
-          text: redactText(entry.text),
-          ...(entry.name === undefined ? {} : { name: redactText(entry.name) }),
-          ...(entry.isError === undefined ? {} : { isError: entry.isError }),
-          ...(entry.callId === undefined ? {} : { callId: redactText(entry.callId) }),
-          ...(entry.args === undefined
-            ? {}
-            : {
-                args: {
-                  ...(entry.args.path === undefined ? {} : { path: redactText(entry.args.path) }),
-                  ...(entry.args.command === undefined
-                    ? {}
-                    : { command: redactText(entry.args.command) }),
-                },
-              }),
-          ...(entry.lines === undefined ? {} : { lines: entry.lines }),
-        })),
-        omitted: record.omitted,
-      });
-      previousEventLine = endLine;
+  // The work for a batch runs from the snapshot that produced the previous
+  // decision to this one, so an unrelated mutation in between cannot cut it.
+  const evidence: StoredEvidence[] = [];
+  let previousEventLine = -1;
+  for (const event of events) {
+    const endLine = parsed.snapshotLines[event.snapshotIndex]!;
+    const window: unknown[] = [];
+    for (let line = previousEventLine + 1; line <= endLine; line += 1) {
+      const entry = parsed.entries[line];
+      if (entry !== undefined) window.push(entry);
     }
+    const record = buildEvidence(window);
+    evidence.push({
+      caseId: `${redactedDir}/${redactedFile}#${event.index}`,
+      // The work record is redacted here too. `buildEvidence` renders raw
+      // session text, so nothing else in the pipeline would clean it.
+      entries: record.entries.map((entry) => ({
+        kind: entry.kind,
+        at: entry.at,
+        text: redactText(entry.text),
+        ...(entry.name === undefined ? {} : { name: redactText(entry.name) }),
+        ...(entry.isError === undefined ? {} : { isError: entry.isError }),
+        ...(entry.callId === undefined ? {} : { callId: redactText(entry.callId) }),
+        ...(entry.args === undefined
+          ? {}
+          : {
+              args: {
+                ...(entry.args.path === undefined ? {} : { path: redactText(entry.args.path) }),
+                ...(entry.args.command === undefined
+                  ? {}
+                  : { command: redactText(entry.args.command) }),
+              },
+            }),
+        ...(entry.lines === undefined ? {} : { lines: entry.lines }),
+      })),
+      omitted: record.omitted,
+    });
+    previousEventLine = endLine;
+  }
 
-    if (stored.length === 0) continue;
-    evidence.push(...records);
-    sessions.push({ file: name, dir, snapshots: parsed.snapshots.length, events: stored });
+  return { snapshots: parsed.snapshots.length, cases, evidence };
+};
+
+interface SessionResult {
+  readonly file: string;
+  readonly dir: string;
+  readonly snapshots: number;
+  readonly events: readonly StoredCase[];
+}
+
+const main = (): void => {
+  const options = parseOptions(process.argv.slice(2));
+  const tally = makeRedactionTally();
+  const redactText = (value: string): string => redactWith(value, tally);
+
+  const files = jsonlFiles(options.root);
+  const sessions: SessionResult[] = [];
+  const evidence: StoredEvidence[] = [];
+  let snapshotsParsed = 0;
+  let snapshotsSkipped = 0;
+  let sessionsWithTracker = 0;
+
+  for (const file of files) {
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    const relativePath = file.slice(options.root.length).replace(/^\//, "");
+    const slash = relativePath.indexOf("/");
+    const dir = slash === -1 ? "." : relativePath.slice(0, slash);
+    const name = slash === -1 ? relativePath : relativePath.slice(slash + 1);
+    const harvested = harvestSession(
+      text,
+      dir,
+      name,
+      { limit: options.limit, redact: redactText },
+      () => {
+        snapshotsSkipped += 1;
+      },
+    );
+    if (harvested === undefined) continue;
+    sessionsWithTracker += 1;
+    snapshotsParsed += harvested.snapshots;
+    if (harvested.cases.length === 0) continue;
+    evidence.push(...harvested.evidence);
+    sessions.push({ file: name, dir, snapshots: harvested.snapshots, events: harvested.cases });
   }
 
   const cases = sessions.flatMap((session) => session.events);
@@ -289,6 +305,7 @@ const main = (): void => {
       withCandidates: cases.filter((entry) => entry.candidates.length > 0).length,
       emptyFrontier: cases.filter((entry) => entry.frontier === 0).length,
       truncated: cases.filter((entry) => entry.frontier > entry.candidates.length).length,
+      withDecision: cases.filter((entry) => entry.decision !== undefined).length,
     },
     candidates: {
       total: candidates.length,
@@ -337,4 +354,4 @@ const main = (): void => {
   process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
 };
 
-main();
+if (import.meta.main) main();

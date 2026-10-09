@@ -38,12 +38,16 @@ export interface EventCandidate {
 export interface EventCompleted {
   readonly ref: string;
   readonly text: string;
+  /** The item's description, when it carried one. Part of the batch text. */
+  readonly description?: string;
 }
 
 /** One item of the active list at the decision. */
 export interface EventItem {
   readonly id: number;
   readonly text: string;
+  /** The item's description, when it carried one. */
+  readonly description?: string;
   readonly done: boolean;
   /** `listName:id` references to same-list items. */
   readonly deps: readonly string[];
@@ -160,14 +164,23 @@ export const deriveEvents = (
       listName: list.name,
       items: list.items.map((item) => ({
         id: item.id,
-        text: item.text,
+        text: item.title,
+        ...(item.description.length === 0 ? {} : { description: item.description }),
         done: item.done,
         deps: [...item.deps],
       })),
       completedItemIds,
       completed: completedItemIds.flatMap((id) => {
         const item = list.items.find((entry) => entry.id === id);
-        return item === undefined ? [] : [{ ref: formatItemRef(list.name, id), text: item.text }];
+        return item === undefined
+          ? []
+          : [
+              {
+                ref: formatItemRef(list.name, id),
+                text: item.title,
+                ...(item.description.length === 0 ? {} : { description: item.description }),
+              },
+            ];
       }),
       candidates: candidateViews(buildDigests(judged)),
       questions: questionViews(judged),

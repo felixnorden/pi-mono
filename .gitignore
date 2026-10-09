@@ -1,6 +1,9 @@
 # dependencies (bun install)
 node_modules
 
+# pi subagent worktrees
+.worktrees/
+
 # output
 out
 dist
