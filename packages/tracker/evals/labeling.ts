@@ -246,6 +246,11 @@ export const renderList = (
     );
     const size = Math.max(12, width - idWidth - state.length - 8);
     lines.push(`  ${paint.dim(id)}  ${itemStatePaint(state, paint)}${oneLine(item.text, size)}`);
+    if (item.description !== undefined && item.description.length > 0) {
+      lines.push(
+        `  ${" ".repeat(idWidth)}  ${" ".repeat(19)}${paint.dim(oneLine(item.description, size))}`,
+      );
+    }
   });
   return lines.join("\n");
 };
@@ -277,6 +282,9 @@ export const renderCaseContext = (
   ];
   for (const item of entry.completed) {
     lines.push(indented(`${item.ref}  ${item.text}`, width, "  ", paint.yellow));
+    if (item.description !== undefined && item.description.length > 0) {
+      lines.push(indented(item.description, width, "    ", paint.dim));
+    }
   }
   lines.push("", renderEvidence(queueCase.evidence, width, paint, evidenceView));
   return lines.join("\n");
@@ -380,6 +388,23 @@ export const renderEvidence = (
   return lines.join("\n");
 };
 
+/** One declared or resolved reference, flattened for display. */
+interface ReferenceView {
+  readonly kind: string;
+  readonly path?: string;
+  readonly symbol?: string;
+  readonly span?: string;
+  readonly topic?: string;
+}
+
+/** One reference line: the kind, then the fields that kind owns. */
+const describeReference = (reference: ReferenceView): string => {
+  if (reference.kind === "decision") return `decision: ${reference.topic ?? ""}`;
+  const symbol = reference.symbol === undefined ? "" : ` (${reference.symbol})`;
+  const span = reference.span === undefined ? "" : ` [${reference.span}]`;
+  return `path: ${reference.path ?? ""}${symbol}${span}`;
+};
+
 /** One question, with its two criteria. */
 export const renderCandidate = (
   queueCase: QueueCase,
@@ -398,10 +423,38 @@ export const renderCandidate = (
       `CANDIDATE ${position}/${queueCase.pending.length}  ${paint.cyan(view.ref)}  (${view.class})`,
     ),
     indented(view.text, width, "  ", paint.bold),
+    ...(view.description === undefined || view.description.length === 0
+      ? []
+      : [indented(view.description, width, "  ", paint.dim)]),
     indented(`relationship: ${view.relationship}`, width, "  ", paint.dim),
-    "",
-    indented(`question: ${question.instructions}`, width),
   ];
+  if (view.refs !== undefined && view.refs.length > 0) {
+    lines.push(indented("refs:", width, "  ", paint.dim));
+    for (const reference of view.refs) {
+      lines.push(indented(describeReference(reference), width, "    ", paint.dim));
+    }
+  }
+  if (view.produces !== undefined && view.produces.length > 0) {
+    lines.push(indented("produces:", width, "  ", paint.dim));
+    for (const product of view.produces) {
+      lines.push(indented(product.path, width, "    ", paint.dim));
+    }
+  }
+  const decision = entry.decision;
+  if (decision !== undefined && decision.candidateRef === view.ref) {
+    lines.push(
+      indented(`decision: ${decision.rule} (${decision.verdict})`, width, "  ", paint.dim),
+    );
+    for (const reference of decision.references) {
+      lines.push(
+        indented(`${describeReference(reference)}: ${reference.state}`, width, "    ", paint.dim),
+      );
+    }
+    for (const product of decision.products) {
+      lines.push(indented(`${product.path}: ${product.state}`, width, "    ", paint.dim));
+    }
+  }
+  lines.push("", indented(`question: ${question.instructions}`, width));
   for (const [label, description] of Object.entries(question.criteria)) {
     const tint = label === LABELS.needsContext ? paint.yellow : paint.green;
     lines.push(indented(`${label}: ${description}`, width, "  ", tint));

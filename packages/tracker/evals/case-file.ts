@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import type { DeclaredProduct, DeclaredReference } from "../src/core/domain.ts";
 import type { EvidenceEntry } from "./evidence.ts";
 
 /**
@@ -22,8 +23,13 @@ export interface StoredItem {
 export interface StoredCandidate {
   readonly ref: string;
   readonly text: string;
+  /** The digest's capped description, when the item carried one. */
+  readonly description?: string;
   readonly class: string;
   readonly relationship: string;
+  /** The declarations the item carried, as authored. */
+  readonly refs?: readonly DeclaredReference[];
+  readonly produces?: readonly DeclaredProduct[];
 }
 
 /** One resolved reference, as the decision record carries it. */

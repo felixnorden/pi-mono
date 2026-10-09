@@ -199,6 +199,67 @@ it("renders a candidate with its question and criteria", () => {
   assert.match(rendered, /needs-context: it does/);
 });
 
+it("renders item descriptions in the list and the completed batch", () => {
+  const entry: StoredCase = {
+    ...caseOf("a", ["ready-queue"]),
+    list: {
+      id: 1,
+      name: "Work",
+      items: [
+        { id: 1, text: "first", description: "batch detail", done: true, deps: [] },
+        { id: 2, text: "second", description: "candidate detail", done: false, deps: [] },
+      ],
+    },
+    completed: [{ ref: "Work:1", text: "first", description: "batch detail" }],
+  };
+  const queue = buildQueue([entry], new Map(), { answered: new Map() });
+  const list = renderList(queue[0]!, 100);
+  assert.match(list, /batch detail/);
+  assert.match(list, /candidate detail/);
+  const context = renderCaseContext(queue[0]!, 1, 100);
+  assert.match(context, /batch detail/);
+});
+
+it("renders a candidate's description and declarations", () => {
+  const base = caseOf("a", ["ready-queue"]);
+  const entry: StoredCase = {
+    ...base,
+    candidates: [
+      {
+        ...base.candidates[0]!,
+        description: "the detail",
+        refs: [{ kind: "path", path: "src/a.ts", symbol: "route" }],
+        produces: [{ path: "out.md" }],
+      },
+    ],
+  };
+  const queue = buildQueue([entry], new Map(), { answered: new Map() });
+  const rendered = renderCandidate(queue[0]!, queue[0]!.pending[0]!, 1, 100);
+  assert.match(rendered, /the detail/);
+  assert.match(rendered, /src\/a\.ts/);
+  assert.match(rendered, /route/);
+  assert.match(rendered, /out\.md/);
+});
+
+it("renders the decision record on its pointer candidate", () => {
+  const base = caseOf("a", ["ready-queue"]);
+  const entry: StoredCase = {
+    ...base,
+    decision: {
+      rule: "no-visible-link",
+      verdict: "compact",
+      candidateRef: "Work:2",
+      references: [{ kind: "path", path: "src/a.ts", state: "readable" }],
+      products: [{ path: "out.md", state: "exists" }],
+    },
+  };
+  const queue = buildQueue([entry], new Map(), { answered: new Map() });
+  const rendered = renderCandidate(queue[0]!, queue[0]!.pending[0]!, 1, 100);
+  assert.match(rendered, /decision: no-visible-link \(compact\)/);
+  assert.match(rendered, /src\/a\.ts: readable/);
+  assert.match(rendered, /out\.md: exists/);
+});
+
 it("maps each key to one action", () => {
   assert.deepStrictEqual(keyToAction("n"), { kind: "answer", label: "needs-context" });
   assert.deepStrictEqual(keyToAction("2"), { kind: "answer", label: "stands-alone" });

@@ -31,12 +31,19 @@ const splitRef = (ref: string): { readonly listName: string; readonly id: number
 
 /** Rebuild the judged candidates, in decision order, from a stored case. */
 export const candidatesOf = (stored: StoredCase): readonly CompactionCandidate[] => {
-  const completed = stored.completed.map((item) => ({ ref: item.ref, text: item.text }));
+  const completed = stored.completed.map((item) => ({
+    ref: item.ref,
+    text: item.text,
+    ...(item.description === undefined ? {} : { description: item.description }),
+  }));
   return stored.candidates.map((candidate) => ({
     class: classOf(candidate.class),
     ...splitRef(candidate.ref),
     text: candidate.text,
+    ...(candidate.description === undefined ? {} : { description: candidate.description }),
     completed,
+    ...(candidate.refs === undefined ? {} : { refs: candidate.refs }),
+    ...(candidate.produces === undefined ? {} : { produces: candidate.produces }),
   }));
 };
 
@@ -56,7 +63,7 @@ export const replayMatches = (stored: StoredCase): boolean => {
   const candidates = candidatesOf(stored);
   const digest = buildDigests(candidates);
   return (
-    JSON.stringify(candidateViews(digest)) === JSON.stringify(stored.candidates) &&
+    JSON.stringify(candidateViews(digest, candidates)) === JSON.stringify(stored.candidates) &&
     JSON.stringify(digest.completed) === JSON.stringify(stored.completed) &&
     JSON.stringify(questionViews(candidates)) === JSON.stringify(stored.questions)
   );

@@ -16,6 +16,7 @@ import {
   summarizeCases,
   summarizeRules,
   type RuleEntry,
+  type StoredVerdict,
 } from "./rules.ts";
 
 const DATA = fileURLToPath(new URL("data", import.meta.url));
@@ -43,8 +44,29 @@ const caseOf = (overrides: Partial<StoredCase> = {}): StoredCase => ({
 it("the frozen replay reproduces the pre-revert verdict for every candidate", () => {
   const { cases, evidence, labels, verdicts } = readCorpus(DATA);
   const replay = frozenEntries(cases, evidence, labels);
-  assert.strictEqual(replay.entries.length, verdicts.length);
-  assert.deepStrictEqual(checkParity(replay.entries, verdicts), []);
+  const report = checkParity(replay.entries, verdicts);
+  assert.deepStrictEqual(report.mismatches, []);
+});
+
+it("a new candidate without a frozen verdict is reported, not failed", () => {
+  const entry = (caseId: string): RuleEntry => ({
+    caseId,
+    questionKey: "q",
+    pass: "pass1",
+    rule: "no-visible-link",
+    verdict: "compact",
+    truth: undefined,
+  });
+  const verdict: StoredVerdict = {
+    caseId: "old",
+    key: "q",
+    rule: "compact",
+    ruleReason: "no document and no plan in play",
+    verdict: "compact",
+  };
+  const report = checkParity([entry("old"), entry("new")], [verdict]);
+  assert.deepStrictEqual(report.mismatches, []);
+  assert.strictEqual(report.unjudged, 1);
 });
 
 it("the production replay projects only product-visible facts", () => {

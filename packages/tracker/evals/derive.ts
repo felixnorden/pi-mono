@@ -3,7 +3,7 @@ import { type CompactionCandidate, selectCandidates } from "../src/compaction/ca
 import { completedInActiveList } from "../src/compaction/completion.ts";
 import { buildDigests, compactQuestions } from "../src/compaction/digest.ts";
 import { formatItemRef } from "../src/core/deps.ts";
-import type { TrackerState } from "../src/core/domain.ts";
+import type { DeclaredProduct, DeclaredReference, TrackerState } from "../src/core/domain.ts";
 
 /**
  * Derive one eval case per smart-compaction decision from a session's tracker
@@ -30,8 +30,13 @@ export interface TimedSnapshot {
 export interface EventCandidate {
   readonly ref: string;
   readonly text: string;
+  /** The digest's capped description, when the item carried one. */
+  readonly description?: string;
   readonly class: string;
   readonly relationship: string;
+  /** The declarations the item carried, as authored. */
+  readonly refs?: readonly DeclaredReference[];
+  readonly produces?: readonly DeclaredProduct[];
 }
 
 /** One item of the completed batch, as referenced prior work. */
@@ -106,18 +111,33 @@ const stringField = (record: Record<string, unknown>, key: string): string =>
 /**
  * Read the digest back into a typed shape. A missing field yields an empty
  * string rather than failing the whole harvest; `manifest.json` reports how
- * many cases carried an empty field.
+ * many cases carried an empty field. The candidate list, when given, supplies
+ * the declarations the digest rendered without resolved states.
  */
-export const candidateViews = (digest: JsonObject): readonly EventCandidate[] => {
+export const candidateViews = (
+  digest: JsonObject,
+  candidates: readonly CompactionCandidate[] = [],
+): readonly EventCandidate[] => {
   const raw = digest.candidates;
   if (!Array.isArray(raw)) return [];
-  return raw.map((entry) => {
+  return raw.map((entry, index) => {
     const record = asRecord(entry);
+    const candidate = candidates[index];
+    // The stored description is the item's full text; the digest's cut is a
+    // classifier concern and would truncate twice on a replay.
+    const description = candidate?.description ?? stringField(record, "description");
     return {
       ref: stringField(record, "ref"),
       text: stringField(record, "text"),
+      ...(description.length === 0 ? {} : { description }),
       class: stringField(record, "class"),
       relationship: stringField(record, "relationship"),
+      ...(candidate?.refs === undefined || candidate.refs.length === 0
+        ? {}
+        : { refs: candidate.refs }),
+      ...(candidate?.produces === undefined || candidate.produces.length === 0
+        ? {}
+        : { produces: candidate.produces }),
     };
   });
 };
@@ -182,7 +202,7 @@ export const deriveEvents = (
               },
             ];
       }),
-      candidates: candidateViews(buildDigests(judged)),
+      candidates: candidateViews(buildDigests(judged), judged),
       questions: questionViews(judged),
       frontier: frontier.length,
       itemCount: list.items.length,

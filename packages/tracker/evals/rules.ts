@@ -257,24 +257,28 @@ export interface ParityMismatch {
   readonly actualVerdict: RuleVerdict;
 }
 
+/** The frozen-parity result: mismatches among the judged, plus the unjudged count. */
+export interface ParityReport {
+  readonly mismatches: readonly ParityMismatch[];
+  /**
+   * Candidates with no `verdicts.jsonl` row: a harvest after the frozen
+   * corpus. They carry no rename proof, and they never count as mismatches.
+   */
+  readonly unjudged: number;
+}
+
 /** Join the frozen replay to `verdicts.jsonl` by case id and question key. */
 export const checkParity = (
   entries: readonly RuleEntry[],
   verdicts: readonly StoredVerdict[],
-): readonly ParityMismatch[] => {
+): ParityReport => {
   const byKey = new Map(verdicts.map((row) => [`${row.caseId}\u0000${row.key}`, row]));
   const mismatches: ParityMismatch[] = [];
+  let unjudged = 0;
   for (const entry of entries) {
     const frozen = byKey.get(`${entry.caseId}\u0000${entry.questionKey}`);
     if (frozen === undefined) {
-      mismatches.push({
-        caseId: entry.caseId,
-        questionKey: entry.questionKey,
-        expectedRule: "(missing)",
-        expectedVerdict: "abstain",
-        actualRule: entry.rule,
-        actualVerdict: entry.verdict,
-      });
+      unjudged += 1;
       continue;
     }
     const expectedRule = FROZEN_REASON_TO_RULE[frozen.ruleReason] ?? "(unknown)";
@@ -290,7 +294,7 @@ export const checkParity = (
       });
     }
   }
-  return mismatches;
+  return { mismatches, unjudged };
 };
 /** Tally each rule's labeled firings and agreement, per pass. */
 export const summarizeRules = (entries: readonly RuleEntry[]): readonly RuleRow[] => {
@@ -611,18 +615,19 @@ const main = (): void => {
 
   console.log("\nFrozen replay — the pre-revert facts and the full evidence record:\n");
   console.log(formatRules(summarizeRules(frozen.entries), labeledByPass(frozen.entries)));
-  const mismatches = checkParity(frozen.entries, real.verdicts);
+  const parity = checkParity(frozen.entries, real.verdicts);
+  const judged = frozen.entries.length - parity.unjudged;
   console.log(
-    `\nfrozen parity: ${frozen.entries.length} candidates against verdicts.jsonl — ${
-      mismatches.length === 0 ? "exact" : `${mismatches.length} MISMATCHES`
-    }`,
+    `\nfrozen parity: ${judged} candidates against verdicts.jsonl — ${
+      parity.mismatches.length === 0 ? "exact" : `${parity.mismatches.length} MISMATCHES`
+    }${parity.unjudged === 0 ? "" : ` (${parity.unjudged} new candidates without a frozen verdict)`}`,
   );
-  for (const mismatch of mismatches.slice(0, 10)) {
+  for (const mismatch of parity.mismatches.slice(0, 10)) {
     console.log(
       `  ${mismatch.caseId} ${mismatch.questionKey}: expected ${mismatch.expectedRule}/${mismatch.expectedVerdict}, got ${mismatch.actualRule}/${mismatch.actualVerdict}`,
     );
   }
-  if (mismatches.length > 0) process.exitCode = 1;
+  if (parity.mismatches.length > 0) process.exitCode = 1;
 
   console.log("\nProduction replay — the batch texts plus the tool footprint:\n");
   console.log(formatRules(summarizeRules(production.entries), labeledByPass(production.entries)));

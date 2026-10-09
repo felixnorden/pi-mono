@@ -21,6 +21,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DecisionRecord } from "../src/compaction/decision-record.ts";
+import type { DeclaredReference } from "../src/core/domain.ts";
 import type { StoredCase, StoredEvidence } from "./case-file.ts";
 import { deriveEvents } from "./derive.ts";
 import { buildEvidence } from "./evidence.ts";
@@ -118,6 +119,16 @@ export const harvestSession = (
   if (parsed.snapshots.length === 0) return undefined;
 
   const redactText = options.redact;
+  /** Redact a declared reference's author text; a span is a line range. */
+  const redactReference = (reference: DeclaredReference): DeclaredReference =>
+    reference.kind === "decision"
+      ? { kind: "decision", topic: redactText(reference.topic) }
+      : {
+          kind: "path",
+          path: redactText(reference.path),
+          ...(reference.symbol === undefined ? {} : { symbol: redactText(reference.symbol) }),
+          ...(reference.span === undefined ? {} : { span: reference.span }),
+        };
   const decisions = decisionsIn(parsed.entries, onSkipped);
   const events = deriveEvents(parsed.snapshots, options.limit);
   // Redact the source once, then build every string from the redacted parts, so
@@ -168,8 +179,17 @@ export const harvestSession = (
       candidates: event.candidates.map((candidate) => ({
         ref: redactText(candidate.ref),
         text: redactText(candidate.text),
+        ...(candidate.description === undefined
+          ? {}
+          : { description: redactText(candidate.description) }),
         class: candidate.class,
         relationship: redactText(candidate.relationship),
+        ...(candidate.refs === undefined ? {} : { refs: candidate.refs.map(redactReference) }),
+        ...(candidate.produces === undefined
+          ? {}
+          : {
+              produces: candidate.produces.map((product) => ({ path: redactText(product.path) })),
+            }),
       })),
       questions: event.questions.map((question) => ({
         key: redactText(question.key),

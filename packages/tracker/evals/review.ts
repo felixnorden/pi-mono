@@ -48,13 +48,76 @@ const listTable = (caseEntry: StoredCase): string => {
   const rows = caseEntry.list.items.map((item, index) => {
     const ref = `${caseEntry.list.name}:${item.id}`;
     const blockers = view[index]?.blockers ?? [];
-    return `| ${item.id} | ${stateOf(item, blockers, batch, ref, candidates)} | ${item.deps.join(", ")} | ${cell(item.text)} |`;
+    return `| ${item.id} | ${stateOf(item, blockers, batch, ref, candidates)} | ${item.deps.join(", ")} | ${cell(item.text)} | ${cell(item.description ?? "")} |`;
   });
-  return ["| id | state | deps | text |", "| --- | --- | --- | --- |", ...rows].join("\n");
+  return [
+    "| id | state | deps | text | description |",
+    "| --- | --- | --- | --- | --- |",
+    ...rows,
+  ].join("\n");
 };
 
 const batchSection = (caseEntry: StoredCase): string =>
-  caseEntry.completed.map((item) => `- \`${item.ref}\` ${item.text}`).join("\n");
+  caseEntry.completed
+    .map((item) => {
+      const head = `- \`${item.ref}\` ${item.text}`;
+      if (item.description === undefined || item.description.length === 0) return head;
+      return `${head}\n${item.description
+        .split("\n")
+        .map((line) => `  ${line}`)
+        .join("\n")}`;
+    })
+    .join("\n");
+
+/** One declared or resolved reference, flattened for display. */
+interface ReferenceView {
+  readonly kind: string;
+  readonly path?: string;
+  readonly symbol?: string;
+  readonly span?: string;
+  readonly topic?: string;
+}
+
+/** One reference line: the kind, then the fields that kind owns. */
+const referenceLine = (reference: ReferenceView): string => {
+  if (reference.kind === "decision") return `decision: ${reference.topic ?? ""}`;
+  const symbol = reference.symbol === undefined ? "" : ` (${reference.symbol})`;
+  const span = reference.span === undefined ? "" : ` [${reference.span}]`;
+  return `path: ${reference.path ?? ""}${symbol}${span}`;
+};
+
+/** The declarations and the decision record for one candidate. */
+const candidateFacts = (caseEntry: StoredCase, index: number): readonly string[] => {
+  const candidate = caseEntry.candidates[index];
+  if (candidate === undefined) return [];
+  const facts: string[] = [];
+  if (candidate.description !== undefined && candidate.description.length > 0) {
+    facts.push("", candidate.description);
+  }
+  if (candidate.refs !== undefined && candidate.refs.length > 0) {
+    facts.push("", "**refs**");
+    for (const reference of candidate.refs) {
+      facts.push(`- \`${referenceLine(reference)}\``);
+    }
+  }
+  if (candidate.produces !== undefined && candidate.produces.length > 0) {
+    facts.push("", "**produces**");
+    for (const product of candidate.produces) {
+      facts.push(`- \`${product.path}\``);
+    }
+  }
+  const decision = caseEntry.decision;
+  if (decision !== undefined && decision.candidateRef === candidate.ref) {
+    facts.push("", `**decision**: \`${decision.rule}\` (${decision.verdict})`);
+    for (const reference of decision.references) {
+      facts.push(`- \`${referenceLine(reference)}: ${reference.state}\``);
+    }
+    for (const product of decision.products) {
+      facts.push(`- \`${product.path}: ${product.state}\``);
+    }
+  }
+  return facts;
+};
 
 const candidateSection = (caseEntry: StoredCase): string =>
   caseEntry.candidates
@@ -65,6 +128,7 @@ const candidateSection = (caseEntry: StoredCase): string =>
         `### ${index + 1}. \`${candidate.ref}\` (${candidate.class}, ${candidate.relationship})`,
         "",
         `> ${cell(candidate.text)}`,
+        ...candidateFacts(caseEntry, index),
         "",
         question?.instructions ?? "",
         "",
@@ -98,7 +162,7 @@ const labelSkeleton = (caseEntry: StoredCase): string =>
     "```",
   ].join("\n");
 
-const renderCase = (
+export const renderCase = (
   position: number,
   caseEntry: StoredCase,
   evidence: StoredEvidence | undefined,
@@ -136,8 +200,33 @@ const renderCase = (
     "",
   ].join("\n");
 
+interface Options {
+  readonly out: string;
+}
+
+const usage = `review.ts [--out <dir>]
+
+  --out  corpus directory (default: evals/data)`;
+
+/** Parse `--out`; the review pack lands in `<out>/review`. */
+export const parseOptions = (argv: readonly string[]): Options => {
+  const values = new Map<string, string>();
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index]!;
+    if (!flag.startsWith("--")) continue;
+    const next = argv[index + 1];
+    if (next === undefined || next.startsWith("--")) {
+      throw new Error(`missing value for ${flag}\n\n${usage}`);
+    }
+    values.set(flag.slice(2), next);
+    index += 1;
+  }
+  return { out: values.get("out") ?? join(HERE, "data") };
+};
+
 const main = (): void => {
-  const out = join(HERE, "data");
+  const options = parseOptions(process.argv.slice(2));
+  const out = options.out;
   const review = join(out, "review");
   const cases = readJsonl<StoredCase>(join(out, "cases.jsonl"));
   const evidence = new Map(
@@ -184,4 +273,4 @@ const main = (): void => {
   process.stdout.write(`wrote ${position} case files and an index to ${review}\n`);
 };
 
-main();
+if (import.meta.main) main();

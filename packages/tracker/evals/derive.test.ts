@@ -1,11 +1,19 @@
 import { assert, it } from "@effect/vitest";
-import { TodoItem, TodoList, TrackerState } from "../src/core/domain.ts";
+import {
+  TodoItem,
+  TodoList,
+  TrackerState,
+  type DeclaredProduct,
+  type DeclaredReference,
+} from "../src/core/domain.ts";
 import { deriveEvents, type TimedSnapshot } from "./derive.ts";
 
 interface ItemSpec {
   readonly id: number;
   readonly title: string;
   readonly description?: string;
+  readonly refs?: readonly DeclaredReference[];
+  readonly produces?: readonly DeclaredProduct[];
   readonly done: boolean;
   readonly deps?: readonly string[];
 }
@@ -21,6 +29,8 @@ const listWith = (items: readonly ItemSpec[], name = "Work", id = 1): TodoList =
           id: item.id,
           title: item.title,
           description: item.description ?? "",
+          refs: item.refs ?? [],
+          produces: item.produces ?? [],
           done: item.done,
           deps: item.deps ?? [],
         }),
@@ -59,6 +69,44 @@ it("derives one event per open to done transition", () => {
       relationship: "independent of Work:1",
     },
   ]);
+});
+
+it("carries a candidate's description and declarations into the event", () => {
+  const refs: readonly DeclaredReference[] = [
+    { kind: "path", path: "src/a.ts", symbol: "route" },
+    { kind: "decision", topic: "storage shape" },
+  ];
+  const produces: readonly DeclaredProduct[] = [{ path: ".qrspi/outlines/x.md" }];
+  const before = stateOf([listWith([{ id: 1, title: "first", done: false }])]);
+  const after = stateOf([
+    listWith([
+      { id: 1, title: "first", done: true },
+      { id: 2, title: "second", description: "detail", refs, produces, done: false },
+    ]),
+  ]);
+  const events = deriveEvents([at(before, "t0"), at(after, "t1")], 16);
+  assert.deepStrictEqual(events[0]!.candidates[0], {
+    ref: "Work:2",
+    text: "second",
+    description: "detail",
+    class: "ready-queue",
+    relationship: "independent of Work:1",
+    refs,
+    produces,
+  });
+});
+
+it("stores the candidate's full description, not the digest cut", () => {
+  const long = "a".repeat(450);
+  const before = stateOf([listWith([{ id: 1, title: "first", done: false }])]);
+  const after = stateOf([
+    listWith([
+      { id: 1, title: "first", done: true },
+      { id: 2, title: "second", description: long, done: false },
+    ]),
+  ]);
+  const events = deriveEvents([at(before, "t0"), at(after, "t1")], 16);
+  assert.strictEqual(events[0]!.candidates[0]!.description, long);
 });
 
 it("carries an item description through the event and the completed batch", () => {

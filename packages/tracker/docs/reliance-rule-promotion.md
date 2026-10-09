@@ -36,13 +36,30 @@ Run the write:
 The command rewrites the `ACCEPTED_RULES` block to the measured set. It then
 re-reads the file and compares the set. A mismatch throws.
 
+## New decisions
+
+`verdicts.jsonl` is the frozen rename oracle. It holds one row per candidate
+from the pre-revert router. Do not regenerate it. A harvest after the release
+adds cases with no frozen verdict.
+
+`bun run eval:rules` reports those candidates as unjudged. The parity line reads
+`frozen parity: <judged> candidates against verdicts.jsonl — exact (<unjudged>
+new candidates without a frozen verdict)`. An unjudged candidate never fails the
+parity check.
+
+Label the new questions with `bun run eval:label`. The queue skips a question
+that already has an answer for its case id and key. The gate reads labels only,
+so it includes a new case after the label lands. Run `bun run eval:promote`
+against the same corpus directory (`evals/data` by default).
+
 ## Review
 
 1. Read the gate table. Confirm each promoted row cleared the gate.
 2. Confirm the harvest corpus is current. The command reads `evals/data/`, which
    is git-ignored, so the corpus stays local.
-3. Run `bun run eval:rules`. The final line must print
-   `ACCEPTED_RULES: … — MATCH`.
+3. Run `bun run eval:rules`. The parity line must say `exact`, and the final
+   line must print `ACCEPTED_RULES: … — MATCH`. An unjudged count is expected
+   after a new harvest.
 4. Commit `src/compaction/rules.ts`.
 
 ## Limits

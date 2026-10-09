@@ -31,8 +31,21 @@ const stored = (candidates: readonly CompactionCandidate[]): StoredCase => ({
       deps: [],
     })),
   },
-  completed: candidates[0]?.completed.map((item) => ({ ref: item.ref, text: item.text })) ?? [],
-  candidates: candidateViews(buildDigests(candidates)),
+  completed:
+    candidates[0]?.completed.map((item) => ({
+      ref: item.ref,
+      text: item.text,
+      ...(item.description === undefined ? {} : { description: item.description }),
+    })) ?? [],
+  candidates: candidateViews(buildDigests(candidates)).map((view, index) => {
+    const entry = candidates[index]!;
+    return {
+      ...view,
+      ...(entry.description === undefined ? {} : { description: entry.description }),
+      ...(entry.refs === undefined ? {} : { refs: entry.refs }),
+      ...(entry.produces === undefined ? {} : { produces: entry.produces }),
+    };
+  }),
   questions: questionViews(candidates),
   frontier: candidates.length,
   itemCount: candidates.length,
@@ -74,6 +87,37 @@ describe("replayMatches", () => {
     assert.strictEqual(replayMatches(stored([])), true);
   });
 
+  it("accepts a case whose candidate declarations reproduce", () => {
+    const declared: CompactionCandidate = {
+      ...candidate(3, "a"),
+      description: "detail",
+      refs: [{ kind: "path", path: "src/a.ts", symbol: "route" }],
+      produces: [{ path: "out.md" }],
+    };
+    assert.strictEqual(replayMatches(stored([declared])), true);
+  });
+
+  it("rejects a case whose declared reference was altered", () => {
+    const declared: CompactionCandidate = {
+      ...candidate(3, "a"),
+      refs: [{ kind: "path", path: "src/a.ts" }],
+    };
+    const caseFile = stored([declared]);
+    const altered = {
+      ...caseFile,
+      candidates: [{ ...caseFile.candidates[0]!, refs: [] }],
+    };
+    assert.strictEqual(replayMatches(altered), false);
+  });
+
+  it("accepts a case whose completed item carries a description", () => {
+    const declared: CompactionCandidate = {
+      ...candidate(3, "a"),
+      completed: [{ ref: "Work:1", text: "first", description: "detail" }],
+    };
+    assert.strictEqual(replayMatches(stored([declared])), true);
+  });
+
   it("rejects a case whose candidate text was altered", () => {
     const caseFile = stored([candidate(3, "a")]);
     const altered = {
@@ -105,5 +149,11 @@ describe("classifierInput", () => {
     assert.deepEqual(input.digest, buildDigests(candidates));
     assert.deepEqual(input.questions, compactQuestions(candidates));
     assert.strictEqual(input.questions.length, 2);
+  });
+
+  it("reproduces a digest with a candidate description", () => {
+    const candidates = [{ ...candidate(3, "a"), description: "detail" }];
+    const input = classifierInput(stored(candidates));
+    assert.deepEqual(input.digest, buildDigests(candidates));
   });
 });
