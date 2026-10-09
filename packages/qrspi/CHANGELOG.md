@@ -1,5 +1,12 @@
 # @ftrdotdev/pi-qrspi
 
+## 0.2.4
+
+### Patch Changes
+
+- 4057216: Update the bundled planning-workflow and tdd skills to tag 0.2.0 of the
+  `felixnorden/skills` repository.
+
 ## 0.2.3
 
 ### Patch Changes

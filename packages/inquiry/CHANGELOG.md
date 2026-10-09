@@ -1,5 +1,13 @@
 # @ftrdotdev/pi-inquiry
 
+## 0.7.0
+
+### Patch Changes
+
+- Updated dependencies [edb419d]
+- Updated dependencies [f4213db]
+  - @ftrdotdev/pi-tui@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes
