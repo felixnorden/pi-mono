@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { VimRouter } from "@ftrdotdev/pi-tui";
+import { Effect } from "effect";
 import { orderedItems } from "../core/deps.ts";
 import { TodoItem, TodoList, TrackerState } from "../core/domain.ts";
 import {
@@ -61,13 +63,20 @@ interface OverlayHarness {
   readonly actions: TrackerUiAction[];
 }
 
+/** Build a real `VimRouter` service gated on `enabled`. */
+const vimRouter = (enabled: boolean): VimRouter["Service"] =>
+  Effect.runSync(Effect.service(VimRouter).pipe(Effect.provide(VimRouter.make(() => enabled))));
+
 /**
  * Build an overlay over a scripted state. `onAction` mirrors the real
  * bridge's `set_active` handling (the only action the tests exercise), so
  * the snapshot passed to `getState` follows the same object-identity rules
  * as the live mirror in `src/index.ts`.
  */
-const makeOverlay = (initial: TrackerState): OverlayHarness => {
+const makeOverlay = (
+  initial: TrackerState,
+  vim?: { readonly router: VimRouter["Service"]; readonly enabled: boolean },
+): OverlayHarness => {
   let current = initial;
   const actions: TrackerUiAction[] = [];
   const overlay = makeTrackerOverlay({
@@ -82,6 +91,7 @@ const makeOverlay = (initial: TrackerState): OverlayHarness => {
       return null;
     },
     onClose: () => {},
+    ...(vim === undefined ? {} : { vim }),
   });
   return { overlay, actions };
 };
@@ -154,6 +164,57 @@ it("items pane follows the active list in items mode (preview is not a commit)",
   // No enter was pressed, so the items pane still targets the active list.
   assert.match(text, /Items — Work/);
   assert.match(text, /write plan/);
+});
+
+// --------------------------------------------------------------------------
+// Vim navigation (h/j/k/l) behind the vim toggle
+// --------------------------------------------------------------------------
+
+it("hjkl moves the list cursor and switches panes when vim is on", () => {
+  const h = makeOverlay(twoListState(), { router: vimRouter(true), enabled: true });
+  const text = () => h.overlay.render(80).join("\n");
+
+  // j previews the next list; k returns to the previous one.
+  h.overlay.handleInput("j");
+  assert.match(text(), /Items — Home/);
+  h.overlay.handleInput("k");
+  assert.match(text(), /Items — Work/);
+
+  // l opens the items pane; h returns to the lists pane.
+  h.overlay.handleInput("l");
+  assert.match(text(), /\[tab\] lists/);
+  h.overlay.handleInput("h");
+  assert.match(text(), /\[tab\] items/);
+});
+
+it("hjkl is inert when the vim toggle is off", () => {
+  const h = makeOverlay(twoListState(), { router: vimRouter(false), enabled: false });
+  const text = () => h.overlay.render(80).join("\n");
+
+  h.overlay.handleInput("j");
+  assert.match(text(), /Items — Work/);
+  h.overlay.handleInput("l");
+  assert.match(text(), /\[tab\] items/); // still lists mode
+});
+
+it("arrow left and right switch panes", () => {
+  const h = makeOverlay(twoListState());
+  const text = () => h.overlay.render(80).join("\n");
+
+  h.overlay.handleInput("\x1b[C"); // right
+  assert.match(text(), /\[tab\] lists/);
+  h.overlay.handleInput("\x1b[D"); // left
+  assert.match(text(), /\[tab\] items/);
+});
+
+it("help shows hjkl only when vim is on", () => {
+  const off = makeOverlay(twoListState(), { router: vimRouter(false), enabled: false });
+  const offText = off.overlay.render(200).join("\n");
+  assert.match(offText, /\[↑↓←→\] move/);
+  assert.equal(offText.includes("hjkl"), false);
+
+  const on = makeOverlay(twoListState(), { router: vimRouter(true), enabled: true });
+  assert.match(on.overlay.render(200).join("\n"), /\[↑↓←→\/hjkl\] move/);
 });
 
 // --------------------------------------------------------------------------

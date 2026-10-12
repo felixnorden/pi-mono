@@ -160,6 +160,9 @@ pane for editing.
 | ------- | -------------------------------------- |
 | `tab`   | Switch between the lists and the items |
 | `↑` `↓` | Move the cursor                        |
+| `←` `→` | Switch panes                           |
+| `j` `k` | Move the cursor (vim on)               |
+| `h` `l` | Switch panes (vim on)                  |
 | `enter` | Select a list and open its items       |
 | `space` | Toggle the active list                 |
 | `n`     | Create a list                          |
@@ -169,6 +172,11 @@ pane for editing.
 | `e`     | Edit the item title                    |
 | `r`     | Remove an item                         |
 | `esc`   | Close the view                         |
+
+The `j` `k` `h` `l` keys are the vim navigation motions, and they are live
+only when `vim` is on in the shared `tui.json`. The overlay reads that toggle
+when it opens and shows the vim keys in its help line only when they are
+active. Arrows always work.
 
 ### The widget
 

@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { makeBorderedBox } from "@ftrdotdev/pi-tui";
+import { makeBorderedBox, VimRouter } from "@ftrdotdev/pi-tui";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { Effect, Layer, ManagedRuntime, Option, Result } from "effect";
 import { join } from "node:path";
@@ -42,6 +42,7 @@ import {
   readinessSuffix,
   type TrackerUiAction,
 } from "./presentation/ui.ts";
+import { VimSettingsService } from "./presentation/vim-settings.ts";
 
 /** Custom-entry type used to persist the tracker state in the session. */
 const CUSTOM_TYPE = "tracker/state";
@@ -73,6 +74,10 @@ const withSettleDecider = <A, E>(
 const withFootprintRecorder = <A, E>(
   f: (recorder: FootprintRecorder["Service"]) => Effect.Effect<A, E>,
 ): Effect.Effect<A, E, FootprintRecorder> => Effect.flatMap(FootprintRecorder, f);
+
+const withVimSettings = <A, E>(
+  f: (settings: VimSettingsService["Service"]) => Effect.Effect<A, E>,
+): Effect.Effect<A, E, VimSettingsService> => Effect.flatMap(VimSettingsService, f);
 
 /** The bounded `path`/`command` projection of a tool call's arguments. */
 const boundedArgsOf = (value: unknown): ToolEvent["args"] => {
@@ -118,11 +123,15 @@ export default function (pi: ExtensionAPI): void {
   // The settings path is resolved inside the factory, so a test can point
   // ENV_AGENT_DIR at a temp directory before `tracker(api)` runs.
   const probe = productionProbe();
+  // One shared config path: the smart-compaction reader and the vim reader both
+  // read `tui.json`, owned by the TUI package.
+  const configPath = join(getAgentDir(), SMART_COMPACTION_CONFIG_FILE);
   const decisionServices = Layer.mergeAll(
     CompletionObserver.layer,
     ClassifierGateway.layer,
     FootprintRecorder.layer(probe),
-    SmartCompactionSettingsService.make(join(getAgentDir(), SMART_COMPACTION_CONFIG_FILE)),
+    SmartCompactionSettingsService.make(configPath),
+    VimSettingsService.make(configPath),
   );
 
   const runtime = ManagedRuntime.make(
@@ -785,6 +794,16 @@ export default function (pi: ExtensionAPI): void {
         ctx.ui.notify("/tracker requires interactive mode", "error");
         return;
       }
+      // Read the shared `vim` toggle and build the gated router once, before
+      // the modal opens: h/j/k/l then work only when vim mode is on, and the
+      // overlay's help line reports which keys are live.
+      const vimEnabled = await runtime.runPromise(withVimSettings((settings) => settings.load));
+      const vim = {
+        router: Effect.runSync(
+          Effect.service(VimRouter).pipe(Effect.provide(VimRouter.make(() => vimEnabled))),
+        ),
+        enabled: vimEnabled,
+      };
       await ctx.ui.custom<void>((tui, theme, _kb, done) => {
         // The overlay content is framed by the same house rounded box as the
         // widget. makeBorderedBox's own cache is disabled so an overlay
@@ -796,6 +815,7 @@ export default function (pi: ExtensionAPI): void {
           requestRender: () => tui.requestRender(),
           onAction: (action) => runUiAction(ctx, action),
           onClose: () => done(),
+          vim,
         });
         const framed = makeBorderedBox(overlay, theme, {
           label: "Tracker",

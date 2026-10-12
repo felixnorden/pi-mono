@@ -7,7 +7,7 @@ import {
   visibleWidth,
   type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
-import { makeBorderedBox } from "@ftrdotdev/pi-tui";
+import { makeBorderedBox, type NavigationIntent, type VimRouter } from "@ftrdotdev/pi-tui";
 import {
   firstReadyIndex,
   orderedItems,
@@ -286,6 +286,11 @@ export interface TrackerOverlayOptions {
   readonly onClose: () => void;
   /** Write text to the clipboard. Defaults to pi's `copyToClipboard`. */
   readonly copyText?: (text: string) => Promise<void>;
+  /**
+   * The shared vim navigation router, gated on the `vim` toggle by the bridge.
+   * When omitted the overlay is arrow-only. `enabled` drives the help line.
+   */
+  readonly vim?: { readonly router: VimRouter["Service"]; readonly enabled: boolean };
 }
 
 /** The interactive overlay surface: render + input + cache invalidation. */
@@ -342,6 +347,14 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
       return;
     }
     const state = options.getState();
+    const intent = options.vim?.router.decodeNavigation(data);
+    if (intent !== undefined) {
+      applyNavigation(intent, state);
+      error = null;
+      notice = null;
+      options.requestRender();
+      return;
+    }
     const handled = mode === "lists" ? handleListsKey(data, state) : handleItemsKey(data, state);
     if (handled) {
       error = null;
@@ -499,10 +512,11 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
 
     // Help
     lines.push("");
+    const move = options.vim?.enabled ? "[↑↓←→/hjkl] move" : "[↑↓←→] move";
     const help =
       mode === "lists"
-        ? "[tab] items · [n] new · [d] delete · [c] copy · [space] toggle · [↑↓] move · [enter] active · [esc] close"
-        : "[tab] lists · [a] add · [x] toggle · [e] edit · [r] remove · [c] copy · [↑↓] move · [esc] close";
+        ? `[tab] items · [n] new · [d] delete · [c] copy · [space] toggle · ${move} · [enter] active · [esc] close`
+        : `[tab] lists · [a] add · [x] toggle · [e] edit · [r] remove · [c] copy · ${move} · [esc] close`;
     lines.push(truncateToWidth(`  ${theme.fg("dim", help)}`, width));
 
     cachedWidth = width;
@@ -552,6 +566,27 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
     );
   };
 
+  /**
+   * Apply a router movement intent. Up/down move the cursor of the focused
+   * pane; left/right switch panes, so h/l mirror Tab.
+   */
+  const applyNavigation = (intent: NavigationIntent, state: TrackerState): void => {
+    if (intent.dir === "up" || intent.dir === "down") {
+      const step = intent.dir === "down" ? 1 : -1;
+      if (mode === "lists") {
+        const count = state.lists.length;
+        if (count > 0) listIndex = wrap(listIndex + step, count);
+      } else {
+        const list = activeList(state);
+        const count = list ? orderedItems(list).length : 0;
+        if (count > 0) itemIndex = wrap(itemIndex + step, count);
+      }
+      return;
+    }
+    mode = intent.dir === "right" ? "items" : "lists";
+    syncCursors();
+  };
+
   const handleListsKey = (data: string, state: TrackerState): boolean => {
     const lists = state.lists;
     if (lists.length === 0) {
@@ -567,6 +602,11 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
     }
     if (matchesKey(data, Key.down)) {
       listIndex = (listIndex + 1) % lists.length;
+      return true;
+    }
+    if (matchesKey(data, Key.right)) {
+      mode = "items";
+      syncCursors();
       return true;
     }
     if (matchesKey(data, Key.enter)) {
@@ -620,6 +660,11 @@ export const makeTrackerOverlay = (options: TrackerOverlayOptions): TrackerOverl
     }
     if (matchesKey(data, Key.down)) {
       if (items.length > 0) itemIndex = (itemIndex + 1) % items.length;
+      return true;
+    }
+    if (matchesKey(data, Key.left)) {
+      mode = "lists";
+      syncCursors();
       return true;
     }
     if (matchesKey(data, Key.enter) || data === "x") {
