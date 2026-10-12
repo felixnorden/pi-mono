@@ -119,10 +119,10 @@ export class SettleDecider extends Context.Service<
             if (routed.verdict === "compact") {
               return withRecord(SETTLE_DECISION.compact(resumePointer(head)));
             }
-            yield* Effect.logInfo(
-              `tracker: smart-compaction rule ${routed.rule} is observe-only for ${formatItemRef(head.listName, head.id)}; asking the classifier`,
-            );
-
+            // An observe-only row is reported through the decision record, not
+            // the console: Effect's default logger writes to stdout, which pi's
+            // TUI redirects to stderr, and the differential renderer never
+            // repaints those rows, so a log line would stick in the editor area.
             const verdict = yield* gateway.verdict({
               registry: input.registry,
               enabled: values.enabled,

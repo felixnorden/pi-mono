@@ -240,6 +240,29 @@ const renderList = (
     .join("\n")
     .replace(/\s+/g, " ");
 
+/**
+ * Capture everything the tracker's Effect logger writes while `body` runs.
+ * Vitest's console proxy defeats `vi.spyOn`, so replace the methods directly.
+ */
+const captureConsole = async (body: () => Promise<void>): Promise<string[]> => {
+  const lines: string[] = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  };
+  console.error = (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  };
+  try {
+    await body();
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+  return lines;
+};
+
 describe("tracker tool bridge", () => {
   it("returns an affected-items array for the scalar update_items form", async () => {
     const harness = await makeHarness();
@@ -653,6 +676,20 @@ describe("tracker smart-compaction bridge", () => {
     await harness.settle();
 
     expect(harness.compacts).toHaveLength(0);
+  });
+
+  it("writes nothing to the console when an observe-only rule asks the classifier", async () => {
+    // The fired row is reported through the decision record. A console log
+    // would bypass pi's differential renderer and stick in the editor area.
+    const harness = await makeHarness({
+      registry: compactRegistry(0.1),
+      config: { smartCompaction: { enabled: true } },
+    });
+    await completeFirst(harness);
+
+    const lines = await captureConsole(() => harness.settle());
+
+    expect(lines).toEqual([]);
   });
 
   it("a raised needsContextProbabilityThreshold compacts an answer the default would keep", async () => {
