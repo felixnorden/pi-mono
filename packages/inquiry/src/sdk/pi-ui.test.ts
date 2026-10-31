@@ -217,6 +217,18 @@ describe("questionClipboardText", () => {
     expect(text.endsWith("3. Type something.")).toBe(true);
   });
 
+  it("ignores the recommended flag", () => {
+    const q = new Question({
+      id: "q1",
+      label: "Q1",
+      prompt: "Pick one?",
+      options: [new Option({ label: "First", recommended: true }), new Option({ label: "Second" })],
+      allowOther: false,
+      multiple: false,
+    });
+    expect(questionClipboardText(initialMachineState([q]))).toBe("Pick one?\n1. First\n2. Second");
+  });
+
   it("is empty on the submit tab", () => {
     const state = { ...initialMachineState([question(false)]), currentTab: 1 };
     expect(questionClipboardText(state)).toBe("");

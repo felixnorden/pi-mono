@@ -59,6 +59,36 @@ describe("pi validation of the generated schema", () => {
     });
   });
 
+  it("accepts two recommendations (our gate is the single rejection point)", () => {
+    const args = {
+      questions: [
+        {
+          prompt: "p",
+          options: [
+            { label: "a", recommended: true },
+            { label: "b", recommended: true },
+          ],
+        },
+      ],
+    };
+    expect(validateToolCall(tools, call(args))).toEqual(args);
+  });
+
+  it("coerces a stringified recommended flag and rejects a non-boolean", () => {
+    const args = {
+      questions: [{ prompt: "p", options: [{ label: "a", recommended: "true" }] }],
+    };
+    expect(validateToolCall(tools, call(args))).toEqual({
+      questions: [{ prompt: "p", options: [{ label: "a", recommended: true }] }],
+    });
+    expect(() =>
+      validateToolCall(
+        tools,
+        call({ questions: [{ prompt: "p", options: [{ label: "a", recommended: "yes" }] }] }),
+      ),
+    ).toThrow(/recommended.*must be boolean/);
+  });
+
   it("accepts an empty questions array (handled in execute)", () => {
     expect(validateToolCall(tools, call({ questions: [] }))).toEqual({ questions: [] });
   });

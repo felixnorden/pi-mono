@@ -6,7 +6,7 @@
  * `QuestionResult`) are the validated internal representation.
  */
 
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { stripLeadingEmoji } from "./text.ts";
 
 // ---------------------------------------------------------------------------
@@ -21,11 +21,17 @@ export const OptionParamsSchema = Schema.Struct({
   description: Schema.optionalKey(
     Schema.String.annotate({ description: "Optional description shown below label" }),
   ),
+  recommended: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "Recommend this option to the user (default: false). On a single-choice question, recommend at most one option. Set multiple: true to recommend more than one option.",
+    }),
+  ),
 });
 
 export type OptionParams = typeof OptionParamsSchema.Type;
 
-export const QuestionParamsSchema = Schema.Struct({
+const QuestionParamsStruct = Schema.Struct({
   prompt: Schema.String.annotate({ description: "The full question text to display" }),
   options: Schema.Array(OptionParamsSchema).annotate({
     description: "Available options to choose from",
@@ -52,7 +58,33 @@ export const QuestionParamsSchema = Schema.Struct({
   ),
 });
 
-export type QuestionParams = typeof QuestionParamsSchema.Type;
+export type QuestionParams = typeof QuestionParamsStruct.Type;
+
+/**
+ * A single-choice question can recommend at most one option. The rule lives on
+ * the wire record. `decodeParams` is then the only rejection point, and its
+ * failure text is the message the model already receives. The rule rejects the
+ * call and does not trim options. An absent or false `multiple` counts as
+ * single-choice. The pointer names the second recommended option. The decoder
+ * appends the pointer.
+ */
+const atMostOneRecommendation = Schema.makeFilter((q: QuestionParams): Schema.FilterOutput => {
+  if (q.multiple === true) return undefined;
+  const recommended = q.options.flatMap((option, index) =>
+    option.recommended === true ? [index] : [],
+  );
+  if (recommended.length <= 1) return undefined;
+  const name = q.label ?? q.id;
+  const subject = name === undefined ? "this question" : `question "${name}"`;
+  return {
+    path: ["options", recommended[1]!],
+    issue:
+      `${subject} is single-choice but has ${recommended.length} recommended options; ` +
+      `keep at most one recommended option, or set multiple: true`,
+  };
+});
+
+export const QuestionParamsSchema = QuestionParamsStruct.check(atMostOneRecommendation);
 
 export const QuestionListParamsSchema = Schema.Struct({
   questions: Schema.Array(QuestionParamsSchema).annotate({
@@ -105,9 +137,20 @@ export const prepareQuestionArgs = (args: unknown): unknown => {
 // Domain model
 // ---------------------------------------------------------------------------
 
+/**
+ * Collapse the wire recommendation to a concrete boolean at the wire-to-domain
+ * boundary. Nothing downstream then distinguishes "absent" from "false". The
+ * constructor default keeps hand-built `new Option({ label })` values working.
+ */
+const optionRecommended = Schema.Boolean.pipe(
+  Schema.withDecodingDefaultType(Effect.succeed(false)),
+  Schema.withConstructorDefault(Effect.succeed(false)),
+);
+
 export class Option extends Schema.Class<Option>("inquiry/core/domain/Option")({
   label: Schema.String,
   description: Schema.optionalKey(Schema.String),
+  recommended: optionRecommended,
 }) {}
 
 export class Question extends Schema.Class<Question>("inquiry/core/domain/Question")({
@@ -154,7 +197,10 @@ export const normalizeQuestions = (params: QuestionListParams): readonly Questio
           const label = stripLeadingEmoji(o.label);
           const description =
             o.description === undefined ? undefined : stripLeadingEmoji(o.description);
-          return description ? new Option({ label, description }) : new Option({ label });
+          const recommended = o.recommended === true;
+          return description
+            ? new Option({ label, description, recommended })
+            : new Option({ label, recommended });
         }),
         allowOther: q.allowOther !== false,
         multiple: q.multiple === true,

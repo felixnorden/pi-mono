@@ -28,24 +28,24 @@
   },
   "catalogs": {
     "effect": {
-      "@effect/platform-node": "4.0.0",
-      "@effect/platform-node-shared": "4.0.0",
-      "@effect/tsgo": "0.47.2",
-      "@effect/vitest": "4.0.0",
-      "effect": "4.0.0"
+      "@effect/platform-node": "4.1.1",
+      "@effect/platform-node-shared": "4.1.1",
+      "@effect/tsgo": "0.63.0",
+      "@effect/vitest": "4.1.1",
+      "effect": "4.1.1"
     },
     "pi": {
-      "@earendil-works/pi-ai": "1.1.0",
-      "@earendil-works/pi-coding-agent": "1.1.0",
-      "@earendil-works/pi-tui": "1.1.0"
+      "@earendil-works/pi-ai": "1.4.0",
+      "@earendil-works/pi-coding-agent": "1.4.0",
+      "@earendil-works/pi-tui": "1.4.0"
     },
     "tooling": {
       "@types/bun": "latest",
       "oxfmt": "^0.63.0",
-      "oxlint": "1.82.0",
-      "oxlint-tsgolint": "7.0.2001",
+      "oxlint": "1.90.0",
+      "oxlint-tsgolint": "7.0.2005",
       "typescript": "7.0.2",
-      "vitest": "^4.1.10"
+      "vitest": "^5.0.5"
     }
   }
 }

@@ -60,9 +60,9 @@ describe("buildScene: single question", () => {
     expect(lines[0]).toBe(boxTop(60));
     expect(lines[1]).toBe(boxed(" Pick one?", 60));
     expect(lines[2]).toBe(boxed("", 60));
-    expect(lines[3]).toBe(boxed("→ 1. Yes", 60));
-    expect(lines[4]).toBe(boxed("  2. No", 60));
-    expect(lines[5]).toBe(boxed("  3. Type something.", 60));
+    expect(lines[3]).toBe(boxed("→   1. Yes", 60));
+    expect(lines[4]).toBe(boxed("    2. No", 60));
+    expect(lines[5]).toBe(boxed("    3. Type something.", 60));
     expect(lines[6]).toBe(boxed("", 60));
     expect(lines[7]).toBe(boxed(" ↑↓ navigate • Enter to select • Esc to cancel", 60));
     expect(lines[8]).toBe(boxBottom(60));
@@ -74,9 +74,16 @@ describe("buildScene: single question", () => {
     // framed: [rail, marker, label, pad..., rail]
     const selectedLine = scene.lines[3]!;
     expect(selectedLine[1]).toEqual({ text: "→ ", style: "accent" });
-    expect(selectedLine[2]).toEqual({ text: "1. Yes", style: "accent" });
+    expect(selectedLine.find((s) => s.text === "1. Yes")).toEqual({
+      text: "1. Yes",
+      style: "accent",
+    });
     const unselectedLine = scene.lines[4]!;
-    expect(unselectedLine[2]).toEqual({ text: "2. No", style: "text" });
+    expect(unselectedLine.find((s) => s.text === "2. No")).toEqual({
+      text: "2. No",
+      style: "text",
+    });
+    // The marker column's width is pinned once, in the recommendation slice.
   });
 
   it("shows descriptions indented under options", () => {
@@ -85,7 +92,7 @@ describe("buildScene: single question", () => {
     });
     const scene = buildScene(initialMachineState([q]), 40);
     const lines = plainLines(scene);
-    expect(lines.some((l) => l.includes("     Go ahead"))).toBe(true);
+    expect(lines[4]).toBe(boxed("       Go ahead", 40));
   });
 
   it("wraps long prompts with continuation indentation", () => {
@@ -95,6 +102,48 @@ describe("buildScene: single question", () => {
     expect(lines[1]).toBe(boxed(" A very long", 20));
     expect(lines[2]).toBe(boxed(" prompt that", 20));
     expect(lines[3]).toBe(boxed(" definitely wraps", 20));
+  });
+});
+
+describe("buildScene: recommended options", () => {
+  const recommended = (over: Partial<QuestionType> = {}): QuestionType =>
+    question({
+      options: [new Option({ label: "Yes", recommended: true }), new Option({ label: "No" })],
+      ...over,
+    });
+
+  it("renders a ✓ in the marker column for a recommended single-choice option", () => {
+    const scene = buildScene(initialMachineState([recommended()]), 60);
+    const lines = plainLines(scene);
+    expect(lines[3]).toBe(boxed("→ ✓ 1. Yes", 60));
+    expect(scene.lines[3]![1]).toEqual({ text: "→ ", style: "accent" });
+    expect(scene.lines[3]![2]).toEqual({ text: "✓ ", style: "success" });
+    expect(scene.lines[3]![3]).toEqual({ text: "1. Yes", style: "accent" });
+    expect(lines[4]).toBe(boxed("    2. No", 60));
+    expect(scene.lines[4]![2]).toEqual({ text: "  " });
+  });
+
+  it("renders a ✓ beside the checkbox for a recommended multi-select option", () => {
+    const multi = recommended({ multiple: true });
+    const unchecked = buildScene(initialMachineState([multi]), 60);
+    expect(plainLines(unchecked)[3]).toBe(boxed("→ ✓ □ 1. Yes", 60));
+    let state = initialMachineState([multi]);
+    state = step(state, KeyEvent.char(" ")).state; // check option 0
+    expect(plainLines(buildScene(state, 60))[3]).toBe(boxed("→ ✓ ■ 1. Yes", 60));
+  });
+
+  it("leaves the reserved column blank on non-option rows", () => {
+    const scene = buildScene(initialMachineState([recommended({ multiple: true })]), 60);
+    expect(plainLines(scene)[5]).toBe(boxed("    + Add your own answer", 60));
+  });
+
+  it("wraps a marked long label past the marker", () => {
+    const q = question({
+      options: [new Option({ label: "Document the deployment guard", recommended: true })],
+    });
+    const lines = plainLines(buildScene(initialMachineState([q]), 26));
+    expect(lines[3]).toBe(boxed("→ ✓ 1. Document the", 26));
+    expect(lines[4]).toBe(boxed("    deployment guard", 26));
   });
 });
 
@@ -144,8 +193,8 @@ describe("buildScene: multi question", () => {
     state = step(state, KeyEvent.enter).state; // submit, advance to q2
     state = step(state, KeyEvent.shiftTab).state; // back to q1
     const lines = plainLines(buildScene(state, 60));
-    expect(lines.some((l) => l.includes("→ 3. Type something."))).toBe(true);
-    expect(lines.some((l) => l.includes("     Current answer: hi"))).toBe(true);
+    expect(lines.some((l) => l.includes("→   3. Type something."))).toBe(true);
+    expect(lines.some((l) => l.includes("       Current answer: hi"))).toBe(true);
   });
 
   it("shows the chosen option when returning to its tab", () => {
@@ -154,7 +203,7 @@ describe("buildScene: multi question", () => {
     state = step(state, KeyEvent.enter).state; // answer q1, advance to q2
     state = step(state, KeyEvent.shiftTab).state; // back to q1
     const lines = plainLines(buildScene(state, 60));
-    expect(lines.some((l) => l.includes("→ 2. No"))).toBe(true);
+    expect(lines.some((l) => l.includes("→   2. No"))).toBe(true);
     expect(lines.some((l) => l.includes("Current answer"))).toBe(false);
   });
 
@@ -197,9 +246,9 @@ describe("buildScene: multi-select question", () => {
   it("renders checkbox options and an add entry", () => {
     const scene = buildScene(initialMachineState([multiQuestion()]), 60);
     const lines = plainLines(scene);
-    expect(lines[3]).toBe(boxed("→ □ 1. Yes", 60));
-    expect(lines[4]).toBe(boxed("  □ 2. No", 60));
-    expect(lines[5]).toBe(boxed("  + Add your own answer", 60));
+    expect(lines[3]).toBe(boxed("→   □ 1. Yes", 60));
+    expect(lines[4]).toBe(boxed("    □ 2. No", 60));
+    expect(lines[5]).toBe(boxed("    + Add your own answer", 60));
   });
 
   it("shows multi-select controls in the help line", () => {
@@ -211,8 +260,8 @@ describe("buildScene: multi-select question", () => {
     let state = initialMachineState([multiQuestion()]);
     state = step(state, KeyEvent.char(" ")).state; // select option 0
     const lines = plainLines(buildScene(state, 60));
-    expect(lines[3]).toBe(boxed("→ ■ 1. Yes", 60));
-    expect(lines[4]).toBe(boxed("  □ 2. No", 60));
+    expect(lines[3]).toBe(boxed("→   ■ 1. Yes", 60));
+    expect(lines[4]).toBe(boxed("    □ 2. No", 60));
   });
 
   it("renders an added custom answer as a chip", () => {
@@ -250,8 +299,8 @@ describe("buildScene: editor mode", () => {
     expect(lines).toContain(boxed(" Your answer:", 40));
     expect(lines.some((l) => l.includes("Shift+Enter"))).toBe(true);
     expect(lines.some((l) => l.includes("Esc to go back"))).toBe(true);
-    expect(lines[3]).toBe(boxed("  1. Yes", 40));
-    expect(lines[5]).toBe(boxed("→ 3. Type something. ✎", 40));
+    expect(lines[3]).toBe(boxed("    1. Yes", 40));
+    expect(lines[5]).toBe(boxed("→   3. Type something. ✎", 40));
     // editor box frame, prefixed with the gutter space, inside the outer rails
     expect(lines[8]).toBe("│ ╭" + "─".repeat(35) + "╮│");
   });

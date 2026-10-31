@@ -119,6 +119,22 @@ describe("runQuestionnaire", () => {
     }),
   );
 
+  it.effect("carries the recommendation in the recorded questions", () =>
+    Effect.gen(function* () {
+      const harness = yield* run(
+        [
+          question({
+            options: [new Option({ label: "Yes", recommended: true }), new Option({ label: "No" })],
+          }),
+        ],
+        [KeyEvent.enter],
+      );
+      expect(harness.completed?.questions[0]?.options[0]?.recommended).toBe(true);
+      expect(harness.completed?.questions[0]?.options[1]?.recommended).toBe(false);
+      expect(harness.completed?.answers[0]?.index).toBe(1);
+    }),
+  );
+
   it.effect("collects several answers from a multi-select question", () =>
     Effect.gen(function* () {
       const harness = yield* run(

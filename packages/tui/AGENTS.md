@@ -10,11 +10,17 @@ guide doesn't cover, search through the source code in `node_modules/effect/src`
 
 ## Repository-specific notes
 
-- The Effect version is pinned to `4.0.0-beta.105` (see `package.json`). Several
-  APIs differ from stable Effect 3.x — verify against the installed package
+- The Effect version is pinned to `4.1.1` (see the `effect` catalog in the root
+  `package.json`). Several APIs differ from stable Effect 3.x — verify against the
+  installed package
   source before relying on prior Effect knowledge (e.g. there is no
   `Effect.trySync`, `Effect.catchAll`, `Schema.parseJson`, `Schema.optionalWith`,
-  or decode-time schema defaults in this beta).
+  or decode-time schema defaults).
+- Effect 4.1.1 marks `effect/FileSystem`, `effect/Path`, `effect/PlatformError`,
+  `effect/Graph`, `@effect/platform-node`, and `@effect/vitest` as unstable. Each
+  package `tsconfig.json` lists them under the language-service plugin option
+  `allowedUnstableApis`; add a module there instead of using per-file
+  `@effect-diagnostics unstableApiUsage:off` directives.
 - `PLAN.md` documents the planned Effect rewrite of `src/config.ts` (Schema-first
   domain model, `TuiConfigService` with a `FileSystem` layer, tagged errors,
   `@effect/vitest` tests) and the beta-specific API facts verified during

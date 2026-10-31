@@ -258,6 +258,15 @@ describe("multi question", () => {
     expect(currentOptions(state).every((o) => !o.isOther)).toBe(true);
   });
 
+  it("carries the recommendation on every option row and false on 'Type something.'", () => {
+    const state = initialMachineState([
+      question({
+        options: [new Option({ label: "Yes", recommended: true }), new Option({ label: "No" })],
+      }),
+    ]);
+    expect(currentOptions(state).map((o) => o.recommended)).toEqual([true, false, false]);
+  });
+
   it("answers with an index relative to the visible options", () => {
     let state = initialMachineState([question({ allowOther: false })]);
     state = step(state, KeyEvent.down).state; // "No" is index 1 of 2
@@ -346,6 +355,20 @@ describe("multi-select question", () => {
     const state = initialMachineState([multiQuestion()]);
     expect(multiEntries(state).map((e) => e.kind)).toEqual(["option", "option", "add"]);
     expect(isMultiEntrySelected(state, multiEntries(state)[0]!)).toBe(false);
+  });
+
+  it("carries the recommendation on option rows only", () => {
+    const state = initialMachineState([
+      question({
+        multiple: true,
+        options: [new Option({ label: "Yes", recommended: true }), new Option({ label: "No" })],
+      }),
+    ]);
+    const entries = multiEntries(state);
+    expect(entries.map((e) => e.kind)).toEqual(["option", "option", "add"]);
+    expect(entries[0]).toMatchObject({ recommended: true });
+    expect(entries[1]).toMatchObject({ recommended: false });
+    expect(Object.keys(entries[2]!)).toEqual(["kind"]);
   });
 
   it("toggles an option on and off with space", () => {
