@@ -220,8 +220,7 @@ const replay = (
       // something, is the raw row. The other candidates have no record, so the
       // corpus facts route them as before.
       const recorded = index === 0 ? stored.decision : undefined;
-      const candidateFacts =
-        index === 0 ? storedFacts?.head : storedFacts?.diagnostics[index - 1];
+      const candidateFacts = index === 0 ? storedFacts?.head : storedFacts?.diagnostics[index - 1];
       const facts = factsOf(stored, record, candidate.text);
       const decision: { readonly rule: string; readonly verdict: RuleVerdict } =
         candidateFacts !== undefined
@@ -240,7 +239,10 @@ const replay = (
       entries.push({
         caseId: stored.caseId,
         questionKey: stored.questions[index]!.key,
-        pass: passOfRecord({ at: labeled?.at ?? firstLabelAt ?? stored.at, ...(labeled?.pass === undefined ? {} : { pass: labeled.pass }) }),
+        pass: passOfRecord({
+          at: labeled?.at ?? firstLabelAt ?? stored.at,
+          ...(labeled?.pass === undefined ? {} : { pass: labeled.pass }),
+        }),
         rule: decision.rule,
         verdict: decision.verdict,
         truth: labeled?.pilot === true ? undefined : canonical,
@@ -528,14 +530,14 @@ export const gateBase = (entries: readonly RuleEntry[]): "controls" | "labels" =
 export const unlistedPasses = (
   entries: readonly RuleEntry[],
   passes: readonly LabelPass[],
-): readonly string[] => [
-  ...new Set(entries.map((entry) => entry.pass).filter((pass) => !passes.includes(pass))),
-].sort();
+): readonly string[] =>
+  [...new Set(entries.map((entry) => entry.pass).filter((pass) => !passes.includes(pass)))].sort();
 
 /** The passes that carry at least one label. */
-export const labeledPasses = (entries: readonly RuleEntry[]): readonly string[] => [
-  ...new Set(entries.filter((entry) => entry.truth !== undefined).map((entry) => entry.pass)),
-].sort();
+export const labeledPasses = (entries: readonly RuleEntry[]): readonly string[] =>
+  [
+    ...new Set(entries.filter((entry) => entry.truth !== undefined).map((entry) => entry.pass)),
+  ].sort();
 
 /** The gate table: one row per rule and pass, with the base rate and the lift. */
 export const formatGate = (rules: readonly GateRule[]): string =>
@@ -548,15 +550,13 @@ export const formatGate = (rules: readonly GateRule[]): string =>
         pass.pass,
         String(pass.labeled),
         pass.labeled === 0 ? "—" : percent(pass.agreement),
-        pass.labeled === 0 ? "—" : pass.advisory ? `thin (${pass.baseLabeled})` : percent(pass.base),
         pass.labeled === 0
           ? "—"
-          : `${signedPercent(pass.lift)}${pass.advisory ? " advisory" : ""}`,
-        rule.verdict === "abstain"
-          ? "reported, not promotable"
-          : pass.qualifies
-            ? "PASS"
-            : "fail",
+          : pass.advisory
+            ? `thin (${pass.baseLabeled})`
+            : percent(pass.base),
+        pass.labeled === 0 ? "—" : `${signedPercent(pass.lift)}${pass.advisory ? " advisory" : ""}`,
+        rule.verdict === "abstain" ? "reported, not promotable" : pass.qualifies ? "PASS" : "fail",
       ]),
     ),
   );
@@ -577,16 +577,10 @@ export const formatUnmeasured = (
  * corpus never did, so a promotion keeps them and checks only that it did not
  * drop them.
  */
-export const OLD_FLOOR: ReadonlySet<string> = new Set([
-  "names-batch-output",
-  "no-visible-link",
-]);
+export const OLD_FLOOR: ReadonlySet<string> = new Set(["names-batch-output", "no-visible-link"]);
 
 /** The old corpus' superset check: the floor is kept, the rest is unmeasured here. */
-export const formatFloor = (
-  accepted: ReadonlySet<string>,
-  floor: ReadonlySet<string>,
-): string => {
+export const formatFloor = (accepted: ReadonlySet<string>, floor: ReadonlySet<string>): string => {
   const missing = [...floor].filter((rule) => !accepted.has(rule)).sort();
   const unmeasured = [...accepted].filter((rule) => !floor.has(rule)).sort();
   return [
@@ -769,7 +763,10 @@ const writeGate = (
   body: Record<string, unknown>,
 ): void => {
   mkdirSync(evidence, { recursive: true });
-  writeFileSync(join(evidence, "gate.json"), `${JSON.stringify({ rows: gate, ...body }, null, 2)}\n`);
+  writeFileSync(
+    join(evidence, "gate.json"),
+    `${JSON.stringify({ rows: gate, ...body }, null, 2)}\n`,
+  );
 };
 
 /** The declared corpus: frozen facts, explicit passes, the control base rate. */
@@ -786,13 +783,19 @@ const declaredReport = (options: Options, format: string | undefined): number =>
   const labeled = entries.filter((entry) => entry.truth !== undefined).length;
   const passLabel = fromSample === undefined ? "from records (no sample)" : passes.join(", ");
 
-  console.log(`corpus: ${real.cases.length} cases, ${entries.length} questions, ${labeled} labeled`);
+  console.log(
+    `corpus: ${real.cases.length} cases, ${entries.length} questions, ${labeled} labeled`,
+  );
   console.log(`format: ${format ?? "unknown"}`);
   console.log(`passes: ${passLabel}`);
-  console.log(`sources: live ${sources.live}, replayed ${sources.replayed}, mismatch ${sources.mismatch}, unresolved ${sources.unresolved}`);
+  console.log(
+    `sources: live ${sources.live}, replayed ${sources.replayed}, mismatch ${sources.mismatch}, unresolved ${sources.unresolved}`,
+  );
   console.log(`base: ${gateBase(entries)}`);
 
-  const labeledList = [...new Set(entries.filter((entry) => entry.truth !== undefined).map((entry) => entry.pass))];
+  const labeledList = [
+    ...new Set(entries.filter((entry) => entry.truth !== undefined).map((entry) => entry.pass)),
+  ];
   if (labeledList.length === 0) {
     console.log("");
     console.log(formatUnmeasured(declaredRows));
@@ -820,7 +823,10 @@ const declaredReport = (options: Options, format: string | undefined): number =>
   const measured = promotableAccepted(gate);
   const promotion = new Set([...OLD_FLOOR, ...measured]);
   const unmeasured = declaredRows
-    .filter((row) => !gate.some((rule) => rule.rule === row.row && rule.passes.some((pass) => pass.labeled > 0)))
+    .filter(
+      (row) =>
+        !gate.some((rule) => rule.rule === row.row && rule.passes.some((pass) => pass.labeled > 0)),
+    )
     .map((row) => row.row);
   if (options.evidence !== undefined) {
     writeGate(options.evidence, gate, {
@@ -846,9 +852,7 @@ const declaredReport = (options: Options, format: string | undefined): number =>
   const match = sameRuleSet(ACCEPTED_RULES, promotion);
   console.log(
     `\nACCEPTED_RULES: ${[...ACCEPTED_RULES].sort().join(", ")} — ${
-      match
-        ? "MATCH"
-        : `MISMATCH (promotion: ${[...promotion].sort().join(", ") || "(none)"})`
+      match ? "MATCH" : `MISMATCH (promotion: ${[...promotion].sort().join(", ") || "(none)"})`
     }`,
   );
   return match ? 0 : 1;

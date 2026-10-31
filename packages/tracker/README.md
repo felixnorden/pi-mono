@@ -304,24 +304,24 @@ Registration lives in `package.json` under the `pi` field:
 
 ## Development
 
-| Command                  | Purpose                                                      |
-| ------------------------ | ------------------------------------------------------------ |
-| `bun run test`           | Run the test suite (vitest + @effect/vitest)                 |
-| `bun run test:watch`     | Run the test suite in watch mode                             |
-| `bun run typecheck`      | Type check with `tsc --noEmit`                               |
-| `bun run lint`           | Lint with oxlint                                             |
-| `bun run eval:harvest`   | Harvest the frozen legacy corpus from local sessions         |
-| `bun run eval:harvest:v2`| Harvest only declared-format cases into `evals/data/v2`       |
-| `bun run eval:facts`     | Freeze the declared facts and print the pre-flight verdict   |
-| `bun run eval:sample`    | Draw the seeded, quota-based label sample                    |
-| `bun run eval:review`    | Render the corpus as a markdown review pack                  |
-| `bun run eval:label`     | Label the sample in a terminal                               |
-| `bun run eval:audit`     | Replay sampled facts against today's disk                    |
-| `bun run eval:rules`     | Print the rule tables and the promotion gate                 |
-| `bun run eval:promote`   | Add a measured row to `ACCEPTED_RULES` (v2 only)             |
-| `bun run eval:answers`   | Freeze classifier answers for the sampled heads              |
-| `bun run eval:score`     | Score a frozen answer file against the labels                |
-| `bun run eval:freeze`    | Freeze the labeled corpus and write `report.md`              |
+| Command                   | Purpose                                                    |
+| ------------------------- | ---------------------------------------------------------- |
+| `bun run test`            | Run the test suite (vitest + @effect/vitest)               |
+| `bun run test:watch`      | Run the test suite in watch mode                           |
+| `bun run typecheck`       | Type check with `tsc --noEmit`                             |
+| `bun run lint`            | Lint with oxlint                                           |
+| `bun run eval:harvest`    | Harvest the frozen legacy corpus from local sessions       |
+| `bun run eval:harvest:v2` | Harvest only declared-format cases into `evals/data/v2`    |
+| `bun run eval:facts`      | Freeze the declared facts and print the pre-flight verdict |
+| `bun run eval:sample`     | Draw the seeded, quota-based label sample                  |
+| `bun run eval:review`     | Render the corpus as a markdown review pack                |
+| `bun run eval:label`      | Label the sample in a terminal                             |
+| `bun run eval:audit`      | Replay sampled facts against today's disk                  |
+| `bun run eval:rules`      | Print the rule tables and the promotion gate               |
+| `bun run eval:promote`    | Add a measured row to `ACCEPTED_RULES` (v2 only)           |
+| `bun run eval:answers`    | Freeze classifier answers for the sampled heads            |
+| `bun run eval:score`      | Score a frozen answer file against the labels              |
+| `bun run eval:freeze`     | Freeze the labeled corpus and write `report.md`            |
 
 ### Eval corpora
 

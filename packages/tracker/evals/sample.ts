@@ -291,9 +291,11 @@ export const formatSampleTable = (
       .map((value, column) => value.padEnd(widths[column]!))
       .join("  ")
       .trimEnd();
-  return [line(header), widths.map((width) => "─".repeat(width)).join("  "), ...cells.map(line)].join(
-    "\n",
-  );
+  return [
+    line(header),
+    widths.map((width) => "─".repeat(width)).join("  "),
+    ...cells.map(line),
+  ].join("\n");
 };
 
 interface Options {
@@ -382,7 +384,10 @@ const main = (): void => {
   process.stdout.write(
     `\nsample: ${Object.values(sample.passes)
       .flatMap((pass) => pass.sittings)
-      .reduce((total, sitting) => total + sitting.cards.length, 0)} cards, ${sample.pilot.length} pilot seeds, seed ${options.seed}\n`,
+      .reduce(
+        (total, sitting) => total + sitting.cards.length,
+        0,
+      )} cards, ${sample.pilot.length} pilot seeds, seed ${options.seed}\n`,
   );
 };
 

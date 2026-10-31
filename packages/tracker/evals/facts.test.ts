@@ -242,10 +242,7 @@ describe("preflight", () => {
   it("stops a thin corpus", () => {
     const result = preflight(factsFiring(12, "reference-is-readable"));
     assert.strictEqual(result.stop, true);
-    assert.strictEqual(
-      result.rows.find((row) => row.row === "reference-is-readable")?.perPass,
-      6,
-    );
+    assert.strictEqual(result.rows.find((row) => row.row === "reference-is-readable")?.perPass, 6);
     assert.match(formatPreflight(result), /6 per pass/);
     assert.match(formatPreflight(result), /STOP:/);
   });
@@ -253,10 +250,7 @@ describe("preflight", () => {
   it("passes a thick corpus", () => {
     const result = preflight(factsFiring(40, "reference-is-readable"));
     assert.strictEqual(result.stop, false);
-    assert.strictEqual(
-      result.rows.find((row) => row.row === "reference-is-readable")?.perPass,
-      20,
-    );
+    assert.strictEqual(result.rows.find((row) => row.row === "reference-is-readable")?.perPass, 20);
     assert.match(formatPreflight(result), /20 per pass/);
     assert.match(formatPreflight(result), /measured/);
   });

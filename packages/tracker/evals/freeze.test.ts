@@ -45,9 +45,28 @@ const fixture = (): string => {
   writeFileSync(
     join(dir, "labels.jsonl"),
     [
-      { caseId: "a", key: "k0", label: "stands-alone", at: "2026-10-24T13:00:00.000Z", pass: "v2-a" },
-      { caseId: "b", key: "k0", label: "needs-context", at: "2026-10-24T13:01:00.000Z", pass: "v2-a" },
-      { caseId: "p1", key: "k0", label: "stands-alone", at: "2026-10-24T13:02:00.000Z", pass: "v2-a", pilot: true },
+      {
+        caseId: "a",
+        key: "k0",
+        label: "stands-alone",
+        at: "2026-10-24T13:00:00.000Z",
+        pass: "v2-a",
+      },
+      {
+        caseId: "b",
+        key: "k0",
+        label: "needs-context",
+        at: "2026-10-24T13:01:00.000Z",
+        pass: "v2-a",
+      },
+      {
+        caseId: "p1",
+        key: "k0",
+        label: "stands-alone",
+        at: "2026-10-24T13:02:00.000Z",
+        pass: "v2-a",
+        pilot: true,
+      },
     ]
       .map((row) => JSON.stringify(row))
       .join("\n")
@@ -115,7 +134,9 @@ describe("buildReport", () => {
               rule: "reference-is-readable",
               verdict: "compact",
               accepted: true,
-              passes: [{ pass: "v2-a", labeled: 25, agreement: 1, base: 0.5, lift: 0.5, qualifies: true }],
+              passes: [
+                { pass: "v2-a", labeled: 25, agreement: 1, base: 0.5, lift: 0.5, qualifies: true },
+              ],
             },
           ],
           accepted: ["reference-is-readable"],

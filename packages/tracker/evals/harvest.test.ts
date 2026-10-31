@@ -216,7 +216,10 @@ describe("stored item declarations", () => {
         lists: [
           {
             ...declaredState.lists[0]!,
-            items: [{ ...declaredState.lists[0]!.items[0]!, done: true }, declaredState.lists[0]!.items[1]!],
+            items: [
+              { ...declaredState.lists[0]!.items[0]!, done: true },
+              declaredState.lists[0]!.items[1]!,
+            ],
           },
         ],
       }),

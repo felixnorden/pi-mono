@@ -28,8 +28,7 @@ export interface PassRecord {
 }
 
 /** An explicit pass wins; an old record falls back to the timestamp split. */
-export const passOfRecord = (record: PassRecord): LabelPass =>
-  record.pass ?? passOf(record.at);
+export const passOfRecord = (record: PassRecord): LabelPass => record.pass ?? passOf(record.at);
 
 export const partitionByPass = <T extends { readonly at: string }>(
   rows: readonly T[],

@@ -24,10 +24,7 @@ export interface StoredSurprise {
 }
 
 /** Append one surprise row. The caller owns the file. */
-export const recordSurprise = (
-  records: StoredSurprise[],
-  surprise: StoredSurprise,
-): void => {
+export const recordSurprise = (records: StoredSurprise[], surprise: StoredSurprise): void => {
   records.push(surprise);
 };
 
@@ -132,10 +129,7 @@ export const labeledPairs = (
 ): readonly LabeledPair[] => {
   const keys = new Map<string, ReadonlySet<string>>();
   for (const entry of cases) {
-    keys.set(
-      entry.caseId,
-      new Set(entry.questions.map((question) => question.key)),
-    );
+    keys.set(entry.caseId, new Set(entry.questions.map((question) => question.key)));
   }
   const pairs: LabeledPair[] = [];
   for (const record of records) {
@@ -200,9 +194,7 @@ const matchesFocus = (
   candidate: { readonly refs?: readonly unknown[]; readonly produces?: readonly unknown[] },
   focus: QueueOptions["focus"],
 ): boolean =>
-  focus === undefined ||
-  focus === "all" ||
-  (focus === "declared") === declaredCandidate(candidate);
+  focus === undefined || focus === "all" || (focus === "declared") === declaredCandidate(candidate);
 
 /**
  * Walk the sample's stored order. A sitting contributes its pilot seeds first,
@@ -261,10 +253,11 @@ export const buildQueue = (
   evidence: ReadonlyMap<string, StoredEvidence>,
   options: QueueOptions,
 ): readonly QueueCase[] => {
-  if (options.sample !== undefined) return buildSampledQueue(cases, evidence, {
-    ...options,
-    sample: options.sample,
-  });
+  if (options.sample !== undefined)
+    return buildSampledQueue(cases, evidence, {
+      ...options,
+      sample: options.sample,
+    });
   const queue: QueueCase[] = [];
   let candidates = 0;
   for (const entry of cases) {
@@ -635,7 +628,12 @@ export const renderCandidate = (
     }
     for (const reference of shownFacts?.references ?? []) {
       lines.push(
-        indented(`${describeReference(reference.reference)}: ${reference.state}`, width, "    ", paint.dim),
+        indented(
+          `${describeReference(reference.reference)}: ${reference.state}`,
+          width,
+          "    ",
+          paint.dim,
+        ),
       );
     }
     for (const product of shownFacts?.products ?? []) {
@@ -643,9 +641,7 @@ export const renderCandidate = (
     }
     if (revealed && shownFacts !== undefined) {
       lines.push("", indented("ROW", width, "  ", paint.dim));
-      lines.push(
-        indented(`${shownFacts.row} (${shownFacts.verdict})`, width, "    ", paint.bold),
-      );
+      lines.push(indented(`${shownFacts.row} (${shownFacts.verdict})`, width, "    ", paint.bold));
       lines.push(indented(`resolution: ${facts.source}`, width, "    ", paint.dim));
     }
   }
@@ -812,10 +808,7 @@ export const passRefusal = (
 };
 
 /** The sample's pass split and its declared/control mix, for `--report`. */
-export const formatSampleSplit = (
-  sample: LabelSample,
-  cases: readonly StoredCase[],
-): string => {
+export const formatSampleSplit = (sample: LabelSample, cases: readonly StoredCase[]): string => {
   const declared = new Set(
     cases
       .filter((entry) => {

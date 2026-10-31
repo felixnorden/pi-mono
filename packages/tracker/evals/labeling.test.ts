@@ -615,7 +615,11 @@ describe("a sampled queue", () => {
   });
 
   it("asks only the head question of a sampled case", () => {
-    const cases = [caseOf("c1", ["ready-queue"]), caseOf("c2", ["ready-queue"]), caseOf("c3", ["ready-queue"])];
+    const cases = [
+      caseOf("c1", ["ready-queue"]),
+      caseOf("c2", ["ready-queue"]),
+      caseOf("c3", ["ready-queue"]),
+    ];
     const queue = buildQueue(cases, new Map(), {
       answered: new Map(),
       sample: sampleOf({ "v2-a": ["c1", "c2"] }),
@@ -631,7 +635,11 @@ describe("a sampled queue", () => {
   });
 
   it("walks the stored order, not the corpus order", () => {
-    const cases = [caseOf("c1", ["ready-queue"]), caseOf("c2", ["ready-queue"]), caseOf("c3", ["ready-queue"])];
+    const cases = [
+      caseOf("c1", ["ready-queue"]),
+      caseOf("c2", ["ready-queue"]),
+      caseOf("c3", ["ready-queue"]),
+    ];
     const queue = buildQueue(cases, new Map(), {
       answered: new Map(),
       sample: sampleOf({ "v2-a": ["c3", "c1", "c2"] }),
@@ -869,7 +877,10 @@ describe("the candidate card", () => {
   it("shows unresolved before the answer", () => {
     const queue = buildQueue([declaredCase()], new Map(), { answered: new Map() });
     const rendered = renderCandidate(queue[0]!, queue[0]!.pending[0]!, 1, 100, undefined, {
-      facts: { ...factsFor({ source: "unresolved", row: "" }), head: { ...factsFor().head, references: [] } },
+      facts: {
+        ...factsFor({ source: "unresolved", row: "" }),
+        head: { ...factsFor().head, references: [] },
+      },
       revealed: false,
     });
     assert.match(rendered, /unresolved/);
@@ -949,7 +960,11 @@ describe("the pilot sitting", () => {
   } as unknown as LabelSample;
 
   it("queues the pilot ids as ordinary cards, in sample order", () => {
-    const cases = [caseOf("a", ["ready-queue"]), caseOf("p1", ["ready-queue"]), caseOf("p2", ["ready-queue"])];
+    const cases = [
+      caseOf("a", ["ready-queue"]),
+      caseOf("p1", ["ready-queue"]),
+      caseOf("p2", ["ready-queue"]),
+    ];
     const queue = buildQueue(cases, new Map(), { answered: new Map(), sample, pilot: true });
     assert.deepStrictEqual(
       queue.map((entry) => [entry.entry.caseId, entry.pilot === true]),

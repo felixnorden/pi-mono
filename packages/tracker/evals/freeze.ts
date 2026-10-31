@@ -163,20 +163,31 @@ export const buildReport = (dir: string, evidence: string = dir): string => {
     source?: { from?: string | null; to?: string | null };
   }>(join(dir, "manifest.json"));
   const sample = readObject<LabelSample>(join(dir, "sample.json"));
-  const gate = readObject<GateArtifact>(join(evidence, "gate.json")) ?? readObject<GateArtifact>(join(dir, "gate.json"));
-  const audit = readJsonl<{ readonly caseId: string; readonly row: string; readonly verdict: string }>(
-    join(evidence, "audit.jsonl"),
-  );
-  const auditFallback = audit.length === 0
-    ? readJsonl<{ readonly caseId: string; readonly row: string; readonly verdict: string }>(
-        join(dir, "audit.jsonl"),
-      )
-    : audit;
+  const gate =
+    readObject<GateArtifact>(join(evidence, "gate.json")) ??
+    readObject<GateArtifact>(join(dir, "gate.json"));
+  const audit = readJsonl<{
+    readonly caseId: string;
+    readonly row: string;
+    readonly verdict: string;
+  }>(join(evidence, "audit.jsonl"));
+  const auditFallback =
+    audit.length === 0
+      ? readJsonl<{ readonly caseId: string; readonly row: string; readonly verdict: string }>(
+          join(dir, "audit.jsonl"),
+        )
+      : audit;
   const labels = readJsonl<LabelRecord>(join(dir, "labels.jsonl"));
   const surprises = readJsonl<StoredSurprise>(join(dir, "surprises.jsonl"));
-  const score = readObject<{ readonly model?: string; readonly rows?: readonly { readonly name: string; readonly cases: number; readonly falseCompact: number; readonly caseAccuracy: number }[] }>(
-    join(evidence, "score.json"),
-  );
+  const score = readObject<{
+    readonly model?: string;
+    readonly rows?: readonly {
+      readonly name: string;
+      readonly cases: number;
+      readonly falseCompact: number;
+      readonly caseAccuracy: number;
+    }[];
+  }>(join(evidence, "score.json"));
 
   const lines: string[] = ["# Smart Compaction Eval v2 — report", ""];
   lines.push("## Corpus", "");
@@ -236,7 +247,9 @@ export const buildReport = (dir: string, evidence: string = dir): string => {
   if (gate === undefined) {
     lines.push("- (missing)");
   } else {
-    lines.push(`- passes: ${gate.passes?.list?.join(", ") ?? "(missing)"} (${gate.passes?.source ?? "unknown"})`);
+    lines.push(
+      `- passes: ${gate.passes?.list?.join(", ") ?? "(missing)"} (${gate.passes?.source ?? "unknown"})`,
+    );
     lines.push(`- base: ${gate.base ?? "(missing)"}`);
     lines.push(
       `- sources: ${Object.entries(gate.sources ?? {})
@@ -268,7 +281,9 @@ export const buildReport = (dir: string, evidence: string = dir): string => {
     lines.push("- (missing)");
   } else {
     for (const tally of auditTallies(auditFallback)) {
-      lines.push(`- ${tally.row}: ${tally.match + tally.mismatch} sampled, ${tally.match} match, ${tally.mismatch} mismatch`);
+      lines.push(
+        `- ${tally.row}: ${tally.match + tally.mismatch} sampled, ${tally.match} match, ${tally.mismatch} mismatch`,
+      );
     }
   }
   lines.push("");

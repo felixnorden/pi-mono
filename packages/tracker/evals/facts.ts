@@ -27,10 +27,7 @@ import {
   type StoredEvidence,
   type StoredDecision,
 } from "./case-file.ts";
-import {
-  footprintOf,
-  GATE_MIN_LABELED,
-} from "./rules.ts";
+import { footprintOf, GATE_MIN_LABELED } from "./rules.ts";
 import { freezeRefusal } from "./harvest.ts";
 import { sessionProbe } from "./probe.ts";
 import {
@@ -369,16 +366,13 @@ export const preflight = (cases: readonly CaseFacts[]): Preflight => {
       verdict,
       heads,
       perPass,
-      status:
-        verdict === "abstain" ? "reported" : perPass >= GATE_MIN_LABELED ? "measure" : "thin",
+      status: verdict === "abstain" ? "reported" : perPass >= GATE_MIN_LABELED ? "measure" : "thin",
     });
   };
   for (const row of REPORT_ROWS) add(row);
   for (const row of [...counts.keys()].sort()) if (!rows.has(row)) add(row);
   const ordered = [...rows.values()];
-  const measured = ordered
-    .filter((row) => row.status === "measure")
-    .map((row) => row.row);
+  const measured = ordered.filter((row) => row.status === "measure").map((row) => row.row);
   const stop = measured.length === 0;
   return {
     rows: ordered,
@@ -567,7 +561,10 @@ const main = (): number => {
 
   writeFileSync(
     join(options.out, "facts.jsonl"),
-    facts.map((entry) => JSON.stringify(entry)).join("\n").concat("\n"),
+    facts
+      .map((entry) => JSON.stringify(entry))
+      .join("\n")
+      .concat("\n"),
   );
   if (options.evidence !== undefined) {
     mkdirSync(options.evidence, { recursive: true });

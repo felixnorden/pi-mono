@@ -41,9 +41,7 @@ describe("drawAudit", () => {
   it("samples each declared row separately", () => {
     const facts = [
       ...Array.from({ length: 12 }, (_, index) => factsOf(`a-${index}`, "readable")),
-      ...Array.from({ length: 12 }, (_, index) =>
-        factsOf(`b-${index}`, "unresolved", "replayed"),
-      ),
+      ...Array.from({ length: 12 }, (_, index) => factsOf(`b-${index}`, "unresolved", "replayed")),
     ];
     const picked = drawAudit(facts, 10, 7);
     assert.strictEqual(picked.length, 20);

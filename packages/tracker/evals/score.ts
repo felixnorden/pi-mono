@@ -216,7 +216,10 @@ export const formatScore = (report: ScoreReport): string => {
     Math.max(name.length, ...cells.map((line) => line[column]!.length)),
   );
   const line = (values: readonly string[]): string =>
-    values.map((value, column) => value.padEnd(widths[column]!)).join("  ").trimEnd();
+    values
+      .map((value, column) => value.padEnd(widths[column]!))
+      .join("  ")
+      .trimEnd();
   const point = `${(DEFAULT_NEEDS_CONTEXT_PROBABILITY_THRESHOLD * 100).toFixed(0)}% needs-context, ${(DEFAULT_MIN_ANSWER_CONFIDENCE * 100).toFixed(0)}% confidence`;
   return [
     `model: ${report.model}`,

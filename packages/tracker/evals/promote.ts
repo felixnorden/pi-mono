@@ -191,7 +191,10 @@ const corpusFormat = (out: string): string | undefined => {
 };
 
 /** The corpus' pass list: the sample's keys, else the passes the records carry. */
-const passesOf = (out: string, entries: readonly import("./rules.ts").RuleEntry[]): readonly string[] => {
+const passesOf = (
+  out: string,
+  entries: readonly import("./rules.ts").RuleEntry[],
+): readonly string[] => {
   try {
     const sample = JSON.parse(readFileSync(join(out, "sample.json"), "utf8")) as {
       passes?: Record<string, unknown>;
@@ -237,10 +240,7 @@ const main = (): number => {
   }
   const { cases, evidence, labels } = readCorpus(options.out);
   const facts = new Map(
-    readOptional<CaseFacts>(join(options.out, "facts.jsonl")).map((entry) => [
-      entry.caseId,
-      entry,
-    ]),
+    readOptional<CaseFacts>(join(options.out, "facts.jsonl")).map((entry) => [entry.caseId, entry]),
   );
   const entries = productionEntries(cases, evidence, labels, facts).entries;
   const refusal = corpusRefusal(entries);

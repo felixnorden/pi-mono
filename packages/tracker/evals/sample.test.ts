@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import type { CaseFacts } from "./facts.ts";
-import {
-  drawSample,
-  formatSampleTable,
-  type LabelSample,
-  type SampleRow,
-} from "./sample.ts";
+import { drawSample, formatSampleTable, type LabelSample, type SampleRow } from "./sample.ts";
 
 const factsOf = (
   caseId: string,
@@ -75,9 +70,7 @@ const sampleOf = (facts: readonly CaseFacts[], seed = 7): LabelSample =>
   }).sample;
 
 const cardsOf = (sample: LabelSample): readonly string[] =>
-  Object.values(sample.passes).flatMap((pass) =>
-    pass.sittings.flatMap((sitting) => sitting.cards),
-  );
+  Object.values(sample.passes).flatMap((pass) => pass.sittings.flatMap((sitting) => sitting.cards));
 
 describe("drawSample", () => {
   it("writes the same sample for the same seed", () => {
@@ -150,10 +143,7 @@ describe("drawSample", () => {
   });
 
   it("assigns a case to exactly one pass and keeps the pilot out of both", () => {
-    const facts = [
-      ...corpusOf("reference-is-readable", 120),
-      ...controlsOf(200),
-    ];
+    const facts = [...corpusOf("reference-is-readable", 120), ...controlsOf(200)];
     const sample = sampleOf(facts);
     const seen = new Set<string>();
     for (const pass of Object.values(sample.passes)) {

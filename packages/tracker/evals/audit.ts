@@ -15,10 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readJsonl, type StoredCase, type StoredEvidence } from "./case-file.ts";
 import { hideSessionIdsDeep } from "./evidence-redact.ts";
-import {
-  caseFacts,
-  type CaseFacts,
-} from "./facts.ts";
+import { caseFacts, type CaseFacts } from "./facts.ts";
 import { sessionProbe } from "./probe.ts";
 import { seededShuffle } from "./sample.ts";
 
@@ -50,16 +47,20 @@ export const drawAudit = (
     .flatMap(([, cases]) => seededShuffle(cases, seed).slice(0, perRow));
 };
 
-const referenceKeyOf = (reference: { readonly kind: string; readonly path?: string; readonly topic?: string }): string =>
-  reference.kind === "decision" ? `decision:${reference.topic ?? ""}` : `path:${reference.path ?? ""}`;
+const referenceKeyOf = (reference: {
+  readonly kind: string;
+  readonly path?: string;
+  readonly topic?: string;
+}): string =>
+  reference.kind === "decision"
+    ? `decision:${reference.topic ?? ""}`
+    : `path:${reference.path ?? ""}`;
 
 /** Compare one frozen case with its fresh replay. States are named on a mismatch. */
 export const auditRow = (frozen: CaseFacts, current: CaseFacts): AuditRow => {
   for (const reference of frozen.head.references) {
     const key = referenceKeyOf(reference.reference);
-    const now = current.head.references.find(
-      (entry) => referenceKeyOf(entry.reference) === key,
-    );
+    const now = current.head.references.find((entry) => referenceKeyOf(entry.reference) === key);
     if (now === undefined || now.state !== reference.state) {
       return {
         caseId: frozen.caseId,
@@ -183,21 +184,23 @@ const main = (): void => {
   for (const entry of picked) {
     const stored = byId.get(entry.caseId);
     if (stored === undefined) continue;
-    const current = caseFacts(
-      stored,
-      evidence.get(stored.caseId),
-      sessionProbe(stored.sessionCwd),
-    );
+    const current = caseFacts(stored, evidence.get(stored.caseId), sessionProbe(stored.sessionCwd));
     rows.push(auditRow(entry, current));
   }
   mkdirSync(options.out, { recursive: true });
-  const serialized = rows.map((row) => JSON.stringify(row)).join("\n").concat("\n");
+  const serialized = rows
+    .map((row) => JSON.stringify(row))
+    .join("\n")
+    .concat("\n");
   writeFileSync(join(options.out, "audit.jsonl"), serialized);
   if (options.evidence !== undefined) {
     mkdirSync(options.evidence, { recursive: true });
     writeFileSync(
       join(options.evidence, "audit.jsonl"),
-      rows.map((row) => JSON.stringify(hideSessionIdsDeep(row))).join("\n").concat("\n"),
+      rows
+        .map((row) => JSON.stringify(hideSessionIdsDeep(row)))
+        .join("\n")
+        .concat("\n"),
     );
   }
   process.stdout.write(`${formatAudit(rows)}\n`);

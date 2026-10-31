@@ -124,9 +124,11 @@ const main = async (): Promise<void> => {
   }
   // The sample is a single JSON object, read with the platform loader.
   const sample = readSample(options.out);
-  const labels = readJsonl<{ readonly caseId: string; readonly key: string; readonly pilot?: boolean }>(
-    join(options.out, "labels.jsonl"),
-  ).filter((row) => row.pilot !== true);
+  const labels = readJsonl<{
+    readonly caseId: string;
+    readonly key: string;
+    readonly pilot?: boolean;
+  }>(join(options.out, "labels.jsonl")).filter((row) => row.pilot !== true);
   const labeled = new Set(labels.map((row) => `${row.caseId}\u0000${row.key}`));
   const facts = new Map(
     readJsonl<CaseFacts>(join(options.out, "facts.jsonl")).map((entry) => [entry.caseId, entry]),
