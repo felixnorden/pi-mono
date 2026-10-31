@@ -1,5 +1,53 @@
 # @ftrdotdev/pi-inquiry
 
+## 0.8.0
+
+### Minor Changes
+
+- 9e0dd29: Add an optional per-option `recommended` flag to the `question` tool. The tool
+  shows a `✓` marker in a reserved column left of the option label.
+
+  - `options[].recommended` (default `false`) marks the option the model suggests.
+    On a multi-select question (`multiple: true`), the model can recommend any
+    number of options. On a single-choice question, the tool rejects two or more
+    recommendations as invalid parameters. The tool does not trim the
+    recommendations.
+  - This release changes the layout. Every option-block row now reserves a two-cell
+    marker column. Option labels, the multi-select checkbox, and the
+    "Add your own answer" row move two columns right. Option descriptions and the
+    "Current answer" subtitle move two columns right too. Their offset from the
+    label is unchanged.
+  - The tool description, the `recommended` field description, and the five prompt
+    guidelines use short imperative sentences. The model reads the same rules and
+    defaults as before.
+
+### Patch Changes
+
+- c294fe5: Bump the Effect packages to `4.1.1`, `@effect/tsgo` to `0.63.0`, `vitest` to
+  `5.0.5`, and the Pi packages to `1.4.0`.
+
+  - `effect`, `@effect/platform-node`, `@effect/platform-node-shared`, and
+    `@effect/vitest` move from `4.0.0` to `4.1.1`; `@effect/tsgo` moves from
+    `0.47.2` to `0.63.0`.
+  - `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and
+    `@earendil-works/pi-tui` move from `1.1.0` to `1.4.0`. No extension API
+    changes were needed.
+  - `vitest` moves from the 4.1 line to `5.0.5`, the range that
+    `@effect/vitest` declares as its peer. `oxlint` moves to `1.90.0` and
+    `oxlint-tsgolint` to `7.0.2005`, the pair that `@effect/tsgo` 0.63.0 supports.
+  - Effect 4.1.1 marks `effect/FileSystem`, `effect/Path`, `effect/PlatformError`,
+    `effect/Graph`, `@effect/platform-node*`, and `@effect/vitest` as unstable.
+    Each package `tsconfig.json` now lists them in the language-service plugin
+    option `allowedUnstableApis`, so typecheck stays green without per-file
+    `@effect-diagnostics` directives.
+  - The internal `TuiConfig` schema in `pi-tui` is now a `Schema.Struct` with a type
+    alias instead of a `Schema.Class`. The class was only ever used as plain data,
+    and the 4.1.1 `schemaClassObjectLiteral` rule flagged every literal and spread.
+    `TuiConfig` is not part of the package exports, so no consumer code changes.
+
+- Updated dependencies [c294fe5]
+  - @ftrdotdev/pi-tui@0.8.0
+
 ## 0.7.0
 
 ### Patch Changes
