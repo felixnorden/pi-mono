@@ -155,6 +155,21 @@ const breakLongSpan = (token: Span, width: number): readonly Span[][] => {
   return chunks.map((text) => [{ text, style: token.style, bold: token.bold }]);
 };
 
+/** Description and subtitle indent for the option block: seven cells, two more than before the marker column. */
+const OPTION_TEXT_INDENT = "       ";
+
+/**
+ * The option block's left gutter: the cursor cell, then the reserved marker
+ * column. Every row reserves the column, so the block has one geometry
+ * regardless of question data. The `✓` is the tab bar's success glyph. The
+ * cell after `✓` stays blank, so labels start at the same column with or
+ * without a recommendation.
+ */
+const optionRowPrefix = (selected: boolean, recommended: boolean): SceneLine => [
+  selected ? span("→ ", "accent") : span("  "),
+  recommended ? span("✓ ", "success") : span("  "),
+];
+
 /**
  * Build the scene for the current machine state.
  *
@@ -174,16 +189,16 @@ export const buildScene = (state: MachineState, width: number): Scene => {
   const question = state.questions[state.currentTab];
   const options = currentOptions(state);
 
-  const pushWrapped = (prefix: Span, content: SceneLine): void => {
-    const prefixWidth = visibleWidth(prefix.text);
+  const pushWrapped = (prefix: SceneLine, content: SceneLine): void => {
+    const prefixWidth = visibleWidth(plain(prefix));
     if (prefixWidth >= contentWidth) {
-      lines.push([prefix, ...content]);
+      lines.push([...prefix, ...content]);
       return;
     }
     const wrapped = wrapLine(content, contentWidth - prefixWidth);
     for (let i = 0; i < wrapped.length; i++) {
       lines.push(
-        i === 0 ? [prefix, ...wrapped[i]!] : [span(" ".repeat(prefixWidth)), ...wrapped[i]!],
+        i === 0 ? [...prefix, ...wrapped[i]!] : [span(" ".repeat(prefixWidth)), ...wrapped[i]!],
       );
     }
   };
@@ -199,14 +214,17 @@ export const buildScene = (state: MachineState, width: number): Scene => {
       const isOther = option.isOther;
       const labelText = `${i + 1}. ${option.label}${isOther && state.inputMode ? " ✎" : ""}`;
       const color = selected || (isOther && state.inputMode) ? "accent" : "text";
-      pushWrapped(selected ? span("→ ", "accent") : span("  "), [span(labelText, color)]);
+      pushWrapped(optionRowPrefix(selected, option.recommended), [span(labelText, color)]);
       if (option.description) {
-        pushWrapped(span("     "), [span(option.description, "muted")]);
+        pushWrapped([span(OPTION_TEXT_INDENT)], [span(option.description, "muted")]);
       } else if (option.isOther && !state.inputMode && question) {
         // Show an existing custom answer as a subtitle under "Type something".
         const answer = state.answers.get(question.id)?.[0];
         if (answer?.wasCustom) {
-          pushWrapped(span("     "), [span(`Current answer: ${answer.label}`, "muted")]);
+          pushWrapped(
+            [span(OPTION_TEXT_INDENT)],
+            [span(`Current answer: ${answer.label}`, "muted")],
+          );
         }
       }
     }
@@ -234,11 +252,11 @@ export const buildScene = (state: MachineState, width: number): Scene => {
       } else {
         labelText = "+ Add your own answer";
       }
-      pushWrapped(selected ? span("→ ", "accent") : span("  "), [
+      pushWrapped(optionRowPrefix(selected, entry.kind === "option" && entry.recommended), [
         span(labelText, selected ? "accent" : "text"),
       ]);
       if (description) {
-        pushWrapped(span("     "), [span(description, "muted")]);
+        pushWrapped([span(OPTION_TEXT_INDENT)], [span(description, "muted")]);
       }
     }
   };
@@ -265,17 +283,17 @@ export const buildScene = (state: MachineState, width: number): Scene => {
       isSubmitTab ? span(submitText, "accent") : span(submitText, canSubmit ? "success" : "dim"),
       span(" →"),
     );
-    pushWrapped(span(" "), tabs);
+    pushWrapped([span(" ")], tabs);
     lines.push([]);
   }
 
   // Content
   if (state.inputMode && question) {
-    pushWrapped(span(" "), [span(question.prompt, "text")]);
+    pushWrapped([span(" ")], [span(question.prompt, "text")]);
     lines.push([]);
     renderOptions();
     lines.push([]);
-    pushWrapped(span(" "), [span("Your answer:", "muted")]);
+    pushWrapped([span(" ")], [span("Your answer:", "muted")]);
     // The editor box spans the content between the rails minus its 1-space
     // gutter; the popup floats two spaces deeper under the input.
     for (const editorLine of buildEditorBox(state.editor, Math.max(1, contentWidth - 1))) {
@@ -291,14 +309,15 @@ export const buildScene = (state: MachineState, width: number): Scene => {
     }
     lines.push([]);
     if (state.suggestions) {
-      pushWrapped(span(" "), [span("↑↓ pick • Enter/Tab complete • Esc close", "dim")]);
+      pushWrapped([span(" ")], [span("↑↓ pick • Enter/Tab complete • Esc close", "dim")]);
     } else {
-      pushWrapped(span(" "), [
-        span("Enter to submit • Shift+Enter for newline • Esc to go back", "dim"),
-      ]);
+      pushWrapped(
+        [span(" ")],
+        [span("Enter to submit • Shift+Enter for newline • Esc to go back", "dim")],
+      );
     }
   } else if (state.currentTab === state.questions.length) {
-    pushWrapped(span(" "), [span("Ready to submit", "accent", true)]);
+    pushWrapped([span(" ")], [span("Ready to submit", "accent", true)]);
     lines.push([]);
     for (const q of state.questions) {
       const answers = state.answers.get(q.id);
@@ -313,21 +332,21 @@ export const buildScene = (state: MachineState, width: number): Scene => {
             : answers
                 .map((a) => (a.wasCustom ? `(wrote) ${a.label}` : `${a.index}. ${a.label}`))
                 .join(", ");
-        pushWrapped(span(" "), [span(`${q.label}: `, "muted"), span(rendered, "text")]);
+        pushWrapped([span(" ")], [span(`${q.label}: `, "muted"), span(rendered, "text")]);
       }
     }
     lines.push([]);
     if (isAllAnswered(state)) {
-      pushWrapped(span(" "), [span("Press Enter to submit", "success")]);
+      pushWrapped([span(" ")], [span("Press Enter to submit", "success")]);
     } else {
       const missing = state.questions
         .filter((q) => !state.answers.has(q.id))
         .map((q) => q.label)
         .join(", ");
-      pushWrapped(span(" "), [span(`Unanswered: ${missing}`, "warning")]);
+      pushWrapped([span(" ")], [span(`Unanswered: ${missing}`, "warning")]);
     }
   } else if (question) {
-    pushWrapped(span(" "), [span(question.prompt, "text")]);
+    pushWrapped([span(" ")], [span(question.prompt, "text")]);
     lines.push([]);
     renderOptions();
   }
@@ -343,7 +362,7 @@ export const buildScene = (state: MachineState, width: number): Scene => {
         : isMultiSelect
           ? "↑↓ move • Space toggles • Enter confirm • Esc cancel"
           : "↑↓ navigate • Enter to select • Esc to cancel";
-    pushWrapped(span(" "), [span(help, "dim")]);
+    pushWrapped([span(" ")], [span(help, "dim")]);
   }
 
   // Frame the interior: accent border with rails, body padded to the content

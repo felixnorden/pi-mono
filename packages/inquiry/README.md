@@ -71,7 +71,13 @@ pick between options, or confirm a decision. Ask all open questions in one
   "questions": [
     {
       "prompt": "The full question text to display",
-      "options": [{ "label": "Short label", "description": "Optional one-line description" }],
+      "options": [
+        {
+          "label": "Short label",
+          "description": "Optional one-line description",
+          "recommended": true // the UI shows ✓ beside the option. Defaults to false.
+        }
+      ],
       "id": "optional-unique-id", // defaults to q1, q2, ...
       "label": "Scope", // short tab-bar label, defaults to Q1, Q2
       "allowOther": true, // defaults to true; false forces the listed options
@@ -83,8 +89,13 @@ pick between options, or confirm a decision. Ask all open questions in one
 
 - `questions` — one or more questions. A single question shows a simple
   option list; multiple questions show a tabbed interface with a submit tab.
-- `options` — 2–5 short options per question, each a `label` plus an optional
-  one-line `description`.
+- `options` — 2–5 options per question, each a `label`, an optional
+  one-line `description`, and an optional `recommended` flag.
+- `recommended` — set this flag to `true` on the option you recommend to the user.
+  The UI shows `✓` in a two-cell marker column left of the label. The flag defaults
+  to `false`. On a single-choice question, recommend at most one option. The tool
+  rejects two or more recommendations as invalid parameters. On a multi-select
+  question, recommend any number of options.
 - `allowOther` — when `true` (default), the user can also type a free-text
   answer ("Type something."). Set it to `false` only when one of the listed
   options is required.
@@ -104,6 +115,8 @@ single-select question, pressing Enter on the "Add your own answer" row opens
 the type mode (Space does too). In the result, a multi-select question
 contributes one `Answer` per chosen option or typed alternative, all sharing
 the question's `id`.
+
+On a multi-select question, recommend any number of options with `recommended: true`.
 
 ### Result
 

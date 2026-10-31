@@ -36,6 +36,7 @@ import type { SuggestionItem } from "./services.ts";
 export interface OptionChoice {
   readonly label: string;
   readonly description?: string;
+  readonly recommended: boolean;
   readonly isOther: boolean;
 }
 
@@ -50,6 +51,7 @@ export type MultiEntry =
       readonly index: number;
       readonly label: string;
       readonly description?: string;
+      readonly recommended: boolean;
     }
   | { readonly kind: "custom"; readonly label: string }
   | { readonly kind: "add" };
@@ -68,6 +70,7 @@ export const multiEntries = (state: MachineState): readonly MultiEntry[] => {
     index: i,
     label: o.label,
     ...(o.description === undefined ? {} : { description: o.description }),
+    recommended: o.recommended,
   }));
   for (const a of answers) {
     if (a.wasCustom) entries.push({ kind: "custom", label: a.label });
@@ -147,10 +150,11 @@ export const optionsForTab = (
   const options: OptionChoice[] = question.options.map((o) => ({
     label: o.label,
     description: o.description,
+    recommended: o.recommended,
     isOther: false,
   }));
   if (question.allowOther) {
-    options.push({ label: "Type something.", isOther: true });
+    options.push({ label: "Type something.", isOther: true, recommended: false });
   }
   return options;
 };

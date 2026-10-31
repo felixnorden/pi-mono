@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Schema } from "effect";
 import {
+  Option,
   QuestionListParamsJsonSchema,
   decodeParams,
   normalizeQuestions,
@@ -8,6 +9,16 @@ import {
 } from "./domain.ts";
 
 describe("decodeParams", () => {
+  /** Message of the `SchemaError` the decoder throws, for wording pins. */
+  const decodeError = (input: unknown): string => {
+    try {
+      decodeParams(input);
+    } catch (error) {
+      return (error as Error).message;
+    }
+    throw new Error("expected decodeParams to throw");
+  };
+
   it("decodes valid params", () => {
     const params = decodeParams({
       questions: [{ prompt: "Pick one?", options: [{ label: "Yes" }] }],
@@ -36,6 +47,15 @@ describe("decodeParams", () => {
     expect(params.questions[0]?.options[0]?.description).toBe("Go ahead");
   });
 
+  it("decodes the optional recommended flag on an option", () => {
+    const params = decodeParams({
+      questions: [{ prompt: "p", options: [{ label: "a", recommended: true }, { label: "b" }] }],
+    });
+    const options = params.questions[0]?.options as readonly { recommended?: boolean }[];
+    expect(options[0]?.recommended).toBe(true);
+    expect(options[1]?.recommended).toBeUndefined();
+  });
+
   it("rejects invalid input with a SchemaError", () => {
     expect(() => decodeParams({ questions: [{ prompt: "p", options: [{ label: 42 }] }] })).toThrow(
       Schema.SchemaError,
@@ -51,6 +71,106 @@ describe("decodeParams", () => {
       questions: [{ prompt: "p", options: [{ value: "yes", label: "Yes" }] }],
     });
     expect(params.questions[0]?.options[0]?.label).toBe("Yes");
+  });
+
+  it("rejects two recommendations when multiple is absent", () => {
+    const params = {
+      questions: [
+        {
+          label: "Scope",
+          prompt: "p",
+          options: [
+            { label: "a", recommended: true },
+            { label: "b", recommended: true },
+          ],
+        },
+      ],
+    };
+    expect(() => decodeParams(params)).toThrow(Schema.SchemaError);
+    const message = decodeError(params);
+    expect(message).toContain('question "Scope" is single-choice but has 2 recommended options');
+    expect(message).toContain("keep at most one recommended option, or set multiple: true");
+    expect(message).toContain('at ["questions"][0]["options"][1]');
+  });
+
+  it("rejects two recommendations when multiple is false", () => {
+    const params = {
+      questions: [
+        {
+          label: "Scope",
+          prompt: "p",
+          multiple: false,
+          options: [
+            { label: "a", recommended: true },
+            { label: "b", recommended: true },
+          ],
+        },
+      ],
+    };
+    expect(() => decodeParams(params)).toThrow(Schema.SchemaError);
+    expect(decodeError(params)).toContain('at ["questions"][0]["options"][1]');
+  });
+
+  it("counts three recommendations", () => {
+    const params = {
+      questions: [
+        {
+          prompt: "p",
+          options: [
+            { label: "a", recommended: true },
+            { label: "b", recommended: true },
+            { label: "c", recommended: true },
+          ],
+        },
+      ],
+    };
+    const message = decodeError(params);
+    expect(message).toContain("has 3 recommended options");
+    expect(message.startsWith("this question is single-choice")).toBe(true);
+    expect(message).toContain('at ["questions"][0]["options"][1]');
+  });
+
+  it("names the second question's pointer when it is invalid", () => {
+    const params = {
+      questions: [
+        { prompt: "ok", options: [{ label: "a", recommended: true }] },
+        {
+          prompt: "bad",
+          options: [
+            { label: "b", recommended: true },
+            { label: "c", recommended: true },
+          ],
+        },
+      ],
+    };
+    expect(decodeError(params)).toContain('at ["questions"][1]["options"][1]');
+  });
+
+  it("accepts two recommendations when multiple is true", () => {
+    const params = decodeParams({
+      questions: [
+        {
+          prompt: "p",
+          multiple: true,
+          options: [
+            { label: "a", recommended: true },
+            { label: "b", recommended: true },
+          ],
+        },
+      ],
+    });
+    expect(params.questions[0]?.options.map((o) => o.recommended)).toEqual([true, true]);
+  });
+
+  it("rejects a legacy-shaped call with two recommendations", () => {
+    const prepared = prepareQuestionArgs({
+      question: "Pick one?",
+      options: [
+        { label: "a", recommended: true },
+        { label: "b", recommended: true },
+      ],
+    });
+    expect(decodeError(prepared)).toContain('at ["questions"][0]["options"][1]');
   });
 });
 
@@ -94,6 +214,19 @@ describe("QuestionListParamsJsonSchema", () => {
     const option = question.properties.options.items;
     expect(option.additionalProperties).toBe(true);
     expect(option.required).toEqual(["label"]);
+    expect(Object.keys(option.properties)).toEqual(["label", "description", "recommended"]);
+  });
+
+  it("does not project the recommendation rule", () => {
+    const question = schema.properties.questions.items;
+    const option = question.properties.options.items;
+    expect(option.required).toEqual(["label"]);
+    expect(option.additionalProperties).toBe(true);
+    for (const node of [option, question]) {
+      for (const artifact of ["allOf", "anyOf", "oneOf", "not", "minItems"]) {
+        expect(node).not.toHaveProperty(artifact);
+      }
+    }
   });
 
   it("carries the field descriptions the LLM sees", () => {
@@ -106,6 +239,11 @@ describe("QuestionListParamsJsonSchema", () => {
     expect(q.label.description).toContain("Short contextual label for tab bar");
     expect(q.allowOther.description).toContain("default: true");
     expect(q.options.items.properties.label.description).toBe("Display label for the option");
+    expect(q.options.items.properties.recommended).toEqual({
+      type: "boolean",
+      description:
+        "Recommend this option to the user (default: false). On a single-choice question, recommend at most one option. Set multiple: true to recommend more than one option.",
+    });
   });
 });
 
@@ -202,10 +340,37 @@ describe("normalizeQuestions", () => {
     expect(q.options[1]?.label).toBe("One-shot warning log");
   });
 
+  it("collapses the wire recommendation to a concrete boolean", () => {
+    const questions = normalizeQuestions(
+      decodeParams({
+        questions: [{ prompt: "p", options: [{ label: "a", recommended: true }, { label: "b" }] }],
+      }),
+    );
+    expect(questions[0]?.options[0]?.recommended).toBe(true);
+    expect(questions[0]?.options[1]?.recommended).toBe(false);
+  });
+
+  it("strips label emoji without touching the recommendation", () => {
+    const questions = normalizeQuestions(
+      decodeParams({
+        questions: [{ prompt: "p", options: [{ label: "✅ Document-only", recommended: true }] }],
+      }),
+    );
+    expect(questions[0]?.options[0]?.label).toBe("Document-only");
+    expect(questions[0]?.options[0]?.recommended).toBe(true);
+  });
+
   it("drops option descriptions that strip to empty", () => {
     const questions = normalizeQuestions(
       decodeParams({ questions: [{ prompt: "p", options: [{ label: "a", description: "➡️" }] }] }),
     );
     expect(questions[0]?.options[0]?.description).toBeUndefined();
+  });
+});
+
+describe("Option", () => {
+  it("defaults recommended to false when constructed without it", () => {
+    expect(new Option({ label: "Yes" }).recommended).toBe(false);
+    expect(new Option({ label: "Yes", recommended: true }).recommended).toBe(true);
   });
 });
