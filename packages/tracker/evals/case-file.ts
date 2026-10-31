@@ -15,6 +15,9 @@ export interface StoredItem {
   readonly text: string;
   /** The item's description, when it carried one. Part of the batch text. */
   readonly description?: string;
+  /** The declarations the item carried, as authored. */
+  readonly refs?: readonly DeclaredReference[];
+  readonly produces?: readonly DeclaredProduct[];
   readonly done: boolean;
   readonly deps: readonly string[];
 }
@@ -65,6 +68,12 @@ export interface StoredDecision {
 export interface StoredCase {
   readonly caseId: string;
   readonly session: { readonly dir: string; readonly file: string };
+  /**
+   * The session header's working directory, as the product saw it. The replay
+   * resolves declared paths against it, so it is stored unredacted; the corpus
+   * directory is local and git-ignored.
+   */
+  readonly sessionCwd?: string;
   readonly at: string;
   readonly index: number;
   readonly list: {

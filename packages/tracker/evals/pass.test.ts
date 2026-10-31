@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "vitest";
 import { readJsonl } from "./case-file.ts";
-import { LABEL_PASSES, partitionByPass, passOf, type LabelPass } from "./pass.ts";
+import {
+  LABEL_PASSES,
+  partitionByPass,
+  passOf,
+  passOfRecord,
+  type LabelPass,
+} from "./pass.ts";
 
 const LABELS_PATH = fileURLToPath(new URL("data/labels.jsonl", import.meta.url));
 
@@ -51,5 +57,18 @@ describe("partitionByPass", () => {
       LABEL_PASSES.map((pass) => parts.get(pass)!.length),
       [1, 1, 1],
     );
+  });
+});
+
+describe("passOfRecord", () => {
+  it("uses the explicit pass when the record carries one", () => {
+    assert.strictEqual(
+      passOfRecord({ at: "2026-10-05T00:00:00.000Z", pass: "v2-a" }),
+      "v2-a",
+    );
+  });
+
+  it("falls back to the timestamp split for an old record", () => {
+    assert.strictEqual(passOfRecord({ at: "2026-10-05T00:00:00.000Z" }), "pass1");
   });
 });

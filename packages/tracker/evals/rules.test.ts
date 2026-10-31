@@ -9,7 +9,14 @@ import {
   footprintOf,
   frozenEntries,
   gateAccepted,
+  gateBase,
   gateOf,
+  OLD_FLOOR,
+  promotableAccepted,
+  formatFloor,
+  formatGate,
+  formatUnmeasured,
+  unlistedPasses,
   productionEntries,
   readCorpus,
   sameRuleSet,
@@ -186,4 +193,154 @@ it("the report counts a declared-row firing once and never as a real session", (
   assert.strictEqual(rows[0]!.labeled, 1);
   // The synthetic case is not counted as a real session.
   assert.strictEqual(summarizeCases(production.entries, ACCEPTED_RULES).cases, 0);
+});
+
+// ---------------------------------------------------------------------------
+// The declared-corpus gate
+// ---------------------------------------------------------------------------
+
+const gateEntry = (input: {
+  readonly caseId?: string;
+  readonly pass?: string;
+  readonly rule?: string;
+  readonly verdict?: RuleVerdict;
+  readonly truth?: "needs" | "stands";
+  readonly control?: boolean;
+  readonly diagnostic?: boolean;
+}): RuleEntry => ({
+  caseId: input.caseId ?? "case",
+  questionKey: "q",
+  pass: input.pass ?? "v2-a",
+  rule: input.rule ?? "reference-is-readable",
+  verdict: input.verdict ?? "compact",
+  truth: input.truth,
+  ...(input.control === undefined ? {} : { control: input.control }),
+  ...(input.diagnostic === undefined ? {} : { diagnostic: input.diagnostic }),
+});
+
+it("groups by the record's pass, not the timestamp", () => {
+  const entries = [
+    gateEntry({ caseId: "a", pass: "v2-a", truth: "stands" }),
+    gateEntry({ caseId: "b", pass: "v2-b", truth: "stands" }),
+  ];
+  const gate = gateOf(entries, ["v2-a", "v2-b"]);
+  assert.strictEqual(gate[0]!.passes.length, 2);
+});
+
+it("names a pass outside the corpus' list", () => {
+  const entries = [gateEntry({ pass: "pass1", truth: "stands" })];
+  assert.deepStrictEqual(unlistedPasses(entries, ["v2-a", "v2-b"]), ["pass1"]);
+});
+
+it("takes the base rate from the controls", () => {
+  const entries = [
+    ...Array.from({ length: 10 }, (_, index) =>
+      gateEntry({ caseId: `d-${index}`, truth: "stands", control: false }),
+    ),
+    ...Array.from({ length: 10 }, (_, index) =>
+      gateEntry({
+        caseId: `c-${index}`,
+        rule: "no-visible-link",
+        truth: index % 2 === 0 ? "stands" : "needs",
+        control: true,
+      }),
+    ),
+  ];
+  const gate = gateOf(entries, ["v2-a", "v2-b"]);
+  const row = gate.find((rule) => rule.rule === "reference-is-readable")!;
+  assert.strictEqual(row.passes[0]!.base, 0.5);
+  assert.strictEqual(gateBase(entries), "controls");
+});
+
+it("marks a thin control set advisory", () => {
+  const entries = [
+    gateEntry({ truth: "stands" }),
+    ...Array.from({ length: 12 }, (_, index) =>
+      gateEntry({ caseId: `c-${index}`, rule: "no-visible-link", truth: "stands", control: true }),
+    ),
+  ];
+  const text = formatGate(gateOf(entries, ["v2-a", "v2-b"]));
+  assert.match(text, /thin \(12\)/);
+  assert.match(text, /advisory/);
+});
+
+it("never accepts a rule on one pass", () => {
+  const entries = Array.from({ length: 20 }, (_, index) =>
+    gateEntry({ caseId: `c-${index}`, pass: "v2-a", truth: "stands" }),
+  );
+  const gate = gateOf(entries, ["v2-a", "v2-b"]);
+  assert.strictEqual(gate[0]!.accepted, false);
+});
+
+it("accepts a rule that clears both passes", () => {
+  const entries = [
+    ...Array.from({ length: 10 }, (_, index) =>
+      gateEntry({ caseId: `a-${index}`, pass: "v2-a", truth: "stands" }),
+    ),
+    ...Array.from({ length: 10 }, (_, index) =>
+      gateEntry({ caseId: `b-${index}`, pass: "v2-b", truth: "stands" }),
+    ),
+    ...Array.from({ length: 20 }, (_, index) =>
+      gateEntry({
+        caseId: `c-${index}`,
+        rule: "no-visible-link",
+        truth: index % 4 === 0 ? "stands" : "needs",
+        control: true,
+      }),
+    ),
+  ];
+  const gate = gateOf(entries, ["v2-a", "v2-b"]);
+  assert.strictEqual(gate.find((rule) => rule.rule === "reference-is-readable")!.accepted, true);
+});
+
+it("reports an abstain row and never promotes it", () => {
+  const entries = [
+    ...Array.from({ length: 30 }, (_, index) =>
+      gateEntry({
+        caseId: `a-${index}`,
+        pass: "v2-a",
+        rule: "declarations-unresolved",
+        verdict: "abstain",
+        truth: "stands",
+      }),
+    ),
+    ...Array.from({ length: 30 }, (_, index) =>
+      gateEntry({
+        caseId: `b-${index}`,
+        pass: "v2-b",
+        rule: "declarations-unresolved",
+        verdict: "abstain",
+        truth: "stands",
+      }),
+    ),
+  ];
+  const gate = gateOf(entries, ["v2-a", "v2-b"]);
+  assert.match(formatGate(gate), /reported, not promotable/);
+  assert.strictEqual(promotableAccepted(gate).has("declarations-unresolved"), false);
+});
+
+it("prints every declared row unmeasured with zero labeled passes", () => {
+  const text = formatUnmeasured([
+    { row: "reference-is-readable", verdict: "compact" },
+    { row: "product-is-unwritten-plan", verdict: "keep" },
+  ]);
+  assert.match(text, /reference-is-readable/);
+  assert.match(text, /unmeasured/);
+  assert.strictEqual(text.includes("ACCEPTED_RULES"), false);
+});
+
+it("skips a diagnostic entry in the gate but keeps its case", () => {
+  const entries = [
+    gateEntry({ caseId: "a", truth: "stands" }),
+    gateEntry({ caseId: "b", rule: "reference-is-readable", truth: "needs", diagnostic: true }),
+  ];
+  const gate = gateOf(entries, ["v2-a", "v2-b"]);
+  assert.strictEqual(gate[0]!.passes[0]!.labeled, 1);
+  assert.strictEqual(summarizeCases(entries, new Set()).cases, 2);
+});
+
+it("checks the frozen floor as a superset", () => {
+  const text = formatFloor(new Set([...OLD_FLOOR, "reference-is-readable"]), OLD_FLOOR);
+  assert.match(text, /still accepted: names-batch-output, no-visible-link/);
+  assert.match(text, /not measured by this corpus: reference-is-readable/);
 });

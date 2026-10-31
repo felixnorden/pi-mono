@@ -53,6 +53,9 @@ export interface EventItem {
   readonly text: string;
   /** The item's description, when it carried one. */
   readonly description?: string;
+  /** The declarations the item carried, as authored. */
+  readonly refs?: readonly DeclaredReference[];
+  readonly produces?: readonly DeclaredProduct[];
   readonly done: boolean;
   /** `listName:id` references to same-list items. */
   readonly deps: readonly string[];
@@ -186,6 +189,8 @@ export const deriveEvents = (
         id: item.id,
         text: item.title,
         ...(item.description.length === 0 ? {} : { description: item.description }),
+        ...(item.refs.length === 0 ? {} : { refs: item.refs }),
+        ...(item.produces.length === 0 ? {} : { produces: item.produces }),
         done: item.done,
         deps: [...item.deps],
       })),

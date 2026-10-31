@@ -25,38 +25,63 @@ import type { DeclaredReference } from "../src/core/domain.ts";
 import type { StoredCase, StoredEvidence } from "./case-file.ts";
 import { deriveEvents } from "./derive.ts";
 import { buildEvidence } from "./evidence.ts";
+import { privateManifest } from "./evidence-redact.ts";
 import { makeRedactionTally, redactPath, redactWith } from "./redact.ts";
-import { contextAt, decisionsIn, MARKER, parseSession } from "./session.ts";
+import {
+  contextAt,
+  decisionsIn,
+  FORMAT_RULE,
+  MARKER,
+  parseSession,
+  type SnapshotFormat,
+} from "./session.ts";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 
 interface Options {
   readonly root: string;
   readonly out: string;
+  readonly evidence?: string;
   readonly limit: number;
+  readonly format?: SnapshotFormat;
+  readonly force: boolean;
 }
 
-const usage = `harvest.ts [--root <dir>] [--out <dir>] [--limit <n>]
+const usage = `harvest.ts [--root <dir>] [--out <dir>] [--evidence <dir>] [--limit <n>]
+                 [--format declared|legacy] [--force]
 
-  --root   session log root (default: $PI_SESSION_DIR or ~/.config/pi/agent/sessions)
-  --out    output directory (default: evals/data)
-  --limit  stored candidates per case (default: 64)`;
+  --root      session log root (default: $PI_SESSION_DIR or ~/.config/pi/agent/sessions)
+  --out       output directory (default: evals/data)
+  --evidence  also write the manifest to <dir>/manifest.json
+  --limit     stored candidates per case (default: 64)
+  --format    store only cases whose snapshot matches this format (default: both)
+  --force     rewrite a directory that holds freeze.json`;
 
 const parseOptions = (argv: readonly string[]): Options => {
   const values = new Map<string, string>();
+  const flags = new Set<string>();
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index]!;
     if (!flag.startsWith("--")) continue;
+    const name = flag.slice(2);
+    if (name === "force") {
+      flags.add(name);
+      continue;
+    }
     const value = argv[index + 1];
     if (value === undefined || value.startsWith("--")) {
       throw new Error(`missing value for ${flag}\n\n${usage}`);
     }
-    values.set(flag.slice(2), value);
+    values.set(name, value);
     index += 1;
   }
   const limit = Number(values.get("limit") ?? 64);
   if (!Number.isInteger(limit) || limit < 1) {
     throw new Error(`--limit must be a positive integer\n\n${usage}`);
+  }
+  const format = values.get("format");
+  if (format !== undefined && format !== "declared" && format !== "legacy") {
+    throw new Error(`--format must be declared or legacy\n\n${usage}`);
   }
   return {
     root:
@@ -64,7 +89,10 @@ const parseOptions = (argv: readonly string[]): Options => {
       process.env.PI_SESSION_DIR ??
       join(homedir(), ".config", "pi", "agent", "sessions"),
     out: values.get("out") ?? join(HERE, "data"),
+    ...(values.get("evidence") === undefined ? {} : { evidence: values.get("evidence") }),
     limit,
+    ...(format === undefined ? {} : { format }),
+    force: flags.has("force"),
   };
 };
 
@@ -93,6 +121,8 @@ const jsonlFiles = (dir: string): readonly string[] => {
 export interface HarvestOptions {
   readonly limit: number;
   readonly redact: (value: string) => string;
+  /** Store only cases whose snapshot matches this format. Both when absent. */
+  readonly format?: SnapshotFormat;
 }
 
 /** One session's stored cases and work records. */
@@ -100,6 +130,17 @@ export interface HarvestedSession {
   readonly snapshots: number;
   readonly cases: readonly StoredCase[];
   readonly evidence: readonly StoredEvidence[];
+  /** Cases the format filter dropped because their snapshot was legacy. */
+  readonly excludedLegacy: number;
+  /** Cases the format filter dropped because their snapshot was declared. */
+  readonly excludedDeclared: number;
+  /** The earliest and latest snapshot timestamp in the log, when it holds one. */
+  readonly from: string | undefined;
+  readonly to: string | undefined;
+  /** Stored cases whose snapshot matches the snapshot rule. */
+  readonly snapshotRuleDeclared: number;
+  /** Stored cases whose every completed item carries a declared key. */
+  readonly completedItemRuleDeclared: number;
 }
 
 /**
@@ -131,6 +172,20 @@ export const harvestSession = (
         };
   const decisions = decisionsIn(parsed.entries, onSkipped);
   const events = deriveEvents(parsed.snapshots, options.limit);
+  // The format filter runs on the snapshot that produced each case, before any
+  // case is redacted or stored. A mixed session contributes only its matches.
+  const storedEvents = events.filter((event) => {
+    if (options.format === undefined) return true;
+    return parsed.snapshotFormats[event.snapshotIndex] === options.format;
+  });
+  const excludedLegacy =
+    options.format === "declared"
+      ? events.filter((event) => parsed.snapshotFormats[event.snapshotIndex] === "legacy").length
+      : 0;
+  const excludedDeclared =
+    options.format === "legacy"
+      ? events.filter((event) => parsed.snapshotFormats[event.snapshotIndex] === "declared").length
+      : 0;
   // Redact the source once, then build every string from the redacted parts, so
   // the case id cannot carry the raw path that `session.dir` hides.
   const redactedDir = redactText(dir);
@@ -150,7 +205,7 @@ export const harvestSession = (
       .map((entry) => entry.record)[0];
   };
 
-  const cases = events.map((event): StoredCase => {
+  const cases = storedEvents.map((event): StoredCase => {
     const decision = decisionFor(
       parsed.snapshotLines[event.snapshotIndex]!,
       event.candidates[0]?.ref,
@@ -158,6 +213,9 @@ export const harvestSession = (
     return {
       caseId: `${redactedDir}/${redactedFile}#${event.index}`,
       session: { dir: redactedDir, file: redactedFile },
+      // The cwd stays raw: the replay resolves declared paths against it, and
+      // the corpus directory is local. The manifest redacts the session root.
+      ...(parsed.cwd === undefined ? {} : { sessionCwd: parsed.cwd }),
       at: event.at,
       index: event.index,
       list: {
@@ -167,6 +225,10 @@ export const harvestSession = (
           id: item.id,
           text: redactText(item.text),
           ...(item.description === undefined ? {} : { description: redactText(item.description) }),
+          ...(item.refs === undefined ? {} : { refs: item.refs.map(redactReference) }),
+          ...(item.produces === undefined
+            ? {}
+            : { produces: item.produces.map((product) => ({ path: redactText(product.path) })) }),
           done: item.done,
           deps: item.deps.map(redactText),
         })),
@@ -215,7 +277,7 @@ export const harvestSession = (
   // decision to this one, so an unrelated mutation in between cannot cut it.
   const evidence: StoredEvidence[] = [];
   let previousEventLine = -1;
-  for (const event of events) {
+  for (const event of storedEvents) {
     const endLine = parsed.snapshotLines[event.snapshotIndex]!;
     const window: unknown[] = [];
     for (let line = previousEventLine + 1; line <= endLine; line += 1) {
@@ -251,7 +313,26 @@ export const harvestSession = (
     previousEventLine = endLine;
   }
 
-  return { snapshots: parsed.snapshots.length, cases, evidence };
+  const times = parsed.snapshots.map((snapshot) => snapshot.at).filter((at) => at.length > 0);
+  const snapshotRuleDeclared = storedEvents.filter(
+    (event) => parsed.snapshotFormats[event.snapshotIndex] === "declared",
+  ).length;
+  const completedItemRuleDeclared = storedEvents.filter((event) =>
+    event.completedItemIds.every(
+      (id) => parsed.snapshotDeclaredIds[event.snapshotIndex]?.has(id) === true,
+    ),
+  ).length;
+  return {
+    snapshots: parsed.snapshots.length,
+    cases,
+    evidence,
+    excludedLegacy,
+    excludedDeclared,
+    from: times[0],
+    to: times[times.length - 1],
+    snapshotRuleDeclared,
+    completedItemRuleDeclared,
+  };
 };
 
 interface SessionResult {
@@ -259,10 +340,78 @@ interface SessionResult {
   readonly dir: string;
   readonly snapshots: number;
   readonly events: readonly StoredCase[];
+  readonly from: string | undefined;
+  readonly to: string | undefined;
+  readonly snapshotRuleDeclared: number;
+  readonly completedItemRuleDeclared: number;
 }
 
-const main = (): void => {
-  const options = parseOptions(process.argv.slice(2));
+/** Everything one harvest run reads and writes. */
+export interface HarvestRunOptions {
+  readonly root: string;
+  readonly out: string;
+  /** Also write the manifest to `<evidence>/manifest.json`. */
+  readonly evidence?: string;
+  readonly limit: number;
+  readonly format?: SnapshotFormat;
+  /** Rewrite a directory that holds `freeze.json`. */
+  readonly force?: boolean;
+}
+
+/** The manifest one harvest run wrote. */
+export interface HarvestManifest {
+  readonly [key: string]: unknown;
+  readonly trackerVersion: string;
+  readonly format: SnapshotFormat | "all";
+  readonly formatRule: string;
+  readonly formatCounts: {
+    readonly snapshotRule: number;
+    readonly completedItemRule: number;
+  };
+  readonly excluded: { readonly legacy: number; readonly declared: number };
+  readonly source: { readonly from: string | null; readonly to: string | null };
+  readonly forced?: true;
+}
+
+/**
+ * The reason a directory cannot be rewritten, or null when it is not frozen.
+ * The case ids are the join key for every label, so a frozen corpus is a
+ * promise that its cases will not move under its labels.
+ */
+export const freezeRefusal = (out: string): string | null => {
+  let text: string;
+  try {
+    text = readFileSync(join(out, "freeze.json"), "utf8");
+  } catch {
+    return null;
+  }
+  let frozenAt = "unknown";
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    frozenAt = String(parsed.frozenAt ?? parsed.at ?? "unknown");
+  } catch {
+    // A malformed freeze file still freezes the directory.
+  }
+  return `${out} is frozen since ${frozenAt}; later harvests write a dated directory. Pass --force to rewrite.`;
+};
+
+/** The package version the manifest records. */
+const trackerVersion = (): string => {
+  try {
+    const parsed = JSON.parse(readFileSync(join(HERE, "..", "package.json"), "utf8")) as {
+      version?: unknown;
+    };
+    return typeof parsed.version === "string" ? parsed.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+};
+
+/** Scan the root, store the matching cases, and return the manifest. */
+export const runHarvest = (options: HarvestRunOptions): { readonly manifest: HarvestManifest } => {
+  const refusal = options.force === true ? null : freezeRefusal(options.out);
+  if (refusal !== null) throw new Error(refusal);
+
   const tally = makeRedactionTally();
   const redactText = (value: string): string => redactWith(value, tally);
 
@@ -272,6 +421,12 @@ const main = (): void => {
   let snapshotsParsed = 0;
   let snapshotsSkipped = 0;
   let sessionsWithTracker = 0;
+  let excludedLegacy = 0;
+  let excludedDeclared = 0;
+  let snapshotRuleDeclared = 0;
+  let completedItemRuleDeclared = 0;
+  let from: string | undefined;
+  let to: string | undefined;
 
   for (const file of files) {
     let text: string;
@@ -288,7 +443,11 @@ const main = (): void => {
       text,
       dir,
       name,
-      { limit: options.limit, redact: redactText },
+      {
+        limit: options.limit,
+        redact: redactText,
+        ...(options.format === undefined ? {} : { format: options.format }),
+      },
       () => {
         snapshotsSkipped += 1;
       },
@@ -296,9 +455,26 @@ const main = (): void => {
     if (harvested === undefined) continue;
     sessionsWithTracker += 1;
     snapshotsParsed += harvested.snapshots;
+    excludedLegacy += harvested.excludedLegacy;
+    excludedDeclared += harvested.excludedDeclared;
+    snapshotRuleDeclared += harvested.snapshotRuleDeclared;
+    completedItemRuleDeclared += harvested.completedItemRuleDeclared;
+    if (harvested.from !== undefined && (from === undefined || harvested.from < from)) {
+      from = harvested.from;
+    }
+    if (harvested.to !== undefined && (to === undefined || harvested.to > to)) to = harvested.to;
     if (harvested.cases.length === 0) continue;
     evidence.push(...harvested.evidence);
-    sessions.push({ file: name, dir, snapshots: harvested.snapshots, events: harvested.cases });
+    sessions.push({
+      file: name,
+      dir,
+      snapshots: harvested.snapshots,
+      events: harvested.cases,
+      from: harvested.from,
+      to: harvested.to,
+      snapshotRuleDeclared: harvested.snapshotRuleDeclared,
+      completedItemRuleDeclared: harvested.completedItemRuleDeclared,
+    });
   }
 
   const cases = sessions.flatMap((session) => session.events);
@@ -307,10 +483,20 @@ const main = (): void => {
   for (const entry of cases)
     listNames.set(entry.list.name, (listNames.get(entry.list.name) ?? 0) + 1);
 
-  const manifest = {
+  const manifest: HarvestManifest = {
     generatedAt: new Date().toISOString(),
+    trackerVersion: trackerVersion(),
     root: redactPath(options.root, homedir()),
     candidateLimit: options.limit,
+    format: options.format ?? "all",
+    formatRule: FORMAT_RULE,
+    formatCounts: {
+      snapshotRule: snapshotRuleDeclared,
+      completedItemRule: completedItemRuleDeclared,
+    },
+    excluded: { legacy: excludedLegacy, declared: excludedDeclared },
+    source: { from: from ?? null, to: to ?? null },
+    ...(options.force === true ? { forced: true as const } : {}),
     sessions: {
       filesScanned: files.length,
       withTrackerState: sessionsWithTracker,
@@ -352,7 +538,6 @@ const main = (): void => {
       entries: evidence.reduce((total, record) => total + record.entries.length, 0),
       casesWithOmissions: evidence.filter((record) => record.omitted > 0).length,
     },
-    outputs: { cases: "cases.jsonl", evidence: "evidence.jsonl", manifest: "manifest.json" },
   };
 
   mkdirSync(options.out, { recursive: true });
@@ -371,6 +556,19 @@ const main = (): void => {
       .concat("\n"),
   );
   writeFileSync(join(options.out, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  if (options.evidence !== undefined) {
+    mkdirSync(options.evidence, { recursive: true });
+    writeFileSync(
+      join(options.evidence, "manifest.json"),
+      `${JSON.stringify(privateManifest(manifest), null, 2)}\n`,
+    );
+  }
+  return { manifest };
+};
+
+const main = (): void => {
+  const options = parseOptions(process.argv.slice(2));
+  const { manifest } = runHarvest(options);
   process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
 };
 

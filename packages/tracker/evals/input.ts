@@ -3,6 +3,7 @@ import type { CandidateClass, CompactionCandidate } from "../src/compaction/cand
 import { buildDigests, compactQuestions } from "../src/compaction/digest.ts";
 import type { CompactionQuestion } from "../src/compaction/classifier.ts";
 import type { StoredCase } from "./case-file.ts";
+import type { CaseFacts } from "./facts.ts";
 import { candidateViews, questionViews } from "./derive.ts";
 
 /**
@@ -47,13 +48,31 @@ export const candidatesOf = (stored: StoredCase): readonly CompactionCandidate[]
   }));
 };
 
-/** The exact digest and question set the product would send for this case. */
+/**
+ * The exact digest and question set the product would send for this case.
+ *
+ * With frozen facts the digest carries the resolved declarations, exactly as
+ * `settle.ts` sends them. Without facts it stays the stored projection, so the
+ * old corpus keeps its meaning.
+ */
 export const classifierInput = (
   stored: StoredCase,
+  facts?: CaseFacts,
 ): { readonly digest: JsonObject; readonly questions: readonly CompactionQuestion[] } => {
   const candidates = candidatesOf(stored);
+  const resolved =
+    facts === undefined
+      ? []
+      : candidates.map((_, index) => (index === 0 ? facts.head : facts.diagnostics[index - 1]));
+  const digestFacts = resolved.map((candidate) => ({
+    references: candidate?.references ?? [],
+    products: (candidate?.products ?? []).map((product) => ({
+      product: { path: product.path },
+      state: product.state,
+    })),
+  }));
   return {
-    digest: buildDigests(candidates),
+    digest: buildDigests(candidates, digestFacts),
     questions: compactQuestions(candidates),
   };
 };

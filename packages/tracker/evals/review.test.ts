@@ -13,7 +13,15 @@ const caseOf = (): StoredCase => ({
     name: "Work",
     items: [
       { id: 1, text: "first", description: "batch detail", done: true, deps: [] },
-      { id: 2, text: "second", description: "candidate detail", done: false, deps: [] },
+      {
+        id: 2,
+        text: "second",
+        description: "candidate detail",
+        done: false,
+        deps: [],
+        refs: [{ kind: "path", path: "src/a.ts" }],
+        produces: [{ path: "docs/out.md" }],
+      },
     ],
   },
   completed: [{ ref: "Work:1", text: "first", description: "batch detail" }],
@@ -58,4 +66,13 @@ it("renders descriptions, declarations, and the decision in a case file", () => 
   assert.include(markdown, "no-visible-link");
   assert.include(markdown, "readable");
   assert.include(markdown, "exists");
+});
+
+it("shows item declarations in the list table", () => {
+  const markdown = renderCase(1, caseOf(), undefined, 1);
+  const itemRow = markdown
+    .split("\n")
+    .find((line) => line.startsWith("| 2 |") && line.includes("src/a.ts"));
+  assert.isTrue(itemRow !== undefined);
+  assert.include(itemRow!, "docs/out.md");
 });

@@ -1,5 +1,32 @@
 # @ftrdotdev/pi-tracker
 
+## Unreleased
+
+### Minor Changes
+
+- Add a second smart-compaction eval corpus for declared-format items. The new
+  pipeline harvests only cases whose snapshot carries a `description`, `refs`,
+  or `produces` key, freezes the resolved facts for each declared head, draws a
+  seeded quota sample in two explicit passes, audits ten replays per row, and
+  gates the declared rows against the control base rate.
+  - `eval:harvest:v2`, `eval:facts`, `eval:sample`, `eval:audit`, `eval:answers`,
+    `eval:score`, and `eval:freeze` are new. `eval:rules` and `eval:promote`
+    learn the declared corpus and its `v2-a`/`v2-b` pass list.
+  - `eval:facts` stops before labeling when no behavior-changing row can reach
+    10 firings per pass.
+  - Promotion is additive and runs on the declared corpus only: it writes the
+    union of the frozen old floor and the v2 accepted set. Removal needs
+    `--remove`, and an abstain row is never promoted.
+  - The label card hides the replayed row and its provenance until the answer
+    locks, then reveals both and offers a surprise flag. `--suggest` is refused
+    for the declared corpus.
+  - `evals/data` keeps the legacy corpus frozen. The declared corpus and its
+    evidence live under `evals/data/v2/` and `evals/data/v2-evidence/`. Both are
+    git-ignored and local-only; only the hand-written `evals/data/synthetic/`
+    fixture is tracked. Evidence copies replace session file names with stable
+    hashes and drop real list names, and `evals/privacy.test.ts` guards the
+    ignore rules.
+
 ## 0.7.0
 
 ### Minor Changes

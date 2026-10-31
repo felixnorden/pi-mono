@@ -304,15 +304,81 @@ Registration lives in `package.json` under the `pi` field:
 
 ## Development
 
-| Command                | Purpose                                      |
-| ---------------------- | -------------------------------------------- |
-| `bun run test`         | Run the test suite (vitest + @effect/vitest) |
-| `bun run test:watch`   | Run the test suite in watch mode             |
-| `bun run typecheck`    | Type check with `tsc --noEmit`               |
-| `bun run lint`         | Lint with oxlint                             |
-| `bun run eval:harvest` | Harvest the eval corpus from local sessions  |
-| `bun run eval:rules`   | Print the rule tables and the promotion gate |
-| `bun run eval:promote` | Align `ACCEPTED_RULES` with the measured set |
+| Command                  | Purpose                                                      |
+| ------------------------ | ------------------------------------------------------------ |
+| `bun run test`           | Run the test suite (vitest + @effect/vitest)                 |
+| `bun run test:watch`     | Run the test suite in watch mode                             |
+| `bun run typecheck`      | Type check with `tsc --noEmit`                               |
+| `bun run lint`           | Lint with oxlint                                             |
+| `bun run eval:harvest`   | Harvest the frozen legacy corpus from local sessions         |
+| `bun run eval:harvest:v2`| Harvest only declared-format cases into `evals/data/v2`       |
+| `bun run eval:facts`     | Freeze the declared facts and print the pre-flight verdict   |
+| `bun run eval:sample`    | Draw the seeded, quota-based label sample                    |
+| `bun run eval:review`    | Render the corpus as a markdown review pack                  |
+| `bun run eval:label`     | Label the sample in a terminal                               |
+| `bun run eval:audit`     | Replay sampled facts against today's disk                    |
+| `bun run eval:rules`     | Print the rule tables and the promotion gate                 |
+| `bun run eval:promote`   | Add a measured row to `ACCEPTED_RULES` (v2 only)             |
+| `bun run eval:answers`   | Freeze classifier answers for the sampled heads              |
+| `bun run eval:score`     | Score a frozen answer file against the labels                |
+| `bun run eval:freeze`    | Freeze the labeled corpus and write `report.md`              |
+
+### Eval corpora
+
+There are two corpora, and they measure different populations.
+
+- `evals/data` is frozen. It holds 1,446 legacy cases and 1,385 labels in three
+  timestamp passes (`pass1`, `pass2`, `pass3`). It never measured a declared
+  row, so `eval:rules --out evals/data` checks only that the frozen floor
+  (`names-batch-output`, `no-visible-link`) is still accepted and names any rule
+  this corpus never measured. Do not re-harvest it.
+- `evals/data/v2` is the declared corpus. A case is declared when its raw
+  snapshot holds any item with a `description`, `refs`, or `produces` key. The
+  gate scores one candidate per decision: the **declared head**, the head
+  candidate that carries at least one `refs` or `produces` entry. A head with a
+  description only is a control. The gate measures each row against the control
+  subset, in two explicit passes (`v2-a`, `v2-b`), and prints `base: thin (n)`
+  below 30 controls.
+
+Run the declared pipeline in order:
+
+```bash
+bun run eval:harvest:v2 --out evals/data/v2 --evidence evals/data/v2-evidence
+bun run eval:facts --out evals/data/v2 --evidence evals/data/v2-evidence
+bun run eval:sample --out evals/data/v2 --seed 7 --evidence evals/data/v2-evidence
+bun run eval:label --out evals/data/v2 --pilot
+bun run eval:label --out evals/data/v2 --pass v2-a
+bun run eval:label --out evals/data/v2 --pass v2-b
+bun run eval:audit --out evals/data/v2 --seed 7 --evidence evals/data/v2-evidence
+bun run eval:rules --out evals/data/v2 --evidence evals/data/v2-evidence
+bun run eval:freeze --out evals/data/v2 --evidence evals/data/v2-evidence
+bun run eval:freeze --out evals/data/v2 --evidence evals/data/v2-evidence --report
+```
+
+The pilot sitting labels the 20 pilot cases as ordinary `pilot`-pass labels.
+Each later sitting opens with ten blind repeats of them, written with
+`pilot: true` and excluded from the gate; self-agreement below 90% discards the
+sitting. The pilot never enters the gate.
+
+`eval:facts` ends with the pre-flight verdict. When no behavior-changing row can
+reach 10 firings per pass it prints `STOP:` and exits non-zero, so the label run
+never starts against a corpus that cannot promote.
+
+`eval:promote --out evals/data/v2` is additive: it writes the union of the
+frozen old floor and the v2 accepted set, minus any row named by an explicit
+`--remove`, minus any row two audit mismatches block. It refuses any corpus whose
+manifest is not the declared format. An abstain row is reported, never promoted.
+
+`evals/data/v2-evidence/` is a local audit trail, ignored by git: the manifest,
+the sample ids, the gate cells, the audit rows, and `report.md`. The harvest,
+sample, and audit steps replace each session file name with a stable
+`session-<hash>` alias before they write there, the manifest keeps only list-name
+counts, and the session root becomes `<SESSION-ROOT>`. `evals/data/v2/cases.jsonl`,
+`facts.jsonl`, and `answers.*` stay local because they hold session text.
+
+`evals/.gitignore` ignores all of `evals/data/` except `evals/data/synthetic/`.
+`evals/privacy.test.ts` fails when git tracks any other file under `evals/data/`,
+or a legacy `data-v2/` or `v2-evidence/` path.
 
 ## Project structure
 

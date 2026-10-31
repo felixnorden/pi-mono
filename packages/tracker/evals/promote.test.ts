@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { ACCEPTED_RULES } from "../src/compaction/rules.ts";
 import {
   applyAcceptedRules,
+  blockedRows,
   corpusRefusal,
+  corpusRefusalFor,
+  promotionSet,
   diffAccepted,
   parseAcceptedRules,
   renderAcceptedRules,
@@ -68,4 +71,59 @@ it("diffAccepted names the promoted and dropped rows", () => {
     promoted: [],
     dropped: [],
   });
+});
+
+// ---------------------------------------------------------------------------
+// Additive promotion on the declared corpus
+// ---------------------------------------------------------------------------
+
+it("keeps the frozen floor and names the additions", () => {
+  const rules = promotionSet(
+    new Set(["reference-is-readable"]),
+    new Set(["names-batch-output", "no-visible-link"]),
+    [],
+    [],
+  );
+  assert.deepStrictEqual([...rules].sort(), [
+    "names-batch-output",
+    "no-visible-link",
+    "reference-is-readable",
+  ]);
+  assert.deepStrictEqual(
+    diffAccepted(new Set(["names-batch-output", "no-visible-link"]), rules).promoted,
+    ["reference-is-readable"],
+  );
+});
+
+it("refuses an old-corpus promotion by name", () => {
+  const refusal = corpusRefusalFor("all");
+  assert.match(refusal ?? "", /v2 corpus only/);
+  assert.isNull(corpusRefusalFor("declared"));
+});
+
+it("refuses a row blocked by two audit mismatches", () => {
+  const audit = [
+    { row: "reference-is-readable", verdict: "mismatch" as const },
+    { row: "reference-is-readable", verdict: "mismatch" as const },
+    { row: "product-is-unwritten-plan", verdict: "mismatch" as const },
+  ];
+  const rules = promotionSet(
+    new Set(["reference-is-readable", "product-is-unwritten-plan"]),
+    new Set(["names-batch-output"]),
+    audit,
+    [],
+  );
+  assert.strictEqual(rules.has("reference-is-readable"), false);
+  assert.strictEqual(rules.has("product-is-unwritten-plan"), true);
+  assert.deepStrictEqual(blockedRows(audit), ["reference-is-readable"]);
+});
+
+it("removes a rule only when the flag names it", () => {
+  const rules = promotionSet(
+    new Set(["reference-is-readable"]),
+    new Set(["names-batch-output", "no-visible-link"]),
+    [],
+    ["no-visible-link"],
+  );
+  assert.strictEqual(rules.has("no-visible-link"), false);
 });

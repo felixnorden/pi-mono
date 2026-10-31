@@ -41,6 +41,13 @@ const stateOf = (
   return blockers.length > 0 ? `blocked by ${blockers.join(", ")}` : "ready, unjudged";
 };
 
+/** One item's declared references and products, on one compact line. */
+const itemDeclarations = (item: StoredItem): string =>
+  [
+    ...(item.refs ?? []).map((reference) => `refs: ${referenceLine(reference)}`),
+    ...(item.produces ?? []).map((product) => `produces: ${product.path}`),
+  ].join("; ");
+
 const listTable = (caseEntry: StoredCase): string => {
   const batch = new Set(caseEntry.completed.map((item) => item.ref));
   const candidates = new Set(caseEntry.candidates.map((item) => item.ref));
@@ -48,11 +55,11 @@ const listTable = (caseEntry: StoredCase): string => {
   const rows = caseEntry.list.items.map((item, index) => {
     const ref = `${caseEntry.list.name}:${item.id}`;
     const blockers = view[index]?.blockers ?? [];
-    return `| ${item.id} | ${stateOf(item, blockers, batch, ref, candidates)} | ${item.deps.join(", ")} | ${cell(item.text)} | ${cell(item.description ?? "")} |`;
+    return `| ${item.id} | ${stateOf(item, blockers, batch, ref, candidates)} | ${item.deps.join(", ")} | ${cell(item.text)} | ${cell(item.description ?? "")} | ${cell(itemDeclarations(item))} |`;
   });
   return [
-    "| id | state | deps | text | description |",
-    "| --- | --- | --- | --- | --- |",
+    "| id | state | deps | text | description | declarations |",
+    "| --- | --- | --- | --- | --- | --- |",
     ...rows,
   ].join("\n");
 };

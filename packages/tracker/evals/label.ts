@@ -10,15 +10,20 @@
  * Run: `bun run eval:label` (options below). Needs a real terminal.
  */
 
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { emitKeypressEvents, type Key } from "node:readline";
 import { readJsonl, type StoredCase, type StoredEvidence } from "./case-file.ts";
+import type { CaseFacts } from "./facts.ts";
+import { passOfRecord } from "./pass.ts";
+import type { LabelSample } from "./sample.ts";
 import {
   buildQueue,
   countLabels,
   formatCounts,
+  formatSampleSplit,
+  passRefusal,
   formatLabelRecord,
   LABELS,
   labelIndex,
@@ -30,11 +35,13 @@ import {
   type LabelStore,
   type LabelSuggestion,
   type LabelValue,
+  type StoredSurprise,
 } from "./labeling.ts";
 import { ansiPaint, useColor } from "./style.ts";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const LABELS_FILE = "labels.jsonl";
+const SURPRISES_FILE = "surprises.jsonl";
 
 /** One suggested verdict from a suggestion file, written by an eval. */
 interface StoredVerdict {
@@ -53,9 +60,14 @@ interface Options {
   readonly report: boolean;
   readonly noColor: boolean;
   readonly suggest?: string;
+  readonly pass?: string;
+  readonly focus?: "declared" | "control" | "all";
+  readonly wave?: number;
+  readonly pilot: boolean;
 }
 
-const usage = `label.ts [--out <dir>] [--class <name>]... [--limit <n>] [--all] [--no-color] [--report] [--suggest <path>]
+const usage = `label.ts [--out <dir>] [--class <name>]... [--limit <n>] [--all] [--no-color]
+                 [--report] [--suggest <path>] [--pass <name>] [--focus <kind>] [--wave <n>]
 
   --out       corpus directory (default: evals/data)
   --class     only this candidate class; repeatable
@@ -64,12 +76,16 @@ const usage = `label.ts [--out <dir>] [--class <name>]... [--limit <n>] [--all] 
   --no-color  plain output, no escape codes
   --report    print the counts and exit, no terminal needed
   --suggest   read a suggestion file and offer its verdicts as defaults
+  --pass      label only this sample pass (v2-a, v2-b)
+  --pilot     label the sample's 20 pilot cases as an ordinary sitting
+  --focus     declared, control, or all (default: all)
+  --wave      the refill wave this sitting belongs to (1 or 2)
 
 With --suggest, each card shows a suggested answer and [enter] accepts it. The
 suggestion is a default, not an answer: the accepted label still passes through
 a keypress, so the ground truth stays human-authored.`;
 
-const parseOptions = (argv: readonly string[]): Options => {
+export const parseOptions = (argv: readonly string[]): Options => {
   const values = new Map<string, string[]>();
   const flags = new Set<string>();
   for (let index = 0; index < argv.length; index += 1) {
@@ -77,7 +93,7 @@ const parseOptions = (argv: readonly string[]): Options => {
     if (!flag.startsWith("--")) continue;
     const name = flag.slice(2);
     const next = argv[index + 1];
-    if (name === "all" || name === "report" || name === "no-color") {
+    if (name === "all" || name === "report" || name === "no-color" || name === "pilot") {
       flags.add(name);
       continue;
     }
@@ -93,15 +109,60 @@ const parseOptions = (argv: readonly string[]): Options => {
   }
   const classes = values.get("class");
   const suggest = values.get("suggest")?.[0];
+  const out = values.get("out")?.[0] ?? join(HERE, "data");
+  if (suggest !== undefined && corpusFormat(out) === "declared") {
+    throw new Error(
+      `--suggest is disabled for a declared corpus (${out}): the label must not see a suggestion`,
+    );
+  }
+  const pass = values.get("pass")?.[0];
+  const pilot = flags.has("pilot");
+  if (pilot && pass !== undefined) {
+    throw new Error(`--pilot and --pass cannot be combined\n\n${usage}`);
+  }
+  const focus = values.get("focus")?.[0] as Options["focus"] | undefined;
+  if (focus !== undefined && focus !== "declared" && focus !== "control" && focus !== "all") {
+    throw new Error(`--focus must be declared, control, or all\n\n${usage}`);
+  }
+  const rawWave = values.get("wave")?.[0];
+  const wave = rawWave === undefined ? undefined : Number(rawWave);
+  if (wave !== undefined && wave !== 1 && wave !== 2) {
+    throw new Error(`--wave must be 1 or 2\n\n${usage}`);
+  }
   return {
-    out: values.get("out")?.[0] ?? join(HERE, "data"),
+    out,
     ...(classes === undefined ? {} : { classes }),
     ...(limit === undefined ? {} : { limit: Number(limit) }),
     ...(suggest === undefined ? {} : { suggest }),
+    ...(pass === undefined ? {} : { pass }),
+    ...(focus === undefined ? {} : { focus }),
+    ...(wave === undefined ? {} : { wave }),
+    pilot,
     relabel: flags.has("all"),
     report: flags.has("report"),
     noColor: flags.has("no-color"),
   };
+};
+
+/** The manifest's format, when the directory has one. */
+const corpusFormat = (out: string): string | undefined => {
+  try {
+    const manifest = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as {
+      format?: unknown;
+    };
+    return typeof manifest.format === "string" ? manifest.format : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** The stored sample, when the directory has one. */
+const readSample = (out: string): LabelSample | undefined => {
+  try {
+    return JSON.parse(readFileSync(join(out, "sample.json"), "utf8")) as LabelSample;
+  } catch {
+    return undefined;
+  }
 };
 
 /** Read the suggested verdicts as labeler defaults. Uncertain rows are dropped. */
@@ -186,9 +247,17 @@ const main = async (): Promise<void> => {
   mkdirSync(options.out, { recursive: true });
   const labelsPath = join(options.out, LABELS_FILE);
   const records = [...readJsonl<LabelRecord>(labelsPath)];
+  const sample = readSample(options.out);
+  const refusal = passRefusal(sample, options.pass);
+  if (refusal !== null) throw new Error(refusal);
+  if (options.pilot && sample === undefined) {
+    throw new Error(`--pilot needs a sample.json in ${options.out}`);
+  }
 
   if (options.report) {
-    process.stdout.write(`${formatCounts(countLabels(cases, records))}\n`);
+    const gateRecords = records.filter((record) => passOfRecord(record) !== "pilot");
+    process.stdout.write(`${formatCounts(countLabels(cases, gateRecords))}\n`);
+    if (sample !== undefined) process.stdout.write(`${formatSampleSplit(sample, cases)}\n`);
     return;
   }
   if (process.stdin.isTTY !== true || typeof process.stdin.setRawMode !== "function") {
@@ -205,11 +274,19 @@ const main = async (): Promise<void> => {
       record,
     ]),
   );
+  const facts = new Map(
+    readJsonl<CaseFacts>(join(options.out, "facts.jsonl")).map((entry) => [entry.caseId, entry]),
+  );
+  const surprisesPath = join(options.out, SURPRISES_FILE);
   const build = (): ReturnType<typeof buildQueue> =>
     buildQueue(cases, evidence, {
       answered: options.relabel ? new Map() : labelIndex(records),
       ...(options.classes === undefined ? {} : { classes: options.classes }),
       ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(sample === undefined ? {} : { sample }),
+      ...(options.pilot ? { pilot: true } : {}),
+      ...(options.pass === undefined ? {} : { pass: options.pass }),
+      ...(options.focus === undefined ? {} : { focus: options.focus }),
     });
   const queue = build();
   if (queue.length === 0) {
@@ -237,6 +314,17 @@ const main = async (): Promise<void> => {
       now: () => new Date().toISOString(),
       paint,
       ...(suggestions === undefined ? {} : { suggestions }),
+      ...(sample === undefined ? {} : { corpus: "v2" }),
+      ...(options.pilot
+        ? { pass: "pilot" }
+        : options.pass === undefined
+          ? {}
+          : { pass: options.pass }),
+      ...(facts.size === 0 ? {} : { facts, reveal: true }),
+      ...(options.wave === undefined ? {} : { wave: options.wave }),
+      onSurprise: (surprise: StoredSurprise) => {
+        appendFileSync(surprisesPath, `${JSON.stringify(surprise)}\n`);
+      },
     });
     process.stdout.write(
       `\n${paint.bold(result.quit ? "quit" : "done")} after ${result.answered} answer(s)\n`,
@@ -250,4 +338,4 @@ const main = async (): Promise<void> => {
   process.stdout.write(`${queueSize(build())} question(s) left\n`);
 };
 
-await main();
+if (import.meta.main) await main();

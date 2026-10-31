@@ -8,8 +8,28 @@
 
 import { readiness } from "../src/core/deps.ts";
 import type { EvidenceEntry } from "./evidence.ts";
+import type { CaseFacts } from "./facts.ts";
+import { passOfRecord } from "./pass.ts";
+import type { LabelSample } from "./sample.ts";
 import { plainPaint, type Paint } from "./style.ts";
 import type { StoredCase, StoredEvidence, StoredItem } from "./case-file.ts";
+
+/** One surfaced disagreement between the answer and the revealed row. */
+export interface StoredSurprise {
+  readonly caseId: string;
+  readonly questionKey: string;
+  readonly rule: string;
+  readonly label: string;
+  readonly at: string;
+}
+
+/** Append one surprise row. The caller owns the file. */
+export const recordSurprise = (
+  records: StoredSurprise[],
+  surprise: StoredSurprise,
+): void => {
+  records.push(surprise);
+};
 
 /** The two answers the classifier question allows. */
 export const LABELS = {
@@ -25,6 +45,22 @@ export interface LabelRecord {
   readonly key: string;
   readonly label: LabelValue;
   readonly at: string;
+  /** The corpus the label belongs to. Absent on an old record. */
+  readonly corpus?: string;
+  /** The explicit pass. Absent on an old record; `passOfRecord` derives one. */
+  readonly pass?: string;
+  /** The replayed rule row the case's head fired, when facts were loaded. */
+  readonly rule?: string;
+  /** Where the facts came from: `live`, `replayed`, `mismatch`, `unresolved`. */
+  readonly source?: string;
+  /** True on a blind pilot seed. A pilot record never enters a pass. */
+  readonly pilot?: true;
+  /** 2 on a second-wave refill card. */
+  readonly wave?: number;
+  /** Show the row, the verdict, and the source after the answer locks. */
+  readonly reveal?: boolean;
+  /** Called when the labeler marks the revealed row surprising. */
+  readonly onSurprise?: (surprise: StoredSurprise) => void;
 }
 
 /** Key for one answered question. The separator cannot appear in either part. */
@@ -57,6 +93,12 @@ export const parseLabels = (text: string): readonly LabelRecord[] => {
       key: record.key,
       label,
       at: typeof record.at === "string" ? record.at : "",
+      ...(typeof record.corpus === "string" ? { corpus: record.corpus } : {}),
+      ...(typeof record.pass === "string" ? { pass: record.pass } : {}),
+      ...(typeof record.rule === "string" ? { rule: record.rule } : {}),
+      ...(typeof record.source === "string" ? { source: record.source } : {}),
+      ...(record.pilot === true ? { pilot: true as const } : {}),
+      ...(typeof record.wave === "number" ? { wave: record.wave } : {}),
     });
   }
   return records;
@@ -67,6 +109,48 @@ export const labelIndex = (records: readonly LabelRecord[]): ReadonlyMap<string,
   const index = new Map<string, LabelValue>();
   for (const record of records) index.set(labelKeyOf(record.caseId, record.key), record.label);
   return index;
+};
+
+/** One label joined to its question, inside one pass. */
+export interface LabeledPair {
+  readonly caseId: string;
+  readonly key: string;
+  readonly label: LabelValue;
+  readonly at: string;
+  readonly pass: string;
+}
+
+/**
+ * Join the labeled questions of one pass. A `pilot: true` record is a blind
+ * repeat and never enters a pass measurement, and a record for a case outside
+ * the corpus is dropped.
+ */
+export const labeledPairs = (
+  cases: readonly StoredCase[],
+  records: readonly LabelRecord[],
+  pass: string,
+): readonly LabeledPair[] => {
+  const keys = new Map<string, ReadonlySet<string>>();
+  for (const entry of cases) {
+    keys.set(
+      entry.caseId,
+      new Set(entry.questions.map((question) => question.key)),
+    );
+  }
+  const pairs: LabeledPair[] = [];
+  for (const record of records) {
+    if (record.pilot === true) continue;
+    if (passOfRecord(record) !== pass) continue;
+    if (keys.get(record.caseId)?.has(record.key) !== true) continue;
+    pairs.push({
+      caseId: record.caseId,
+      key: record.key,
+      label: record.label,
+      at: record.at,
+      pass,
+    });
+  }
+  return pairs;
 };
 
 /** One unanswered question, ready to ask. */
@@ -84,6 +168,8 @@ export interface QueueCase {
   /** Position in the queue, 1-based. */
   readonly position: number;
   readonly pending: readonly QueueCandidate[];
+  /** True when this card is a blind pilot seed. */
+  readonly pilot?: boolean;
 }
 
 /** What to queue. */
@@ -94,7 +180,80 @@ export interface QueueOptions {
   readonly limit?: number;
   /** Answers to skip. */
   readonly answered: ReadonlyMap<string, LabelValue>;
+  /** Walk this sample's stored order. Corpus order when absent. */
+  readonly sample?: LabelSample;
+  /** Keep only the given pass of the sample. All its passes when absent. */
+  readonly pass?: string;
+  /** Queue the sample's pilot ids as an ordinary sitting, before any pass. */
+  readonly pilot?: boolean;
+  /** Keep only declared heads, only controls, or both. */
+  readonly focus?: "declared" | "control" | "all";
 }
+
+/** True when a candidate carries a declared reference or product. */
+const declaredCandidate = (candidate: {
+  readonly refs?: readonly unknown[];
+  readonly produces?: readonly unknown[];
+}): boolean => (candidate.refs?.length ?? 0) + (candidate.produces?.length ?? 0) > 0;
+
+const matchesFocus = (
+  candidate: { readonly refs?: readonly unknown[]; readonly produces?: readonly unknown[] },
+  focus: QueueOptions["focus"],
+): boolean =>
+  focus === undefined ||
+  focus === "all" ||
+  (focus === "declared") === declaredCandidate(candidate);
+
+/**
+ * Walk the sample's stored order. A sitting contributes its pilot seeds first,
+ * then its cards; a sampled case contributes its head question only.
+ */
+const buildSampledQueue = (
+  cases: readonly StoredCase[],
+  evidence: ReadonlyMap<string, StoredEvidence>,
+  options: QueueOptions & { readonly sample: LabelSample },
+): readonly QueueCase[] => {
+  const byId = new Map(cases.map((entry) => [entry.caseId, entry]));
+  const queue: QueueCase[] = [];
+  let candidates = 0;
+  const named =
+    options.pass === undefined
+      ? undefined
+      : options.sample.passes[options.pass as keyof LabelSample["passes"]];
+  const passes = named === undefined ? Object.values(options.sample.passes) : [named];
+  const push = (caseId: string, pilot: boolean): boolean => {
+    const entry = byId.get(caseId);
+    if (entry === undefined) return true;
+    const candidate = entry.candidates[0];
+    const question = entry.questions[0];
+    if (candidate === undefined || question === undefined) return true;
+    if (options.classes !== undefined && !options.classes.includes(candidate.class)) return true;
+    if (!matchesFocus(candidate, options.focus)) return true;
+    const labelKey = labelKeyOf(entry.caseId, question.key);
+    if (options.answered.has(labelKey)) return true;
+    if (options.limit !== undefined && candidates >= options.limit) return false;
+    candidates += 1;
+    queue.push({
+      entry,
+      evidence: evidence.get(entry.caseId),
+      position: queue.length + 1,
+      pending: [{ labelKey, questionKey: question.key, index: 0 }],
+      ...(pilot ? { pilot: true } : {}),
+    });
+    return true;
+  };
+  if (options.pilot === true) {
+    for (const caseId of options.sample.pilot) if (!push(caseId, false)) return queue;
+    return queue;
+  }
+  for (const pass of passes) {
+    for (const sitting of pass.sittings) {
+      for (const seed of sitting.seededWith) if (!push(seed, true)) return queue;
+      for (const card of sitting.cards) if (!push(card, false)) return queue;
+    }
+  }
+  return queue;
+};
 
 /** Build the work queue: every unanswered question, in corpus order. */
 export const buildQueue = (
@@ -102,6 +261,10 @@ export const buildQueue = (
   evidence: ReadonlyMap<string, StoredEvidence>,
   options: QueueOptions,
 ): readonly QueueCase[] => {
+  if (options.sample !== undefined) return buildSampledQueue(cases, evidence, {
+    ...options,
+    sample: options.sample,
+  });
   const queue: QueueCase[] = [];
   let candidates = 0;
   for (const entry of cases) {
@@ -249,6 +412,15 @@ export const renderList = (
     if (item.description !== undefined && item.description.length > 0) {
       lines.push(
         `  ${" ".repeat(idWidth)}  ${" ".repeat(19)}${paint.dim(oneLine(item.description, size))}`,
+      );
+    }
+    const declarations = [
+      ...(item.refs ?? []).map((reference) => `refs: ${describeReference(reference)}`),
+      ...(item.produces ?? []).map((product) => `produces: ${product.path}`),
+    ].join("  ");
+    if (declarations.length > 0) {
+      lines.push(
+        `  ${" ".repeat(idWidth)}  ${" ".repeat(19)}${paint.dim(oneLine(declarations, size))}`,
       );
     }
   });
@@ -405,6 +577,13 @@ const describeReference = (reference: ReferenceView): string => {
   return `path: ${reference.path ?? ""}${symbol}${span}`;
 };
 
+/** What the card may show. Facts are hidden until the answer locks. */
+export interface CandidateCard {
+  readonly facts?: CaseFacts;
+  /** True after the answer: shows the row, the verdict, and the provenance. */
+  readonly revealed?: boolean;
+}
+
 /** One question, with its two criteria. */
 export const renderCandidate = (
   queueCase: QueueCase,
@@ -412,6 +591,7 @@ export const renderCandidate = (
   position: number,
   width: number,
   paint: Paint = plainPaint,
+  card: CandidateCard = {},
 ): string => {
   const entry = queueCase.entry;
   const view = entry.candidates[candidate.index];
@@ -440,8 +620,42 @@ export const renderCandidate = (
       lines.push(indented(product.path, width, "    ", paint.dim));
     }
   }
+  const facts = card.facts;
+  const shownFacts =
+    facts === undefined
+      ? undefined
+      : candidate.index === 0
+        ? facts.head
+        : facts.diagnostics[candidate.index - 1];
+  const revealed = card.revealed === true;
+  if (facts !== undefined) {
+    lines.push("", indented("RESOLUTION", width, "  ", paint.dim));
+    if (facts.source === "unresolved") {
+      lines.push(indented("unresolved", width, "    ", paint.yellow));
+    }
+    for (const reference of shownFacts?.references ?? []) {
+      lines.push(
+        indented(`${describeReference(reference.reference)}: ${reference.state}`, width, "    ", paint.dim),
+      );
+    }
+    for (const product of shownFacts?.products ?? []) {
+      lines.push(indented(`${product.path}: ${product.state}`, width, "    ", paint.dim));
+    }
+    if (revealed && shownFacts !== undefined) {
+      lines.push("", indented("ROW", width, "  ", paint.dim));
+      lines.push(
+        indented(`${shownFacts.row} (${shownFacts.verdict})`, width, "    ", paint.bold),
+      );
+      lines.push(indented(`resolution: ${facts.source}`, width, "    ", paint.dim));
+    }
+  }
   const decision = entry.decision;
-  if (decision !== undefined && decision.candidateRef === view.ref) {
+  if (
+    revealed &&
+    facts === undefined &&
+    decision !== undefined &&
+    decision.candidateRef === view.ref
+  ) {
     lines.push(
       indented(`decision: ${decision.rule} (${decision.verdict})`, width, "  ", paint.dim),
     );
@@ -585,6 +799,46 @@ export const countLabels = (
   };
 };
 
+/** Why a pass name cannot be labeled, or null when the sample lists it. */
+export const passRefusal = (
+  sample: LabelSample | undefined,
+  pass: string | undefined,
+): string | null => {
+  if (pass === undefined) return null;
+  const passes = sample === undefined ? [] : Object.keys(sample.passes);
+  return passes.includes(pass)
+    ? null
+    : `unknown pass ${pass}; the sample lists ${passes.join(", ") || "(none)"}`;
+};
+
+/** The sample's pass split and its declared/control mix, for `--report`. */
+export const formatSampleSplit = (
+  sample: LabelSample,
+  cases: readonly StoredCase[],
+): string => {
+  const declared = new Set(
+    cases
+      .filter((entry) => {
+        const candidate = entry.candidates[0];
+        return (
+          candidate !== undefined &&
+          (candidate.refs?.length ?? 0) + (candidate.produces?.length ?? 0) > 0
+        );
+      })
+      .map((entry) => entry.caseId),
+  );
+  const counts = Object.entries(sample.passes).map(([name, pass]) => {
+    const cards = pass.sittings.flatMap((sitting) => sitting.cards);
+    return { name, cards, declared: cards.filter((id) => declared.has(id)).length };
+  });
+  const all = new Set(counts.flatMap((pass) => pass.cards));
+  const declaredTotal = [...all].filter((id) => declared.has(id)).length;
+  return [
+    `sample: ${counts.map((pass) => `${pass.name} ${pass.cards.length} cards`).join(", ")}, ${sample.pilot.length} pilot seeds`,
+    `declared ${declaredTotal}, controls ${all.size - declaredTotal}`,
+  ].join("\n");
+};
+
 /** One line per class, with the share that needs context. */
 export const formatCounts = (counts: LabelCounts): string => {
   const classes = [...new Set(Object.keys(counts.totalByClass))].sort();
@@ -626,6 +880,18 @@ export interface RunOptions {
   readonly paint?: Paint | undefined;
   /** Structural pre-labels, keyed by `labelKeyOf(caseId, key)`. Enter accepts one. */
   readonly suggestions?: ReadonlyMap<string, LabelSuggestion> | undefined;
+  /** The corpus a record names. Absent for an old-corpus run. */
+  readonly corpus?: string;
+  /** The explicit pass a record names. */
+  readonly pass?: string;
+  /** The frozen facts, so a record names its replayed row and source. */
+  readonly facts?: ReadonlyMap<string, CaseFacts>;
+  /** 2 on a second-wave refill card. */
+  readonly wave?: number;
+  /** Show the row, the verdict, and the source after the answer locks. */
+  readonly reveal?: boolean;
+  /** Called when the labeler marks the revealed row surprising. */
+  readonly onSurprise?: (surprise: StoredSurprise) => void;
 }
 
 /** Where one queued question sits. */
@@ -662,14 +928,48 @@ export const runLabeling = async (
   const paint = options.paint ?? plainPaint;
   const tint = (label: LabelValue): string =>
     label === LABELS.needsContext ? paint.yellow(label) : paint.green(label);
-  const ask = (queueCase: QueueCase, candidate: QueueCandidate, pendingPos: number): string =>
-    renderCandidate(queueCase, candidate, pendingPos + 1, options.width, paint);
+  const factsOf = (queueCase: QueueCase): CaseFacts | undefined =>
+    options.facts?.get(queueCase.entry.caseId);
+  const ask = (queueCase: QueueCase, candidate: QueueCandidate, pendingPos: number): string => {
+    const facts = factsOf(queueCase);
+    const card: CandidateCard = facts === undefined ? {} : { facts };
+    return renderCandidate(queueCase, candidate, pendingPos + 1, options.width, paint, card);
+  };
+  const reveal = async (
+    queueCase: QueueCase,
+    candidate: QueueCandidate,
+    label: LabelValue,
+  ): Promise<void> => {
+    if (options.reveal !== true) return;
+    const facts = factsOf(queueCase);
+    if (facts === undefined) return;
+    session.write(
+      `\n${renderCandidate(queueCase, candidate, 1, options.width, paint, { facts, revealed: true })}`,
+    );
+    session.write(`\n${paint.dim("[!] surprise  [any] continue")}\n${paint.dim(">")} `);
+    const key = await session.nextKey();
+    if (key !== "!") return;
+    options.onSurprise?.({
+      caseId: queueCase.entry.caseId,
+      questionKey: candidate.questionKey,
+      rule: facts.head.row,
+      label,
+      at: options.now(),
+    });
+    session.write(`  ${paint.dim("recorded a surprise")}\n`);
+  };
   const record = (queueCase: QueueCase, candidate: QueueCandidate, label: LabelValue): void => {
+    const facts = options.facts?.get(queueCase.entry.caseId);
     store.append({
       caseId: queueCase.entry.caseId,
       key: candidate.questionKey,
       label,
       at: options.now(),
+      ...(options.corpus === undefined ? {} : { corpus: options.corpus }),
+      ...(options.pass === undefined ? {} : { pass: options.pass }),
+      ...(facts === undefined ? {} : { rule: facts.head.row, source: facts.source }),
+      ...(queueCase.pilot === true ? { pilot: true } : {}),
+      ...(options.wave === undefined ? {} : { wave: options.wave }),
     });
   };
 
@@ -729,6 +1029,7 @@ export const runLabeling = async (
       }
       record(queueCase, candidate, suggestion.label);
       session.write(`  ${paint.dim("→")} ${tint(suggestion.label)}\n`);
+      await reveal(queueCase, candidate, suggestion.label);
       answered += 1;
       pendingPos += 1;
       continue;
@@ -766,6 +1067,7 @@ export const runLabeling = async (
     if (action.kind === "answer") {
       record(queueCase, candidate, action.label);
       session.write(`  ${paint.dim("→")} ${tint(action.label)}\n`);
+      await reveal(queueCase, candidate, action.label);
       answered += 1;
       pendingPos += 1;
       continue;
@@ -780,6 +1082,7 @@ export const runLabeling = async (
     session.write(
       `  ${paint.dim("→")} ${tint(action.label)} ${paint.dim(`for ${bulk} question(s)`)}\n`,
     );
+    await reveal(queueCase, candidate, action.label);
     pendingPos = queueCase.pending.length;
   }
   return { answered, quit: false };

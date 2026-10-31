@@ -18,6 +18,7 @@
  *
  * Usage: `bun run eval:rules [--out <dir>]`
  */
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { NEEDS_CONTEXT_LABEL, NEEDS_NONE_LABEL } from "../src/compaction/classifier.ts";
 import {
@@ -33,8 +34,9 @@ import {
 } from "../src/compaction/observations.ts";
 import { ACCEPTED_RULES, route, type RuleVerdict } from "../src/compaction/rules.ts";
 import { readJsonl, type StoredCase, type StoredEvidence } from "./case-file.ts";
+import type { CaseFacts } from "./facts.ts";
 import { syntheticCorpus } from "./fixture.ts";
-import { LABEL_PASSES, passOf, type LabelPass } from "./pass.ts";
+import { LABEL_PASSES, passOfRecord, type LabelPass } from "./pass.ts";
 
 const HERE = import.meta.dir;
 
@@ -42,6 +44,10 @@ const HERE = import.meta.dir;
 export interface StoredLabel {
   readonly label: string;
   readonly at: string;
+  /** The explicit pass a declared-corpus record carries. */
+  readonly pass?: string;
+  /** A blind pilot seed never enters a pass measurement. */
+  readonly pilot?: boolean;
 }
 
 /** One frozen pre-revert verdict, from `verdicts.jsonl`. */
@@ -65,6 +71,12 @@ export interface RuleEntry {
   readonly truth: "needs" | "stands" | undefined;
   /** True for the synthetic fixture, never for a real session. */
   readonly synthetic?: boolean;
+  /** Where the facts came from, on the declared corpus. */
+  readonly source?: "live" | "replayed" | "mismatch" | "unresolved";
+  /** True for a non-head candidate: never gated. */
+  readonly diagnostic?: boolean;
+  /** True when the case's head carries no declaration: the base-rate subset. */
+  readonly control?: boolean;
 }
 
 /** One rule's per-pass tally. */
@@ -184,6 +196,7 @@ const replay = (
   evidence: ReadonlyMap<string, StoredEvidence>,
   labels: ReadonlyMap<string, StoredLabel>,
   factsOf: FactsOf,
+  frozen?: ReadonlyMap<string, CaseFacts>,
 ): RuleReplay => {
   const entries: RuleEntry[] = [];
   let droppedLabels = 0;
@@ -198,6 +211,7 @@ const replay = (
       labels.get(`${stored.caseId}\u0000${question.key}`),
     );
     const firstLabelAt = caseLabels.find((label) => label !== undefined)?.at;
+    const storedFacts = frozen?.get(stored.caseId);
     for (const [index, candidate] of stored.candidates.entries()) {
       const labeled = caseLabels[index];
       const canonical = labeled === undefined ? undefined : canonicalLabel(labeled.label);
@@ -206,27 +220,38 @@ const replay = (
       // something, is the raw row. The other candidates have no record, so the
       // corpus facts route them as before.
       const recorded = index === 0 ? stored.decision : undefined;
+      const candidateFacts =
+        index === 0 ? storedFacts?.head : storedFacts?.diagnostics[index - 1];
       const facts = factsOf(stored, record, candidate.text);
       const decision: { readonly rule: string; readonly verdict: RuleVerdict } =
-        recorded === undefined
-          ? route({
-              references: [],
-              products: [],
-              candidatePaths: facts.candidatePaths,
-              knownText: facts.knownText,
-              producedText: facts.producedText,
-              dependent: candidate.class === "dependent-successor",
-              planDocument: facts.planDocument,
-            })
-          : { rule: recorded.rule, verdict: recorded.verdict as RuleVerdict };
+        candidateFacts !== undefined
+          ? { rule: candidateFacts.row, verdict: candidateFacts.verdict }
+          : recorded === undefined
+            ? route({
+                references: [],
+                products: [],
+                candidatePaths: facts.candidatePaths,
+                knownText: facts.knownText,
+                producedText: facts.producedText,
+                dependent: candidate.class === "dependent-successor",
+                planDocument: facts.planDocument,
+              })
+            : { rule: recorded.rule, verdict: recorded.verdict as RuleVerdict };
       entries.push({
         caseId: stored.caseId,
         questionKey: stored.questions[index]!.key,
-        pass: passOf(labeled?.at ?? firstLabelAt ?? stored.at),
+        pass: passOfRecord({ at: labeled?.at ?? firstLabelAt ?? stored.at, ...(labeled?.pass === undefined ? {} : { pass: labeled.pass }) }),
         rule: decision.rule,
         verdict: decision.verdict,
-        truth: canonical,
+        truth: labeled?.pilot === true ? undefined : canonical,
         ...(stored.synthetic === true ? { synthetic: true } : {}),
+        ...(storedFacts === undefined
+          ? {}
+          : {
+              source: storedFacts.source,
+              control: !storedFacts.declaredHead,
+              ...(index > 0 ? { diagnostic: true } : {}),
+            }),
       });
     }
   }
@@ -245,7 +270,8 @@ export const productionEntries = (
   cases: readonly StoredCase[],
   evidence: ReadonlyMap<string, StoredEvidence>,
   labels: ReadonlyMap<string, StoredLabel>,
-): RuleReplay => replay(cases, evidence, labels, productionFactsOf);
+  facts?: ReadonlyMap<string, CaseFacts>,
+): RuleReplay => replay(cases, evidence, labels, productionFactsOf, facts);
 
 /** One candidate whose replayed row or verdict differs from `verdicts.jsonl`. */
 export interface ParityMismatch {
@@ -323,10 +349,11 @@ export const summarizeRules = (entries: readonly RuleEntry[]): readonly RuleRow[
     }
     byKey.set(key, row);
   }
-  const order = new Map(LABEL_PASSES.map((pass, index) => [pass, index]));
+  const order = new Map<string, number>(LABEL_PASSES.map((pass, index) => [pass, index]));
+  const rank = (pass: string): number => order.get(pass) ?? LABEL_PASSES.length;
   return [...byKey.values()].sort(
     (left, right) =>
-      order.get(left.pass)! - order.get(right.pass)! ||
+      rank(left.pass) - rank(right.pass) ||
       right.labeled - left.labeled ||
       left.rule.localeCompare(right.rule) ||
       left.verdict.localeCompare(right.verdict),
@@ -388,13 +415,18 @@ export interface GatePass {
   readonly correct: number;
   readonly agreement: number;
   readonly base: number;
+  /** Control labels behind the base rate. */
+  readonly baseLabeled: number;
   readonly lift: number;
+  /** True below 30 controls: the lift is advisory, not gating. */
+  readonly advisory: boolean;
   readonly qualifies: boolean;
 }
 
 /** One rule's gate result across the passes. */
 export interface GateRule {
   readonly rule: string;
+  readonly verdict: RuleVerdict;
   readonly passes: readonly GatePass[];
   readonly qualified: number;
   readonly accepted: boolean;
@@ -406,21 +438,32 @@ export const GATE_MIN_AGREEMENT = 0.95;
 export const GATE_MIN_PASSES = 2;
 
 /**
- * Compute the gate. A pass qualifies when the rule has at least 10 labeled
- * firings, at least 95% agreement, and agreement above the pass base rate (the
- * stand-alone share of every label in that pass). A rule is accepted when at
- * least two passes qualify. The base rate is independent of the rule, so a
- * rule that only fires on the common case cannot pass by matching the base.
+ * Compute the gate over the passes the caller supplies. A pass qualifies when
+ * the rule has at least 10 labeled firings, at least 95% agreement, and
+ * agreement above that pass's base rate. The base rate comes from the control
+ * subset when the entries carry a control flag; the old corpus has none, so it
+ * keeps the all-label base. A rule is accepted when at least two passes
+ * qualify. A diagnostic entry never counts.
  */
-export const gateOf = (entries: readonly RuleEntry[]): readonly GateRule[] => {
+export const gateOf = (
+  entries: readonly RuleEntry[],
+  passes: readonly LabelPass[] = LABEL_PASSES,
+  declaredRows: readonly { readonly row: string; readonly verdict: RuleVerdict }[] = [],
+): readonly GateRule[] => {
+  const controlled = entries.some((entry) => entry.control !== undefined);
   const baseByPass = new Map<LabelPass, { labeled: number; stands: number }>();
   const byRule = new Map<string, Map<LabelPass, { labeled: number; correct: number }>>();
+  const verdictOf = new Map<string, RuleVerdict>();
   for (const entry of entries) {
+    if (entry.diagnostic === true) continue;
+    verdictOf.set(entry.rule, entry.verdict);
+    if (entry.truth !== undefined && (!controlled || entry.control === true)) {
+      const base = baseByPass.get(entry.pass) ?? { labeled: 0, stands: 0 };
+      base.labeled += 1;
+      if (entry.truth === "stands") base.stands += 1;
+      baseByPass.set(entry.pass, base);
+    }
     if (entry.truth === undefined) continue;
-    const base = baseByPass.get(entry.pass) ?? { labeled: 0, stands: 0 };
-    base.labeled += 1;
-    if (entry.truth === "stands") base.stands += 1;
-    baseByPass.set(entry.pass, base);
     const perRule = byRule.get(entry.rule) ?? new Map();
     const cell = perRule.get(entry.pass) ?? { labeled: 0, correct: 0 };
     cell.labeled += 1;
@@ -428,14 +471,19 @@ export const gateOf = (entries: readonly RuleEntry[]): readonly GateRule[] => {
     perRule.set(entry.pass, cell);
     byRule.set(entry.rule, perRule);
   }
+  for (const row of declaredRows) {
+    if (!verdictOf.has(row.row)) verdictOf.set(row.row, row.verdict);
+    if (!byRule.has(row.row)) byRule.set(row.row, new Map());
+  }
   const rules: GateRule[] = [];
   for (const [rule, perRule] of byRule) {
-    const passes = LABEL_PASSES.map((pass) => {
+    const cells = passes.map((pass) => {
       const cell = perRule.get(pass) ?? { labeled: 0, correct: 0 };
       const baseCell = baseByPass.get(pass) ?? { labeled: 0, stands: 0 };
       const agreement = cell.labeled === 0 ? 0 : cell.correct / cell.labeled;
       const base = baseCell.labeled === 0 ? 0 : baseCell.stands / baseCell.labeled;
       const lift = agreement - base;
+      const advisory = controlled && baseCell.labeled < 30;
       const qualifies =
         cell.labeled >= GATE_MIN_LABELED && agreement >= GATE_MIN_AGREEMENT && lift > 0;
       return {
@@ -444,12 +492,20 @@ export const gateOf = (entries: readonly RuleEntry[]): readonly GateRule[] => {
         correct: cell.correct,
         agreement,
         base,
+        baseLabeled: baseCell.labeled,
         lift,
+        advisory,
         qualifies,
       };
     });
-    const qualified = passes.filter((pass) => pass.qualifies).length;
-    rules.push({ rule, passes, qualified, accepted: qualified >= GATE_MIN_PASSES });
+    const qualified = cells.filter((cell) => cell.qualifies).length;
+    rules.push({
+      rule,
+      verdict: verdictOf.get(rule) ?? "abstain",
+      passes: cells,
+      qualified,
+      accepted: qualified >= GATE_MIN_PASSES,
+    });
   }
   return rules.sort((left, right) => left.rule.localeCompare(right.rule));
 };
@@ -458,22 +514,86 @@ export const gateOf = (entries: readonly RuleEntry[]): readonly GateRule[] => {
 export const gateAccepted = (rules: readonly GateRule[]): ReadonlySet<string> =>
   new Set(rules.filter((rule) => rule.accepted).map((rule) => rule.rule));
 
+/** The accepted rows that can change behavior: an abstain row is never promotable. */
+export const promotableAccepted = (rules: readonly GateRule[]): ReadonlySet<string> =>
+  new Set(
+    rules.filter((rule) => rule.accepted && rule.verdict !== "abstain").map((rule) => rule.rule),
+  );
+
+/** Where the base rate comes from: the control subset or the whole label set. */
+export const gateBase = (entries: readonly RuleEntry[]): "controls" | "labels" =>
+  entries.some((entry) => entry.control !== undefined) ? "controls" : "labels";
+
+/** Passes present in the records but absent from the corpus' pass list. */
+export const unlistedPasses = (
+  entries: readonly RuleEntry[],
+  passes: readonly LabelPass[],
+): readonly string[] => [
+  ...new Set(entries.map((entry) => entry.pass).filter((pass) => !passes.includes(pass))),
+].sort();
+
+/** The passes that carry at least one label. */
+export const labeledPasses = (entries: readonly RuleEntry[]): readonly string[] => [
+  ...new Set(entries.filter((entry) => entry.truth !== undefined).map((entry) => entry.pass)),
+].sort();
+
 /** The gate table: one row per rule and pass, with the base rate and the lift. */
 export const formatGate = (rules: readonly GateRule[]): string =>
   table(
-    ["rule", "pass", "labeled", "agreement", "base", "lift", "gate"],
+    ["rule", "verdict", "pass", "labeled", "agreement", "base", "lift", "gate"],
     rules.flatMap((rule) =>
       rule.passes.map((pass) => [
         rule.rule,
+        rule.verdict,
         pass.pass,
         String(pass.labeled),
         pass.labeled === 0 ? "—" : percent(pass.agreement),
-        pass.labeled === 0 ? "—" : percent(pass.base),
-        pass.labeled === 0 ? "—" : signedPercent(pass.lift),
-        pass.qualifies ? "PASS" : "fail",
+        pass.labeled === 0 ? "—" : pass.advisory ? `thin (${pass.baseLabeled})` : percent(pass.base),
+        pass.labeled === 0
+          ? "—"
+          : `${signedPercent(pass.lift)}${pass.advisory ? " advisory" : ""}`,
+        rule.verdict === "abstain"
+          ? "reported, not promotable"
+          : pass.qualifies
+            ? "PASS"
+            : "fail",
       ]),
     ),
   );
+
+/** The soft report when no pass carries a label. */
+export const formatUnmeasured = (
+  rows: readonly { readonly row: string; readonly verdict: RuleVerdict }[],
+): string =>
+  table(
+    ["rule", "verdict", "state"],
+    [...rows]
+      .sort((left, right) => left.row.localeCompare(right.row))
+      .map((row) => [row.row, row.verdict, "unmeasured"]),
+  );
+
+/**
+ * The frozen old floor. The old corpus measured these two rows; the declared
+ * corpus never did, so a promotion keeps them and checks only that it did not
+ * drop them.
+ */
+export const OLD_FLOOR: ReadonlySet<string> = new Set([
+  "names-batch-output",
+  "no-visible-link",
+]);
+
+/** The old corpus' superset check: the floor is kept, the rest is unmeasured here. */
+export const formatFloor = (
+  accepted: ReadonlySet<string>,
+  floor: ReadonlySet<string>,
+): string => {
+  const missing = [...floor].filter((rule) => !accepted.has(rule)).sort();
+  const unmeasured = [...accepted].filter((rule) => !floor.has(rule)).sort();
+  return [
+    `${missing.length === 0 ? "still accepted" : "MISSING"}: ${[...floor].sort().join(", ")}`,
+    `not measured by this corpus: ${unmeasured.join(", ") || "(none)"}`,
+  ].join("\n");
+};
 
 /** True when the two rule sets hold the same names. */
 export const sameRuleSet = (left: ReadonlySet<string>, right: ReadonlySet<string>): boolean =>
@@ -537,12 +657,15 @@ interface Options {
   readonly out: string;
   /** Add the checked-in synthetic fixture to the production replay. */
   readonly fixture: boolean;
+  /** Also write gate.json to this directory. */
+  readonly evidence?: string;
 }
 
-const usage = `rules.ts [--out <dir>] [--fixture]
+const usage = `rules.ts [--out <dir>] [--fixture] [--evidence <dir>]
 
-  --out      corpus directory (default: evals/data)
-  --fixture  add the checked-in synthetic fixture to the production replay`;
+  --out       corpus directory (default: evals/data)
+  --fixture   add the checked-in synthetic fixture to the production replay
+  --evidence  also write gate.json to <dir>`;
 
 const parseOptions = (argv: readonly string[]): Options => {
   const values = new Map<string, string>();
@@ -561,7 +684,11 @@ const parseOptions = (argv: readonly string[]): Options => {
     values.set(flag.slice(2), next);
     index += 1;
   }
-  return { out: values.get("out") ?? join(HERE, "data"), fixture };
+  return {
+    out: values.get("out") ?? join(HERE, "data"),
+    fixture,
+    ...(values.get("evidence") === undefined ? {} : { evidence: values.get("evidence") }),
+  };
 };
 
 /** Read the corpus into the maps the two replays share. */
@@ -576,15 +703,159 @@ export const readCorpus = (out: string) => {
     readonly key: string;
     readonly label: string;
     readonly at: string;
+    readonly pass?: string;
+    readonly pilot?: boolean;
   }>(join(out, "labels.jsonl"))) {
-    labels.set(`${row.caseId}\u0000${row.key}`, { label: row.label, at: row.at });
+    labels.set(`${row.caseId}\u0000${row.key}`, {
+      label: row.label,
+      at: row.at,
+      ...(row.pass === undefined ? {} : { pass: row.pass }),
+      ...(row.pilot === true ? { pilot: true } : {}),
+    });
   }
   const verdicts = readJsonl<StoredVerdict>(join(out, "verdicts.jsonl"));
   return { cases, evidence, labels, verdicts };
 };
 
-const main = (): void => {
-  const options = parseOptions(process.argv.slice(2));
+/** The manifest's format, when the directory has one. */
+const corpusFormat = (out: string): string | undefined => {
+  try {
+    const manifest = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as {
+      format?: unknown;
+    };
+    return typeof manifest.format === "string" ? manifest.format : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** The sample's pass list, or undefined when the directory has no sample. */
+const samplePasses = (out: string): readonly string[] | undefined => {
+  try {
+    const sample = JSON.parse(readFileSync(join(out, "sample.json"), "utf8")) as {
+      passes?: Record<string, unknown>;
+    };
+    return sample.passes === undefined ? undefined : Object.keys(sample.passes);
+  } catch {
+    return undefined;
+  }
+};
+
+/** The frozen facts, keyed by case. */
+const readFacts = (out: string): ReadonlyMap<string, CaseFacts> =>
+  new Map(readJsonl<CaseFacts>(join(out, "facts.jsonl")).map((entry) => [entry.caseId, entry]));
+
+/** One declared row from the frozen facts. */
+const declaredRowsOf = (
+  facts: ReadonlyMap<string, CaseFacts>,
+): readonly { readonly row: string; readonly verdict: RuleVerdict }[] => {
+  const rows = new Map<string, RuleVerdict>();
+  for (const entry of facts.values()) {
+    if (!entry.promotable || !entry.declaredHead) continue;
+    rows.set(entry.head.row, entry.head.verdict);
+  }
+  return [...rows.entries()].map(([row, verdict]) => ({ row, verdict }));
+};
+
+const sourceCounts = (facts: ReadonlyMap<string, CaseFacts>): Readonly<Record<string, number>> => {
+  const totals: Record<string, number> = { live: 0, replayed: 0, mismatch: 0, unresolved: 0 };
+  for (const entry of facts.values()) totals[entry.source] = (totals[entry.source] ?? 0) + 1;
+  return totals;
+};
+
+const writeGate = (
+  evidence: string,
+  gate: readonly GateRule[],
+  body: Record<string, unknown>,
+): void => {
+  mkdirSync(evidence, { recursive: true });
+  writeFileSync(join(evidence, "gate.json"), `${JSON.stringify({ rows: gate, ...body }, null, 2)}\n`);
+};
+
+/** The declared corpus: frozen facts, explicit passes, the control base rate. */
+const declaredReport = (options: Options, format: string | undefined): number => {
+  const real = readCorpus(options.out);
+  const facts = readFacts(options.out);
+  const entries = productionEntries(real.cases, real.evidence, real.labels, facts).entries;
+  const fromSample = samplePasses(options.out);
+  const passes = fromSample ?? [
+    ...new Set(entries.filter((entry) => entry.truth !== undefined).map((entry) => entry.pass)),
+  ];
+  const declaredRows = declaredRowsOf(facts);
+  const sources = sourceCounts(facts);
+  const labeled = entries.filter((entry) => entry.truth !== undefined).length;
+  const passLabel = fromSample === undefined ? "from records (no sample)" : passes.join(", ");
+
+  console.log(`corpus: ${real.cases.length} cases, ${entries.length} questions, ${labeled} labeled`);
+  console.log(`format: ${format ?? "unknown"}`);
+  console.log(`passes: ${passLabel}`);
+  console.log(`sources: live ${sources.live}, replayed ${sources.replayed}, mismatch ${sources.mismatch}, unresolved ${sources.unresolved}`);
+  console.log(`base: ${gateBase(entries)}`);
+
+  const labeledList = [...new Set(entries.filter((entry) => entry.truth !== undefined).map((entry) => entry.pass))];
+  if (labeledList.length === 0) {
+    console.log("");
+    console.log(formatUnmeasured(declaredRows));
+    if (options.evidence !== undefined) {
+      writeGate(options.evidence, [], {
+        corpus: format,
+        passes: { list: passes, source: passLabel },
+        base: gateBase(entries),
+        accepted: [],
+        promotion: [...OLD_FLOOR].sort(),
+        unmeasured: declaredRows.map((row) => row.row),
+        sources,
+      });
+    }
+    console.log("\nno pass carries a label; nothing to compare.");
+    return 0;
+  }
+
+  for (const pass of unlistedPasses(entries, passes)) {
+    console.log(`${pass}: not in this corpus`);
+  }
+  const gate = gateOf(entries, passes, declaredRows);
+  console.log("");
+  console.log(formatGate(gate));
+  const measured = promotableAccepted(gate);
+  const promotion = new Set([...OLD_FLOOR, ...measured]);
+  const unmeasured = declaredRows
+    .filter((row) => !gate.some((rule) => rule.rule === row.row && rule.passes.some((pass) => pass.labeled > 0)))
+    .map((row) => row.row);
+  if (options.evidence !== undefined) {
+    writeGate(options.evidence, gate, {
+      corpus: format,
+      passes: { list: passes, source: passLabel },
+      base: gateBase(entries),
+      accepted: [...measured].sort(),
+      promotion: [...promotion].sort(),
+      unmeasured,
+      sources,
+    });
+  }
+
+  console.log("\nThe gated case-level effect (accepted rules only):");
+  console.log(formatCases(summarizeCases(entries, ACCEPTED_RULES)));
+
+  if (labeledList.length < 2) {
+    console.log(
+      `\n${labeledList.length} pass carries labels; a rule needs two. No ACCEPTED_RULES comparison.`,
+    );
+    return 0;
+  }
+  const match = sameRuleSet(ACCEPTED_RULES, promotion);
+  console.log(
+    `\nACCEPTED_RULES: ${[...ACCEPTED_RULES].sort().join(", ")} — ${
+      match
+        ? "MATCH"
+        : `MISMATCH (promotion: ${[...promotion].sort().join(", ") || "(none)"})`
+    }`,
+  );
+  return match ? 0 : 1;
+};
+
+/** The old corpus: the rename proof, the production gate, and the floor check. */
+const oldReport = (options: Options): void => {
   const real = readCorpus(options.out);
   const frozen = frozenEntries(real.cases, real.evidence, real.labels);
   // The synthetic fixture adds declared-row coverage to the production replay
@@ -637,16 +908,31 @@ const main = (): void => {
   const gate = gateOf(production.entries);
   console.log(formatGate(gate));
   const measured = gateAccepted(gate);
-  const match = sameRuleSet(measured, ACCEPTED_RULES);
-  console.log(
-    `\nACCEPTED_RULES: ${[...ACCEPTED_RULES].sort().join(", ")} — ${
-      match ? "MATCH" : `MISMATCH (measured: ${[...measured].sort().join(", ") || "(none)"})`
-    }`,
-  );
-  if (!match) process.exitCode = 1;
+  console.log(`\n${formatFloor(ACCEPTED_RULES, OLD_FLOOR)}`);
+  if ([...OLD_FLOOR].some((rule) => !ACCEPTED_RULES.has(rule))) {
+    process.exitCode = 1;
+  }
+  if (!sameRuleSet(measured, new Set()) && [...measured].some((rule) => !OLD_FLOOR.has(rule))) {
+    console.log(
+      `measured here but absent from ACCEPTED_RULES: ${[...measured]
+        .filter((rule) => !ACCEPTED_RULES.has(rule))
+        .sort()
+        .join(", ")}`,
+    );
+  }
 
   console.log("\nThe gated case-level effect (accepted rules only):");
   console.log(formatCases(summarizeCases(production.entries, ACCEPTED_RULES)));
+};
+
+const main = (): void => {
+  const options = parseOptions(process.argv.slice(2));
+  const format = corpusFormat(options.out);
+  if (format === "declared") {
+    process.exitCode = declaredReport(options, format);
+    return;
+  }
+  oldReport(options);
 };
 
 if (import.meta.main) main();

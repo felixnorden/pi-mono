@@ -17,14 +17,19 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ACCEPTED_RULES } from "../src/compaction/rules.ts";
+import { readJsonl } from "./case-file.ts";
+import type { CaseFacts } from "./facts.ts";
 import {
   formatGate,
-  gateAccepted,
+  gateBase,
   gateOf,
+  labeledPasses,
+  OLD_FLOOR,
+  promotableAccepted,
   productionEntries,
   readCorpus,
   sameRuleSet,
-  type RuleEntry,
+  unlistedPasses,
 } from "./rules.ts";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
@@ -84,11 +89,52 @@ export const diffAccepted = (
  * with unknown spellings all measure as an empty set; writing that set would
  * erase the shipped policy. Refuse instead of writing.
  */
-export const corpusRefusal = (entries: readonly RuleEntry[]): string | null =>
+export const corpusRefusal = (entries: readonly import("./rules.ts").RuleEntry[]): string | null =>
   entries.some((entry) => entry.truth !== undefined)
     ? null
     : "corpus has no labeled decisions; refusing to rewrite ACCEPTED_RULES " +
       "(run bun run eval:harvest, then label the decisions)";
+
+/** Promotion is a v2-only operation. Name the corpus, not the caller's intent. */
+export const corpusRefusalFor = (format: string | undefined): string | null =>
+  format === "declared"
+    ? null
+    : `promotion runs on the v2 corpus only; this corpus is ${format ?? "unknown"}`;
+
+/** One audited case's verdict, as `audit.jsonl` stores it. */
+export interface AuditVerdict {
+  readonly row: string;
+  readonly verdict: "match" | "mismatch";
+}
+
+/** Rows blocked by two or more audit mismatches. */
+export const blockedRows = (audit: readonly AuditVerdict[]): readonly string[] => {
+  const mismatches = new Map<string, number>();
+  for (const row of audit) {
+    if (row.verdict !== "mismatch") continue;
+    mismatches.set(row.row, (mismatches.get(row.row) ?? 0) + 1);
+  }
+  return [...mismatches.entries()]
+    .filter(([, count]) => count >= 2)
+    .map(([row]) => row)
+    .sort();
+};
+
+/**
+ * The additive promotion: the frozen floor plus the measured set, minus any row
+ * a deliberate `--remove` names, minus any row two audit mismatches block.
+ */
+export const promotionSet = (
+  measured: ReadonlySet<string>,
+  floor: ReadonlySet<string>,
+  audit: readonly AuditVerdict[],
+  remove: readonly string[],
+): ReadonlySet<string> => {
+  const rules = new Set<string>([...floor, ...measured]);
+  for (const row of remove) rules.delete(row);
+  for (const row of blockedRows(audit)) rules.delete(row);
+  return rules;
+};
 
 // ---------------------------------------------------------------------------
 // The command
@@ -98,15 +144,19 @@ interface Options {
   readonly out: string;
   /** Rewrite the product constant. Off means dry run. */
   readonly write: boolean;
+  /** Rows a deliberate promotion removes. */
+  readonly remove: readonly string[];
 }
 
-const usage = `promote.ts [--out <dir>] [--write]
+const usage = `promote.ts [--out <dir>] [--write] [--remove <rule>]...
 
-  --out    corpus directory (default: evals/data)
-  --write  rewrite ACCEPTED_RULES to the measured set (default: dry run)`;
+  --out     corpus directory (default: evals/data/v2)
+  --write   rewrite ACCEPTED_RULES to the additive promotion (default: dry run)
+  --remove  delete a row from the accepted set; repeatable, and never implicit`;
 
 const parseOptions = (argv: readonly string[]): Options => {
   const values = new Map<string, string>();
+  const remove: string[] = [];
   let write = false;
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index]!;
@@ -119,39 +169,116 @@ const parseOptions = (argv: readonly string[]): Options => {
     if (next === undefined || next.startsWith("--")) {
       throw new Error(`missing value for ${flag}\n\n${usage}`);
     }
-    values.set(flag.slice(2), next);
+    if (flag === "--remove") remove.push(next);
+    else values.set(flag.slice(2), next);
     index += 1;
   }
-  return { out: values.get("out") ?? join(HERE, "data"), write };
+  return { out: values.get("out") ?? join(HERE, "data", "v2"), write, remove };
 };
 
 const listOf = (rules: ReadonlySet<string>): string => [...rules].sort().join(", ") || "(none)";
 
+/** The manifest's format, when the directory has one. */
+const corpusFormat = (out: string): string | undefined => {
+  try {
+    const manifest = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as {
+      format?: unknown;
+    };
+    return typeof manifest.format === "string" ? manifest.format : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** The corpus' pass list: the sample's keys, else the passes the records carry. */
+const passesOf = (out: string, entries: readonly import("./rules.ts").RuleEntry[]): readonly string[] => {
+  try {
+    const sample = JSON.parse(readFileSync(join(out, "sample.json"), "utf8")) as {
+      passes?: Record<string, unknown>;
+    };
+    if (sample.passes !== undefined) return Object.keys(sample.passes);
+  } catch {
+    // Fall back to the records.
+  }
+  return labeledPasses(entries);
+};
+
+/** One declared row from the frozen facts. */
+const declaredRowsOf = (
+  facts: readonly CaseFacts[],
+): readonly { readonly row: string; readonly verdict: "compact" | "keep" | "abstain" }[] => {
+  const rows = new Map<string, "compact" | "keep" | "abstain">();
+  for (const entry of facts) {
+    if (!entry.promotable || !entry.declaredHead) continue;
+    rows.set(entry.head.row, entry.head.verdict);
+  }
+  return [...rows.entries()].map(([row, verdict]) => ({ row, verdict }));
+};
+
+const readOptional = <T>(path: string): readonly T[] => {
+  try {
+    return readJsonl<T>(path);
+  } catch {
+    return [];
+  }
+};
+
 /**
- * Report the measured set against the product constant. Returns the process
- * exit code: nonzero in a dry run means the constant is stale.
+ * Report the additive promotion against the product constant. Returns the
+ * process exit code: nonzero in a dry run means the constant is stale.
  */
 const main = (): number => {
   const options = parseOptions(process.argv.slice(2));
+  const corpus = corpusFormat(options.out);
+  const corpusRefusalHere = corpusRefusalFor(corpus);
+  if (corpusRefusalHere !== null) {
+    console.error(corpusRefusalHere);
+    return 2;
+  }
   const { cases, evidence, labels } = readCorpus(options.out);
-  const entries = productionEntries(cases, evidence, labels).entries;
+  const facts = new Map(
+    readOptional<CaseFacts>(join(options.out, "facts.jsonl")).map((entry) => [
+      entry.caseId,
+      entry,
+    ]),
+  );
+  const entries = productionEntries(cases, evidence, labels, facts).entries;
   const refusal = corpusRefusal(entries);
   if (refusal !== null) {
     console.error(refusal);
     return 2;
   }
-  const gate = gateOf(entries);
-  const measured = gateAccepted(gate);
+  const labeled = labeledPasses(entries);
+  if (labeled.length < 2) {
+    console.error(
+      `promotion needs two labeled passes; this corpus has ${labeled.length} (${labeled.join(", ") || "(none)"})`,
+    );
+    return 2;
+  }
+  const passes = passesOf(options.out, entries);
+  const unlisted = unlistedPasses(entries, passes);
+  if (unlisted.length > 0) {
+    console.log(`not in this corpus: ${unlisted.join(", ")}`);
+  }
+  const audit = readOptional<AuditVerdict>(join(options.out, "audit.jsonl"));
+  const gate = gateOf(entries, passes, declaredRowsOf([...facts.values()]));
+  const measured = promotableAccepted(gate);
+  const promotion = promotionSet(measured, OLD_FLOOR, audit, options.remove);
 
   console.log("The promotion gate is the same gate eval:rules prints.\n");
+  console.log(`base: ${gateBase(entries)}`);
   console.log(formatGate(gate));
   console.log(`\ncurrently accepted: ${listOf(ACCEPTED_RULES)}`);
+  console.log(`frozen floor: ${listOf(OLD_FLOOR)}`);
   console.log(`measured accepted: ${listOf(measured)}`);
-  const diff = diffAccepted(ACCEPTED_RULES, measured);
+  for (const row of blockedRows(audit)) console.log(`! blocked by two audit mismatches: ${row}`);
+  for (const row of options.remove) console.log(`- remove by flag: ${row}`);
+  const diff = diffAccepted(ACCEPTED_RULES, promotion);
   for (const rule of diff.promoted) console.log(`+ promote ${rule}`);
   for (const rule of diff.dropped) console.log(`- drop ${rule}`);
+  console.log(`\npromotion set: ${listOf(promotion)}`);
 
-  if (sameRuleSet(ACCEPTED_RULES, measured)) {
+  if (sameRuleSet(ACCEPTED_RULES, promotion)) {
     console.log("\nACCEPTED_RULES is in sync.");
     return 0;
   }
@@ -159,13 +286,13 @@ const main = (): number => {
   const current = readFileSync(RULES_PATH, "utf8");
   if (!options.write) {
     console.log("\nOut of sync. Re-run with --write to apply:\n");
-    console.log(renderAcceptedRules(measured));
+    console.log(renderAcceptedRules(promotion));
     return 1;
   }
 
-  writeFileSync(RULES_PATH, applyAcceptedRules(current, measured));
+  writeFileSync(RULES_PATH, applyAcceptedRules(current, promotion));
   const reparsed = parseAcceptedRules(readFileSync(RULES_PATH, "utf8"));
-  if (!sameRuleSet(reparsed, measured)) {
+  if (!sameRuleSet(reparsed, promotion)) {
     throw new Error("ACCEPTED_RULES did not stick after the write");
   }
   console.log("\nACCEPTED_RULES updated.");

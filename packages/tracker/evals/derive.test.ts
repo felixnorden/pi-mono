@@ -42,6 +42,26 @@ const stateOf = (lists: readonly TodoList[], activeListId: number | null = 1): T
 
 const at = (snapshot: TrackerState, time: string): TimedSnapshot => ({ at: time, state: snapshot });
 
+it("carries an item's declarations into the list view", () => {
+  const refs: readonly DeclaredReference[] = [{ kind: "path", path: "src/a.ts" }];
+  const produces: readonly DeclaredProduct[] = [{ path: "docs/out.md" }];
+  const before = stateOf([
+    listWith([
+      { id: 1, title: "first", done: false },
+      { id: 2, title: "second", refs, produces, done: false },
+    ]),
+  ]);
+  const after = stateOf([
+    listWith([
+      { id: 1, title: "first", done: true },
+      { id: 2, title: "second", refs, produces, done: false },
+    ]),
+  ]);
+  const events = deriveEvents([at(before, "t0"), at(after, "t1")], 16);
+  assert.deepStrictEqual(events[0]!.items[1]!.refs, refs);
+  assert.deepStrictEqual(events[0]!.items[1]!.produces, produces);
+});
+
 it("derives one event per open to done transition", () => {
   const before = stateOf([
     listWith([

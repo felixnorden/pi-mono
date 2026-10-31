@@ -18,11 +18,62 @@ import type { TimedSnapshot } from "./derive.ts";
 /** The marker every tracker snapshot line carries. */
 export const MARKER = "tracker/state";
 
+/**
+ * The item format a raw snapshot was written in.
+ *
+ * `declared` means at least one stored item carries a `description`, `refs`, or
+ * `produces` key. The key is read from the raw snapshot, before the schema
+ * defaults fill it in, because a default hides an absent key.
+ */
+export type SnapshotFormat = "legacy" | "declared";
+
+const DECLARED_ITEM_KEYS = ["description", "refs", "produces"] as const;
+
+const rawItems = (raw: unknown): readonly unknown[] => {
+  const state = asRecord(raw);
+  const lists = state.lists;
+  if (!Array.isArray(lists)) return [];
+  return lists.flatMap((list) => {
+    const items = asRecord(list).items;
+    return Array.isArray(items) ? items : [];
+  });
+};
+
+/** The declared-format rule, as the manifest prints it. */
+export const FORMAT_RULE =
+  "a case is declared when its snapshot holds any item with a description, refs, or produces key, read from the raw snapshot before schema defaults";
+
+/** The format of one raw snapshot, under the snapshot rule. */
+export const snapshotFormat = (raw: unknown): SnapshotFormat =>
+  rawItems(raw).some((entry) => {
+    const record = asRecord(entry);
+    return DECLARED_ITEM_KEYS.some((key) => key in record);
+  })
+    ? "declared"
+    : "legacy";
+
+/**
+ * The ids of the raw snapshot's declared items. A missing id follows the
+ * legacy id rule (`migrateState` assigns the item's position), so the harvest
+ * can tell whether every completed item carried a declaration.
+ */
+export const declaredItemIds = (raw: unknown): ReadonlySet<number> => {
+  const ids = new Set<number>();
+  const all = rawItems(raw);
+  all.forEach((entry, index) => {
+    const record = asRecord(entry);
+    if (!DECLARED_ITEM_KEYS.some((key) => key in record)) return;
+    ids.add(typeof record.id === "number" ? record.id : index + 1);
+  });
+  return ids;
+};
+
 /** The fields this module reads from a raw session line. */
 export interface RawEntry {
   readonly type?: unknown;
   readonly customType?: unknown;
   readonly timestamp?: unknown;
+  readonly cwd?: unknown;
   readonly data?: unknown;
 }
 
@@ -41,6 +92,12 @@ export interface ParsedSession {
   readonly snapshots: readonly TimedSnapshot[];
   /** Line index of each snapshot, parallel to `snapshots`. */
   readonly snapshotLines: readonly number[];
+  /** The raw format of each snapshot, parallel to `snapshots`. */
+  readonly snapshotFormats: readonly SnapshotFormat[];
+  /** Ids of the declared items in each snapshot, parallel to `snapshots`. */
+  readonly snapshotDeclaredIds: readonly ReadonlySet<number>[];
+  /** The session header's `cwd`, when the log holds one. */
+  readonly cwd: string | undefined;
   /** Parsed entry by line index. Undefined for an empty or unparseable line. */
   readonly entries: readonly (unknown | undefined)[];
 }
@@ -54,6 +111,9 @@ export const parseSession = (text: string, onSkipped: () => void): ParsedSession
   const entries: (unknown | undefined)[] = Array.from({ length: lines.length });
   const snapshots: TimedSnapshot[] = [];
   const snapshotLines: number[] = [];
+  const snapshotFormats: SnapshotFormat[] = [];
+  const snapshotDeclaredIds: ReadonlySet<number>[] = [];
+  let cwd: string | undefined;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
     if (line.length === 0) continue;
@@ -65,6 +125,11 @@ export const parseSession = (text: string, onSkipped: () => void): ParsedSession
     }
     entries[index] = parsed;
     const entry = asRecord(parsed) as RawEntry;
+    // The header is the first line, but it is only honoured when it is a
+    // session entry: an appended log can hold more than one header.
+    if (cwd === undefined && entry.type === "session" && typeof entry.cwd === "string") {
+      cwd = entry.cwd;
+    }
     if (entry.type !== "custom" || entry.customType !== MARKER) continue;
     try {
       snapshots.push({
@@ -74,11 +139,15 @@ export const parseSession = (text: string, onSkipped: () => void): ParsedSession
         state: migrateState(Effect.runSync(decodeStateEffect(entry.data))),
       });
       snapshotLines.push(index);
+      // The format is a property of the raw snapshot: read it before the schema
+      // defaults fill the declared keys in.
+      snapshotFormats.push(snapshotFormat(entry.data));
+      snapshotDeclaredIds.push(declaredItemIds(entry.data));
     } catch {
       onSkipped();
     }
   }
-  return { snapshots, snapshotLines, entries };
+  return { snapshots, snapshotLines, snapshotFormats, snapshotDeclaredIds, cwd, entries };
 };
 
 /** One decision record with the session line that holds it, in file order. */

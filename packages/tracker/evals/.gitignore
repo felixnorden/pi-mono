@@ -1,4 +1,4 @@
-# Harvested corpus. Local only: it holds text from real sessions.
-# The synthetic fixture holds no session text and is checked in.
+# Local corpora and evidence. They hold session text and real names.
+# The hand-written synthetic fixture holds neither and is checked in.
 data/*
 !data/synthetic/

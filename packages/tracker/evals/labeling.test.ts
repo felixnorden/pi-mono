@@ -1,4 +1,10 @@
 import { assert, it } from "@effect/vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe } from "vitest";
+import { parseOptions } from "./label.ts";
+import type { CaseFacts } from "./facts.ts";
 import type { StoredCase, StoredEvidence } from "./case-file.ts";
 import { ansiPaint, plainPaint, type MarkdownRenderer } from "./style.ts";
 import {
@@ -6,14 +12,18 @@ import {
   compactView,
   countLabels,
   formatCounts,
+  formatLabelRecord,
+  passRefusal,
   fullView,
   keyToAction,
+  labeledPairs,
   labelIndex,
   labelKeyOf,
   LABELS,
   parseLabels,
   PROMPT,
   queueSize,
+  recordSurprise,
   renderCaseContext,
   renderCandidate,
   renderEvidence,
@@ -24,7 +34,10 @@ import {
   type LabelRecord,
   type LabelSession,
   type LabelStore,
+  type StoredSurprise,
 } from "./labeling.ts";
+import { passOfRecord } from "./pass.ts";
+import type { LabelSample } from "./sample.ts";
 
 const caseOf = (caseId: string, classes: readonly string[]): StoredCase => ({
   caseId,
@@ -254,7 +267,9 @@ it("renders the decision record on its pointer candidate", () => {
     },
   };
   const queue = buildQueue([entry], new Map(), { answered: new Map() });
-  const rendered = renderCandidate(queue[0]!, queue[0]!.pending[0]!, 1, 100);
+  const rendered = renderCandidate(queue[0]!, queue[0]!.pending[0]!, 1, 100, undefined, {
+    revealed: true,
+  });
   assert.match(rendered, /decision: no-visible-link \(compact\)/);
   assert.match(rendered, /src\/a\.ts: readable/);
   assert.match(rendered, /out\.md: exists/);
@@ -525,4 +540,427 @@ it("reprint switches the card to the full work record", async () => {
 
 it("uses the two shipped label values", () => {
   assert.deepStrictEqual(Object.values(LABELS), ["needs-context", "stands-alone"]);
+});
+
+it("shows item declarations under the list item", () => {
+  const caseEntry = caseOf("a", ["ready-queue"]);
+  const declared: StoredCase = {
+    ...caseEntry,
+    list: {
+      ...caseEntry.list,
+      items: caseEntry.list.items.map((item) =>
+        item.id === 2
+          ? {
+              ...item,
+              refs: [{ kind: "path", path: "src/a.ts" }],
+              produces: [{ path: "docs/out.md" }],
+            }
+          : item,
+      ),
+    },
+  };
+  const queue = buildQueue([declared], new Map(), { answered: new Map() });
+  const rendered = renderList(queue[0]!, 120);
+  assert.include(rendered, "src/a.ts");
+  assert.include(rendered, "docs/out.md");
+});
+
+describe("label records name their corpus and pass", () => {
+  const v2Record: LabelRecord = {
+    caseId: "c1",
+    key: "k0",
+    label: LABELS.standsAlone,
+    at: "2026-10-24T12:00:00.000Z",
+    corpus: "v2",
+    pass: "v2-a",
+    rule: "reference-is-readable",
+    source: "replayed",
+  };
+
+  it("round-trips corpus, pass, rule, and source", () => {
+    const parsed = parseLabels(formatLabelRecord(v2Record));
+    assert.deepStrictEqual(parsed, [v2Record]);
+  });
+
+  it("keeps an old record without the new fields", () => {
+    const old: LabelRecord = {
+      caseId: "c1",
+      key: "k0",
+      label: LABELS.standsAlone,
+      at: "2026-10-05T00:00:00.000Z",
+    };
+    const parsed = parseLabels(JSON.stringify(old));
+    assert.deepStrictEqual(parsed, [old]);
+    assert.strictEqual(passOfRecord(parsed[0]!), "pass1");
+  });
+});
+
+describe("a sampled queue", () => {
+  const sampleOf = (passes: Record<string, readonly string[]>): LabelSample => ({
+    corpus: "v2",
+    createdAt: "2026-10-24T12:00:00.000Z",
+    seed: 7,
+    target: 660,
+    targetPerRowPerPass: 25,
+    floorPerRowPerPass: 10,
+    unmeasurable: [],
+    belowQuota: [],
+    pilot: [],
+    passes: Object.fromEntries(
+      Object.entries(passes).map(([name, cards]) => [
+        name,
+        { sittings: [{ cards, seededWith: [] }] },
+      ]),
+    ) as unknown as LabelSample["passes"],
+  });
+
+  it("asks only the head question of a sampled case", () => {
+    const cases = [caseOf("c1", ["ready-queue"]), caseOf("c2", ["ready-queue"]), caseOf("c3", ["ready-queue"])];
+    const queue = buildQueue(cases, new Map(), {
+      answered: new Map(),
+      sample: sampleOf({ "v2-a": ["c1", "c2"] }),
+    });
+    assert.strictEqual(queueSize(queue), 2);
+    assert.deepStrictEqual(
+      queue.map((entry) => [entry.entry.caseId, entry.pending[0]!.index]),
+      [
+        ["c1", 0],
+        ["c2", 0],
+      ],
+    );
+  });
+
+  it("walks the stored order, not the corpus order", () => {
+    const cases = [caseOf("c1", ["ready-queue"]), caseOf("c2", ["ready-queue"]), caseOf("c3", ["ready-queue"])];
+    const queue = buildQueue(cases, new Map(), {
+      answered: new Map(),
+      sample: sampleOf({ "v2-a": ["c3", "c1", "c2"] }),
+    });
+    assert.deepStrictEqual(
+      queue.map((entry) => entry.entry.caseId),
+      ["c3", "c1", "c2"],
+    );
+  });
+
+  it("filters focus inside the sample", () => {
+    const declared = caseOf("c1", ["ready-queue"]);
+    const withDeclared: StoredCase = {
+      ...declared,
+      candidates: [{ ...declared.candidates[0]!, refs: [{ kind: "path", path: "src/a.ts" }] }],
+    };
+    const plain = caseOf("c2", ["ready-queue"]);
+    const queue = buildQueue([withDeclared, plain], new Map(), {
+      answered: new Map(),
+      sample: sampleOf({ "v2-a": ["c1", "c2"] }),
+      focus: "declared",
+    });
+    assert.deepStrictEqual(
+      queue.map((entry) => entry.entry.caseId),
+      ["c1"],
+    );
+  });
+
+  it("puts a sitting's pilot seeds before its cards", () => {
+    const cases = [caseOf("c1", ["ready-queue"]), caseOf("p1", ["ready-queue"])];
+    const sample = sampleOf({ "v2-a": ["c1"] });
+    const withSeed: LabelSample = {
+      ...sample,
+      pilot: ["p1"],
+      passes: {
+        "v2-a": { sittings: [{ cards: ["c1"], seededWith: ["p1"] }] },
+        "v2-b": { sittings: [] },
+      },
+    };
+    const queue = buildQueue(cases, new Map(), { answered: new Map(), sample: withSeed });
+    assert.deepStrictEqual(
+      queue.map((entry) => [entry.entry.caseId, entry.pilot === true]),
+      [
+        ["p1", true],
+        ["c1", false],
+      ],
+    );
+  });
+});
+
+describe("labeledPairs", () => {
+  const cases = [caseOf("c1", ["ready-queue"]), caseOf("c2", ["ready-queue"])];
+  const recordsOf = (pass: string, extra?: Partial<LabelRecord>): LabelRecord[] => [
+    {
+      caseId: "c1",
+      key: "k0",
+      label: LABELS.standsAlone,
+      at: "2026-10-24T12:00:00.000Z",
+      pass,
+      ...extra,
+    },
+    {
+      caseId: "c2",
+      key: "k0",
+      label: LABELS.needsContext,
+      at: "2026-10-24T12:00:00.000Z",
+      pass,
+    },
+  ];
+
+  it("measures only its own pass", () => {
+    const pairs = labeledPairs(cases, recordsOf("v2-a"), "v2-a");
+    assert.strictEqual(pairs.length, 2);
+    assert.strictEqual(labeledPairs(cases, recordsOf("v2-b"), "v2-a").length, 0);
+  });
+
+  it("drops a pilot seed", () => {
+    const records = recordsOf("v2-a");
+    records[0] = { ...records[0]!, pilot: true };
+    const pairs = labeledPairs(cases, records, "v2-a");
+    assert.strictEqual(pairs.length, 1);
+    assert.strictEqual(pairs[0]!.caseId, "c2");
+  });
+});
+
+describe("pass and suggestion guards", () => {
+  it("refuses --suggest for a declared corpus", () => {
+    const out = mkdtempSync(join(tmpdir(), "label-"));
+    try {
+      writeFileSync(join(out, "manifest.json"), JSON.stringify({ format: "declared" }));
+      assert.throws(
+        () => parseOptions(["--out", out, "--suggest", "x.json"]),
+        /disabled for a declared corpus/,
+      );
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("names the sample's passes when the pass is unknown", () => {
+    const sample = {
+      corpus: "v2",
+      createdAt: "",
+      seed: 7,
+      target: 660,
+      targetPerRowPerPass: 25,
+      floorPerRowPerPass: 10,
+      unmeasurable: [],
+      belowQuota: [],
+      pilot: [],
+      passes: { "v2-a": { sittings: [] }, "v2-b": { sittings: [] } },
+    } as unknown as LabelSample;
+    const refusal = passRefusal(sample, "v2-c");
+    assert.match(refusal ?? "", /v2-a, v2-b/);
+  });
+});
+
+it("writes one record to each sampled pass with its corpus and row", async () => {
+  const sample = {
+    corpus: "v2",
+    createdAt: "",
+    seed: 7,
+    target: 660,
+    targetPerRowPerPass: 25,
+    floorPerRowPerPass: 10,
+    unmeasurable: [],
+    belowQuota: [],
+    pilot: [],
+    passes: {
+      "v2-a": { sittings: [{ cards: ["a"], seededWith: [] }] },
+      "v2-b": { sittings: [{ cards: ["b"], seededWith: [] }] },
+    },
+  } as unknown as LabelSample;
+  const facts = new Map(
+    ["a", "b"].map((caseId) => [
+      caseId,
+      {
+        caseId,
+        at: "2026-10-24T12:00:00.000Z",
+        sessionCwd: "/tmp",
+        source: "replayed" as const,
+        promotable: true,
+        declaredHead: true,
+        head: {
+          questionKey: "k0",
+          candidateRef: "Work:2",
+          row: "reference-is-readable",
+          verdict: "compact" as const,
+          references: [],
+          products: [],
+          diagnostic: false,
+        },
+        diagnostics: [],
+      },
+    ]),
+  );
+  const store = memoryStore();
+  for (const pass of ["v2-a", "v2-b"]) {
+    const queue = buildQueue([caseOf(pass === "v2-a" ? "a" : "b", ["ready-queue"])], new Map(), {
+      answered: new Map(),
+      sample,
+      pass,
+    });
+    const { session } = scripted(["s"]);
+    await runLabeling(queue, store, session, {
+      ...runOptions,
+      corpus: "v2",
+      pass,
+      facts,
+    });
+  }
+  assert.deepStrictEqual(
+    store.records.map((record) => [record.caseId, record.pass, record.corpus, record.rule]),
+    [
+      ["a", "v2-a", "v2", "reference-is-readable"],
+      ["b", "v2-b", "v2", "reference-is-readable"],
+    ],
+  );
+});
+
+const factsFor = (overrides?: {
+  readonly source?: "live" | "replayed" | "mismatch" | "unresolved";
+  readonly row?: string;
+  readonly state?: string;
+}): CaseFacts => ({
+  caseId: "a",
+  at: "2026-10-24T12:00:00.000Z",
+  sessionCwd: "/tmp",
+  source: overrides?.source ?? "replayed",
+  promotable: overrides?.source !== "mismatch" && overrides?.source !== "unresolved",
+  declaredHead: true,
+  head: {
+    questionKey: "k0",
+    candidateRef: "Work:2",
+    row: overrides?.row ?? "reference-is-readable",
+    verdict: "compact",
+    references: [
+      {
+        reference: { kind: "path", path: "src/a.ts" },
+        state: (overrides?.state ?? "readable") as "readable",
+      },
+    ],
+    products: [],
+    diagnostic: false,
+  },
+  diagnostics: [],
+});
+
+describe("the candidate card", () => {
+  const declaredCase = (): StoredCase => {
+    const base = caseOf("a", ["ready-queue"]);
+    return {
+      ...base,
+      candidates: [
+        {
+          ...base.candidates[0]!,
+          refs: [{ kind: "path", path: "src/a.ts" }],
+        },
+      ],
+    };
+  };
+
+  it("hides the row and the source before the answer", () => {
+    const queue = buildQueue([declaredCase()], new Map(), { answered: new Map() });
+    const rendered = renderCandidate(queue[0]!, queue[0]!.pending[0]!, 1, 100, undefined, {
+      facts: factsFor(),
+      revealed: false,
+    });
+    assert.match(rendered, /src\/a\.ts/);
+    assert.match(rendered, /readable/);
+    assert.strictEqual(rendered.includes("reference-is-readable"), false);
+    assert.strictEqual(rendered.includes("replayed"), false);
+  });
+
+  it("shows unresolved before the answer", () => {
+    const queue = buildQueue([declaredCase()], new Map(), { answered: new Map() });
+    const rendered = renderCandidate(queue[0]!, queue[0]!.pending[0]!, 1, 100, undefined, {
+      facts: { ...factsFor({ source: "unresolved", row: "" }), head: { ...factsFor().head, references: [] } },
+      revealed: false,
+    });
+    assert.match(rendered, /unresolved/);
+    assert.strictEqual(rendered.includes("reference-is-readable"), false);
+  });
+
+  it("reveals the row, the verdict, and the source", () => {
+    const queue = buildQueue([declaredCase()], new Map(), { answered: new Map() });
+    const rendered = renderCandidate(queue[0]!, queue[0]!.pending[0]!, 1, 100, undefined, {
+      facts: factsFor(),
+      revealed: true,
+    });
+    assert.match(rendered, /reference-is-readable \(compact\)/);
+    assert.match(rendered, /resolution: replayed/);
+  });
+
+  it("cannot change the answer when the reveal takes a key", async () => {
+    const queue = buildQueue([declaredCase()], new Map(), { answered: new Map() });
+    const store = memoryStore();
+    const { session } = scripted(["s", "x"]);
+    const surprises: StoredSurprise[] = [];
+    await runLabeling(queue, store, session, {
+      ...runOptions,
+      facts: new Map([["a", factsFor()]]),
+      reveal: true,
+      onSurprise: (surprise) => recordSurprise(surprises, surprise),
+    });
+    assert.strictEqual(store.records.length, 1);
+    assert.strictEqual(surprises.length, 0);
+  });
+
+  it("writes one surprise row when the labeler marks one", async () => {
+    const queue = buildQueue([declaredCase()], new Map(), { answered: new Map() });
+    const store = memoryStore();
+    const { session } = scripted(["s", "!"]);
+    const surprises: StoredSurprise[] = [];
+    await runLabeling(queue, store, session, {
+      ...runOptions,
+      facts: new Map([["a", factsFor()]]),
+      reveal: true,
+      onSurprise: (surprise) => recordSurprise(surprises, surprise),
+    });
+    assert.strictEqual(surprises.length, 1);
+    assert.strictEqual(store.records.length, 1);
+    assert.deepStrictEqual(
+      {
+        caseId: surprises[0]!.caseId,
+        questionKey: surprises[0]!.questionKey,
+        rule: surprises[0]!.rule,
+        label: surprises[0]!.label,
+      },
+      {
+        caseId: "a",
+        questionKey: "k0",
+        rule: "reference-is-readable",
+        label: "stands-alone",
+      },
+    );
+  });
+});
+
+describe("the pilot sitting", () => {
+  const sample = {
+    corpus: "v2",
+    createdAt: "",
+    seed: 7,
+    target: 660,
+    targetPerRowPerPass: 25,
+    floorPerRowPerPass: 10,
+    unmeasurable: [],
+    belowQuota: [],
+    pilot: ["p1", "p2"],
+    passes: {
+      "v2-a": { sittings: [{ cards: ["a"], seededWith: ["p1"] }] },
+      "v2-b": { sittings: [{ cards: ["b"], seededWith: ["p2"] }] },
+    },
+  } as unknown as LabelSample;
+
+  it("queues the pilot ids as ordinary cards, in sample order", () => {
+    const cases = [caseOf("a", ["ready-queue"]), caseOf("p1", ["ready-queue"]), caseOf("p2", ["ready-queue"])];
+    const queue = buildQueue(cases, new Map(), { answered: new Map(), sample, pilot: true });
+    assert.deepStrictEqual(
+      queue.map((entry) => [entry.entry.caseId, entry.pilot === true]),
+      [
+        ["p1", false],
+        ["p2", false],
+      ],
+    );
+  });
+
+  it("cannot be combined with --pass", () => {
+    assert.throws(() => parseOptions(["--pilot", "--pass", "v2-a"]), /cannot be combined/);
+  });
 });
