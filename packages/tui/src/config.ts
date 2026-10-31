@@ -12,7 +12,7 @@ const CONFIG_FILE_NAME = "tui.json";
 const IconModeSchema = Schema.Literals(["auto", "nerd", "ascii"] as const);
 const SettingsLanguageSchema = Schema.Literals(["en"] as const);
 
-export class TuiConfig extends Schema.Class<TuiConfig>("tui/config/TuiConfig")({
+export const TuiConfig = Schema.Struct({
   enabled: Schema.Boolean,
   settingsLanguage: SettingsLanguageSchema,
   vim: Schema.Boolean,
@@ -44,7 +44,9 @@ export class TuiConfig extends Schema.Class<TuiConfig>("tui/config/TuiConfig")({
     minAnswerConfidence: Schema.Number,
     maxCandidates: Schema.Number,
   }),
-}) {}
+});
+
+export type TuiConfig = typeof TuiConfig.Type;
 
 export type TelemetryConfig = TuiConfig["telemetry"];
 

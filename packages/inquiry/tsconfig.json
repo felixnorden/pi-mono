@@ -29,7 +29,15 @@
     "noPropertyAccessFromIndexSignature": false,
     "plugins": [
       {
-        "name": "@effect/language-service"
+        "name": "@effect/language-service",
+        "allowedUnstableApis": [
+          "@effect/vitest",
+          "@effect/platform-node",
+          "@effect/platform-node-shared",
+          "effect/FileSystem",
+          "effect/Path",
+          "effect/PlatformError"
+        ]
       }
     ]
   }
